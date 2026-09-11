@@ -21,7 +21,7 @@ The current beta contains deterministic planning math, a native macOS menu-bar a
 Download the notarized ZIP and its SHA-256 from the [latest GitHub release](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). QuotaTempo currently supports Apple silicon Macs running macOS 14 or later.
 
 1. Verify the downloaded ZIP against the SHA-256 published in the release.
-2. Unzip it and move `QuotaTempo.app` to `/Applications`.
+2. In Finder, double-click the ZIP, then drag `QuotaTempo.app` into Applications. Using Finder ensures macOS records the user-approved move and avoids launching the app from App Translocation.
 3. Open QuotaTempo from Applications. The first-run window explains the menu-bar modes.
 
 Do not bypass Gatekeeper if macOS rejects the app. See the full [installation and usage guide](docs/user-guide.md) or the [Japanese guide](docs/user-guide.ja.md).

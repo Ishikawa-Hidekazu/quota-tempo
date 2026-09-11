@@ -20,7 +20,7 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
    ```
 
 3. 値全体が、そのreleaseで公開されたSHA-256と完全に一致することを確認します。
-4. ZIPを開き、`QuotaTempo.app`を`/Applications`またはユーザーの`Applications`フォルダへ移します。
+4. FinderでZIPをダブルクリックして展開し、Finder上で`QuotaTempo.app`を`/Applications`またはユーザーの`Applications`フォルダへドラッグします。macOSがユーザーによる移動として記録し、App Translocationから起動しないよう、展開と移動の両方をFinderで行ってください。
 5. ApplicationsからQuotaTempoを開きます。初回案内ウインドウが前面に表示され、起動したこととメニューバー表示の選び方を確認できます。QuotaTempoはDockには表示されません。
 
 公開版はApple Developer IDで署名し、Appleのnotarizationを通した状態で提供します。macOSに「開発元を確認できない」「アプリが壊れている」などと表示された場合は、そこで停止してください。Gatekeeperを迂回せず、公式配布元とSHA-256を再確認し、QuotaTempoのversionとmacOSの正確な表示内容を公開support窓口へ伝えてください。

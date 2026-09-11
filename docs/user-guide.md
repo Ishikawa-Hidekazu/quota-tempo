@@ -20,7 +20,7 @@ QuotaTempo does not require CodexBar. It does not sign in to either provider and
    ```
 
 3. Confirm that the complete value exactly matches the SHA-256 published for that release.
-4. Open the ZIP and move `QuotaTempo.app` to `/Applications` or your user `Applications` folder.
+4. In Finder, double-click the ZIP, then drag `QuotaTempo.app` to `/Applications` or your user `Applications` folder. Perform both steps in Finder so macOS records the user-approved move and does not launch the installed app from App Translocation.
 5. Open QuotaTempo from Applications. A focused first-run window confirms that it started and explains the menu-bar display. QuotaTempo does not add a Dock icon.
 
 The public build must be signed with an Apple Developer ID and notarized by Apple. If macOS reports that it cannot verify the developer or that the app is damaged, stop. Do not bypass Gatekeeper. Recheck the official release source and SHA-256, then report the exact QuotaTempo version and macOS message through the published support route.
