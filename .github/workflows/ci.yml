@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift format
+        run: xcrun swift-format lint --strict --recursive Sources Tests
+      - name: Test
+        run: swift test
+      - name: Release build
+        run: swift build -c release
+      - name: Shell syntax
+        run: bash -n scripts/*.sh
+      - name: ShellCheck
+        run: |
+          brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
+          shellcheck scripts/*.sh
+      - name: Release policy
+        run: ./scripts/test-release-policy.sh
+      - name: Deterministic bundle
+        run: ./scripts/test-app-bundle.sh --skip-launch
+      - name: Diff safety
+        run: git diff --check

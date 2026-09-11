@@ -1,0 +1,18 @@
+{
+  "id": "all-unavailable",
+  "now": "2026-09-07T12:00:00Z",
+  "snapshots": [
+    {
+      "provider": "codex",
+      "source": "fixture",
+      "capturedAt": "2026-09-07T12:00:00Z",
+      "weekly": null
+    },
+    {
+      "provider": "claude",
+      "source": "fixture",
+      "capturedAt": "2026-09-07T12:00:00Z",
+      "weekly": null
+    }
+  ]
+}

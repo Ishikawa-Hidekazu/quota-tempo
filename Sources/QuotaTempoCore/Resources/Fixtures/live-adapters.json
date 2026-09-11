@@ -1,0 +1,30 @@
+{
+  "id": "live-adapters",
+  "now": "2026-09-07T12:00:00Z",
+  "snapshots": [
+    {
+      "provider": "codex",
+      "source": "codexAppServer",
+      "capturedAt": "2026-09-07T11:50:00Z",
+      "lastAttemptAt": "2026-09-07T11:59:00Z",
+      "sourceState": "attemptTimedOut",
+      "errorCode": "timeout",
+      "weekly": {
+        "remainingPercent": 60,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-10T20:38:24Z"
+      }
+    },
+    {
+      "provider": "claude",
+      "source": "claudeStatusLine",
+      "capturedAt": "2026-09-07T11:52:00Z",
+      "sourceState": "observationSucceeded",
+      "weekly": {
+        "remainingPercent": 45,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-12T08:00:00Z"
+      }
+    }
+  ]
+}

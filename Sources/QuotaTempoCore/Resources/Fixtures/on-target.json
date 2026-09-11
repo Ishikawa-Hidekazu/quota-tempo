@@ -1,0 +1,26 @@
+{
+  "id": "on-target",
+  "now": "2026-09-07T12:00:00Z",
+  "snapshots": [
+    {
+      "provider": "codex",
+      "source": "fixture",
+      "capturedAt": "2026-09-07T11:58:00Z",
+      "weekly": {
+        "remainingPercent": 50,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-11T00:00:00Z"
+      }
+    },
+    {
+      "provider": "claude",
+      "source": "fixture",
+      "capturedAt": "2026-09-07T11:58:00Z",
+      "weekly": {
+        "remainingPercent": 52,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-11T00:00:00Z"
+      }
+    }
+  ]
+}

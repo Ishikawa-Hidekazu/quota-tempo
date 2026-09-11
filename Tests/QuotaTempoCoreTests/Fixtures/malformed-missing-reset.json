@@ -1,0 +1,15 @@
+{
+  "id": "malformed-missing-reset",
+  "now": "2026-09-07T12:00:00Z",
+  "snapshots": [
+    {
+      "provider": "codex",
+      "source": "fixture",
+      "capturedAt": "2026-09-07T11:58:00Z",
+      "weekly": {
+        "remainingPercent": 62,
+        "durationSeconds": 604800
+      }
+    }
+  ]
+}
