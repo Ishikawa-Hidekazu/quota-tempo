@@ -16,6 +16,19 @@ QuotaTempo 0.1.0 Public Beta is available now and remains under active developme
 
 The current beta contains deterministic planning math, a native macOS menu-bar app with a focused first-run and reopenable application window, a bounded Codex app-server reader with verified official-desktop discovery and capability fallback, a hardened local snapshot store, an automatic local-first Claude adapter, provider selection, opt-in login launch, actionable compatibility diagnostics, and direct access to the bundled product policies.
 
+## Your first 60 seconds after launch
+
+1. Confirm that the QuotaTempo guide opens in its own window.
+2. Choose Codex, Claude, or both. QuotaTempo uses providers that are already signed in on your Mac; it does not ask for provider credentials.
+3. Choose **Full**, **Compact**, or **Icon only** for the menu-bar label.
+4. Open the menu-bar item and confirm that each enabled provider shows a weekly status or a support-safe availability message.
+
+This fixture screenshot shows the expected layout. Your values and provider availability will differ.
+
+![Expected QuotaTempo weekly comparison layout with Codex and Claude rows](docs/assets/fixture-menu-en.png)
+
+If the first run is unclear or stops before this point, use the privacy-safe [Public Beta feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
+
 ## Download
 
 Download the notarized ZIP and its SHA-256 from the [latest GitHub release](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). QuotaTempo currently supports Apple silicon Macs running macOS 14 or later.
