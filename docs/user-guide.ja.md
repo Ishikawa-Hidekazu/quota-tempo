@@ -67,6 +67,12 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
 
 各providerの詳細にある**週間リセット**は、providerの7日間枠が終了する日時です。**次の区切り**は、そのリセットから24時間単位で逆算した次の計画境界であり、別のリセットではありません。詳細日時には曜日も表示します。Claudeで最後に確認したリセットを安全に1週間だけ進めた場合は、**週間リセット（推定）**と表示します。日時が未取得・期限切れ・安全に使えない場合は`—`のままです。
 
+## Codexのbanked resetを使った場合
+
+OpenAIは、一度だけ使える[banked Codex reset](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work)を提供することがあります。full resetを適用すると、Codexの5時間枠と週間枠が更新され、週間リセット日も変わります。QuotaTempoは、reset特典の有無を探したり、resetを適用したり、有効期限を管理したりしません。
+
+resetを適用した後は、Codexの設定 › 使用状況で新しい枠を確認し、QuotaTempoの**更新**を押してください。取得に成功すると、以前のprovider観測値を新しい枠で置き換え、`W`、`P`、区切りの予定を再計算します。自動またはglobal resetは、banked resetとして表示されず直接適用される場合があります。QuotaTempoはCodexから報告された枠に追従しますが、枠が変わった理由までは推測・表示しません。
+
 QuotaTempoがLogin Itemsへ自動登録されることはありません。`/Applications`またはユーザーの`Applications`フォルダへ移動してから、**ログイン時に起動**を有効にしてください。ダウンロード、App Translocation、一時ディレクトリ、検証用コピーからはログイン項目を変更できません。macOS側の許可が必要な場合、その要求はまだ有効ではありません。表示に従ってシステム設定 › 一般 › ログイン項目で許可してください。アプリの移動、置換、アンインストール前にはこの設定をOFFにしてください。
 
 ## Providerを選ぶ

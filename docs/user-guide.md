@@ -67,6 +67,12 @@ On a smaller display or when macOS uses the Larger Text scaling option, QuotaTem
 
 In each provider detail, **Weekly reset** is when the provider's seven-day window ends. **Next checkpoint** is the next 24-hour planning boundary leading to that reset, not another reset. Detailed timestamps include the weekday. Claude may show **Weekly reset (estimated)** when QuotaTempo can safely advance the last confirmed reset by exactly one seven-day window. Missing or unsafe reset timing remains `—`.
 
+## If you use a banked Codex reset
+
+OpenAI may occasionally provide a one-time [banked Codex reset](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work). Applying a full reset refreshes the five-hour and weekly Codex windows and changes the weekly reset date. QuotaTempo does not discover available offers, apply a reset, or manage its expiration.
+
+After applying a reset, confirm the updated window in Codex Settings › Usage, then choose **Refresh** in QuotaTempo. A successful observation replaces the earlier provider-reported window and recalculates `W`, `P`, and the checkpoint schedule. An automatic or global reset can be applied directly without appearing as a banked reset. QuotaTempo follows the window reported by Codex but does not infer or label the reason for that change.
+
 QuotaTempo does not add itself to Login Items automatically. Move it to `/Applications` or your user `Applications` folder before enabling **Launch at login**. A downloaded, translocated, temporary, or verification copy cannot change the login-item setting. If macOS requires approval, the request is not active yet; follow the message to System Settings › General › Login Items. Turn the option off before moving, replacing, or uninstalling QuotaTempo.
 
 ## Choose providers

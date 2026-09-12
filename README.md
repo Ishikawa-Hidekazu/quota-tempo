@@ -62,6 +62,8 @@ The detail view may add:
 
 `TARGET NOW` is the ideal remaining capacity at the current instant. **Weekly reset** is the end of the provider's current weekly quota window. **Next checkpoint** is the next 24-hour planning boundary counted backward from that reset, not a local calendar-day boundary. Detailed timestamps include the localized weekday. A safely projected Claude reset is labeled **Weekly reset (estimated)** and also marks the plan as `P≈`. Differences are percentage points (`pts`), not percentage changes.
 
+OpenAI may occasionally provide a one-time [banked Codex reset](https://help.openai.com/en/articles/20001498-how-banked-codex-resets-work). Applying a full reset refreshes the provider's five-hour and weekly windows and changes the weekly reset date. QuotaTempo does not discover, activate, or manage reset offers. After applying one in Codex, confirm the new window in Codex Settings › Usage, then choose **Refresh** in QuotaTempo. The next successful provider observation replaces the earlier window and recalculates `W`, `P`, and the checkpoint schedule. An automatic or global reset may happen without creating a banked reset; QuotaTempo follows the reported window but does not claim why it changed.
+
 Five-hour quota is secondary. It belongs in detail or in an immediate-risk warning, not in the primary weekly table.
 
 The menu-bar label is weekly-first and can be changed inside the popover:
