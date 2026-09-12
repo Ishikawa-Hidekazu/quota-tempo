@@ -47,6 +47,22 @@ struct LiveAdapterTests {
     #expect(snapshot.errorCode == nil)
   }
 
+  @Test("Codex replaces an earlier window with the provider-reported window after a reset")
+  func codexRefreshAdoptsChangedWindow() {
+    let previous = self.snapshot(source: .codexAppServer)
+    let snapshot = CodexRateLimitAdapter(
+      runner: FakeRunner(result: .success(Self.codexResponse)),
+      executable: self.codexExecutable
+    ).refresh(previous: previous, now: self.now)
+    let plan = QuotaPlanner.evaluate(snapshot, now: self.now)
+
+    #expect(snapshot.weekly?.resetAt != previous.weekly?.resetAt)
+    #expect(snapshot.weekly?.resetAt == Date(timeIntervalSince1970: 1_789_905_600))
+    #expect(snapshot.weekly?.remainingPercent == 66)
+    #expect(plan.targetNow == 100)
+    #expect(plan.vsTarget == -34)
+  }
+
   @Test("Codex hides percentages when the provider reports access restrictions")
   func codexAccessRestrictionsFailClosed() {
     let payloads = [
