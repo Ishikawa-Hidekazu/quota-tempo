@@ -172,6 +172,14 @@ V1 also does not issue provider directives such as `Use Claude today`, infer the
 
 Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change. Never attach provider source files, credentials, tokens, cookies, prompts, transcripts, or personal quota values to a public issue.
 
+## Built by Ishikawa Hidekazu
+
+QuotaTempo is built and maintained by [Ishikawa Hidekazu](https://ishikawa.co/en/about/) as part of a small collection of reviewable tools for safer AI operations.
+
+- [public-source-extractor](https://github.com/Ishikawa-Hidekazu/public-source-extractor) - validate public URLs and turn them into reviewable Markdown or JSON
+- [codex-healthkit](https://github.com/Ishikawa-Hidekazu/codex-healthkit) - create metadata-only local health reports for Codex installations
+- [Explore all public projects](https://ishikawa.co/en/projects/)
+
 ## Design specification
 
 See [docs/product-spec.md](docs/product-spec.md).
