@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Questions and general feedback
+    url: https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2
+    about: Ask a question or share a first impression without opening an issue.
   - name: Security or privacy report
     url: https://github.com/Ishikawa-Hidekazu/quota-tempo/security/advisories/new
     about: Report sensitive security or privacy issues privately.

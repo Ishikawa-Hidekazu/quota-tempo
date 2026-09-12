@@ -3,8 +3,11 @@
 > Plan your AI week, not just your usage.
 
 [![CI](https://github.com/Ishikawa-Hidekazu/quota-tempo/actions/workflows/ci.yml/badge.svg)](https://github.com/Ishikawa-Hidekazu/quota-tempo/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Ishikawa-Hidekazu/quota-tempo)](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg)](docs/user-guide.md)
+
+**[Download the Public Beta](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest)** · [Japanese guide](docs/user-guide.ja.md) · [Feedback and questions](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2) · [Development story](https://taupe.site/entry/quotatempo-weekly-ai-capacity-planner/)
 
 QuotaTempo is a weekly AI capacity planner for Codex and Claude. Use either provider by itself or compare both. It is intended to show what you can use today before the weekly reset, without turning provider credentials or session history into application data.
 
@@ -27,7 +30,7 @@ This fixture screenshot shows the expected layout. Your values and provider avai
 
 ![Expected QuotaTempo weekly comparison layout with Codex and Claude rows](docs/assets/fixture-menu-en.png)
 
-If the first run is unclear or stops before this point, use the privacy-safe [Public Beta feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
+For general questions and first impressions, join the [Public Beta discussion](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2). If the first run is unclear or stops before this point, use the privacy-safe [Public Beta feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
 
 ## Download
 
