@@ -12,22 +12,38 @@ output="$2"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 metadata="$input/RELEASE-METADATA.json"
 tool="$repo_root/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
+key_tool="$repo_root/.build/artifacts/sparkle/Sparkle/bin/generate_keys"
+key_account="ed25519"
 
 test -f "$metadata"
 test -x "$tool"
+test -x "$key_tool"
 if [[ -e "$output" || -L "$output" ]]; then
   echo "Output already exists: $output" >&2
   exit 2
 fi
 
-"$repo_root/scripts/verify-release.sh" "$input" --skip-launch --require-notarized
 archive="$(plutil -extract archive raw -o - "$metadata")"
 release_version="$(plutil -extract release_version raw -o - "$metadata")"
+channel="$(plutil -extract channel raw -o - "$metadata")"
+signing="$(plutil -extract signing raw -o - "$metadata")"
+notarized="$(plutil -extract notarized raw -o - "$metadata")"
+"$repo_root/scripts/check-distribution-policy.sh" "$channel" "$signing" "$notarized"
+"$repo_root/scripts/verify-release.sh" "$input" --skip-launch --require-notarized
+
+expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+  "$repo_root/packaging/Info.plist")"
+keychain_public_key="$("$key_tool" --account "$key_account" -p)"
+if [[ "$keychain_public_key" != "$expected_public_key" ]]; then
+  echo "Sparkle signing key does not match the embedded public key." >&2
+  exit 2
+fi
 stage="$(mktemp -d "$(dirname "$output")/.quota-tempo-appcast.stage.XXXXXX")"
 trap 'if [[ "$stage" == */.quota-tempo-appcast.stage.* ]]; then /bin/rm -rf -- "$stage"; fi' EXIT
 
 cp -p "$input/$archive" "$stage/$archive"
 "$tool" \
+  --account "$key_account" \
   --download-url-prefix \
   "https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/download/v$release_version/" \
   --link "https://github.com/Ishikawa-Hidekazu/quota-tempo" \

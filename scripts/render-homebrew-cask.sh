@@ -19,7 +19,10 @@ fi
 archive="$(plutil -extract archive raw -o - "$metadata")"
 release_version="$(plutil -extract release_version raw -o - "$metadata")"
 channel="$(plutil -extract channel raw -o - "$metadata")"
-test "$channel" = stable
+signing="$(plutil -extract signing raw -o - "$metadata")"
+notarized="$(plutil -extract notarized raw -o - "$metadata")"
+"$(dirname "$0")/check-distribution-policy.sh" "$channel" "$signing" "$notarized"
+"$(dirname "$0")/verify-release.sh" "$release_dir" --skip-launch --require-notarized
 sha256="$(awk -v file="$archive" '$2 == file { print $1; exit }' "$release_dir/SHA256SUMS")"
 test -n "$sha256"
 
