@@ -32,6 +32,7 @@ jobs:
         run: brew style Casks/*.rb
       - name: Release policy
         run: |
+          ./scripts/test-version-consistency.sh
           ./scripts/test-release-policy.sh
           ./scripts/test-distribution-policy.sh
           ./scripts/test-package-reproducibility.sh
