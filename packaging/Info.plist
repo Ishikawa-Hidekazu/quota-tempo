@@ -28,6 +28,16 @@
   <string>public.app-category.productivity</string>
   <key>LSUIElement</key>
   <true/>
+  <key>SUFeedURL</key>
+  <string>https://ishikawa.co/downloads/quotatempo/appcast.xml</string>
+  <key>SUPublicEDKey</key>
+  <string>1moR+EQE+2yPAl8bk6OoJ7JMLJNlhfWvbRt31CDPjUE=</string>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+  <key>SUEnableSystemProfiling</key>
+  <false/>
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © 2026 Ishikawa Hidekazu. All rights reserved.</string>
   <key>QTReleaseChannel</key>

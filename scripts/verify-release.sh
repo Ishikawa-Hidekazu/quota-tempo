@@ -82,12 +82,23 @@ fi
 ditto -x -k "$release_dir/$archive" "$tmp"
 app="$tmp/QuotaTempo.app"
 test -d "$app"
-if find "$app" -type l -print -quit | grep -q .; then
-  echo "App contains a symbolic link." >&2
-  exit 2
-fi
+while IFS= read -r link; do
+  case "$link" in
+    "$app/Contents/Frameworks/Sparkle.framework/"*) ;;
+    *)
+      echo "App contains an unexpected symbolic link: $link" >&2
+      exit 2
+      ;;
+  esac
+  target="$(readlink "$link")"
+  if [[ "$target" == /* || "/$target/" == *"/../"* ]]; then
+    echo "App contains an unsafe symbolic link: $link -> $target" >&2
+    exit 2
+  fi
+done < <(find "$app" -type l -print)
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempo"
+codesign --verify --deep --strict --verbose=2 "$app/Contents/Frameworks/Sparkle.framework"
 test "$product" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$build"
@@ -101,6 +112,14 @@ test -f "$app/Contents/Resources/PRIVACY.md"
 test -f "$app/Contents/Resources/SUPPORT.md"
 test -f "$app/Contents/Resources/UPDATES.md"
 test -f "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+test -f "$app/Contents/Resources/SPARKLE-LICENSE"
+test -f "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = \
+  "https://ishikawa.co/downloads/quotatempo/appcast.xml"
+test -n "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
+test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$app/Contents/Info.plist")" = false
+otool -l "$app/Contents/MacOS/QuotaTempo" \
+  | grep -q 'path @executable_path/../Frameworks'
 test ! -e "$app/Contents/Resources/SHA256SUMS"
 test ! -e "$app/Contents/Resources/codex.json"
 test ! -e "$app/Contents/Resources/claude.json"

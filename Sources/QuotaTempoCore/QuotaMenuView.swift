@@ -66,6 +66,7 @@ public struct QuotaMenuView: View {
   private let timeZone: TimeZone
   private let availableHeight: CGFloat?
   private let onRefresh: (() -> Void)?
+  private let onCheckForUpdates: (() -> Void)?
   private let onOpenWindow: (() -> Void)?
   private let onMenuOpen: (() -> Void)?
   private let onMenuClose: (() -> Void)?
@@ -110,6 +111,7 @@ public struct QuotaMenuView: View {
     loginItemChangeFailed: Bool = false,
     onSetProviderEnabled: ((ProviderID, Bool) -> Void)? = nil,
     onRefresh: (() -> Void)? = nil,
+    onCheckForUpdates: (() -> Void)? = nil,
     onCopyDiagnostics: (() -> Bool)? = nil,
     onOpenWindow: (() -> Void)? = nil,
     onMenuOpen: (() -> Void)? = nil,
@@ -137,6 +139,7 @@ public struct QuotaMenuView: View {
     self.loginItemChangeFailed = loginItemChangeFailed
     self.onSetProviderEnabled = onSetProviderEnabled
     self.onRefresh = onRefresh
+    self.onCheckForUpdates = onCheckForUpdates
     self.onCopyDiagnostics = onCopyDiagnostics
     self.onOpenWindow = onOpenWindow
     self.onMenuOpen = onMenuOpen
@@ -315,7 +318,9 @@ public struct QuotaMenuView: View {
           .foregroundStyle(.secondary)
       }
 
-      if self.onRefresh != nil || self.onCopyDiagnostics != nil || self.onQuit != nil {
+      if self.onRefresh != nil || self.onCheckForUpdates != nil || self.onCopyDiagnostics != nil
+        || self.onQuit != nil
+      {
         HStack {
           if let onRefresh {
             Button(action: onRefresh) {
@@ -357,6 +362,11 @@ public struct QuotaMenuView: View {
               Label(self.copy.text("open.window"), systemImage: "macwindow")
             }
             .accessibilityLabel(self.copy.text("open.window"))
+          }
+          if let onCheckForUpdates {
+            Button(self.copy.text("check.for.updates"), action: onCheckForUpdates)
+              .buttonStyle(.link)
+              .accessibilityLabel(self.copy.text("check.for.updates"))
           }
           Button(self.copy.text("how.to.read")) {
             self.onboardingPresented = true

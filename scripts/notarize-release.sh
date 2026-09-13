@@ -67,7 +67,7 @@ plutil -convert json "$stage/RELEASE-METADATA.json"
 
 (
   cd "$tmp/extracted"
-  find QuotaTempo.app -print | LC_ALL=C sort | zip -X -q "$stage/$archive" -@
+  find QuotaTempo.app -print | LC_ALL=C sort | zip -X -y -q "$stage/$archive" -@
 )
 (
   cd "$stage"

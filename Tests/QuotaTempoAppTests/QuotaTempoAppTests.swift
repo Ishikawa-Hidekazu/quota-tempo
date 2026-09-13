@@ -94,6 +94,11 @@ struct QuotaTempoAppTests {
     #expect(service.state == .unavailable)
   }
 
+  @Test("Provider-disabled QA does not start the updater")
+  func providerDisabledUpdaterBoundary() {
+    #expect(!QuotaTempoUpdater(enabled: false).isEnabled)
+  }
+
   @Test("Unsupported app locations do not construct the system login item service")
   func unsupportedLocationSkipsServiceConstruction() {
     var serviceConstructionCount = 0

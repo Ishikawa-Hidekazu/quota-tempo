@@ -12,6 +12,9 @@ let package = Package(
     .executable(name: "QuotaTempoFixtureRenderer", targets: ["QuotaTempoFixtureRenderer"]),
     .executable(name: "QuotaTempoBridge", targets: ["QuotaTempoBridge"]),
   ],
+  dependencies: [
+    .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
+  ],
   targets: [
     .target(
       name: "QuotaTempoCore",
@@ -19,7 +22,10 @@ let package = Package(
     ),
     .executableTarget(
       name: "QuotaTempoApp",
-      dependencies: ["QuotaTempoCore"]
+      dependencies: [
+        "QuotaTempoCore",
+        .product(name: "Sparkle", package: "Sparkle"),
+      ]
     ),
     .executableTarget(
       name: "QuotaTempoFixtureRenderer",

@@ -15,7 +15,7 @@ mkdir -p "$parent"
 stage="$(mktemp -d "$parent/.QuotaTempo.app.stage.XXXXXX")"
 binary_stage="$(mktemp -d "$parent/.QuotaTempo.binaries.stage.XXXXXX")"
 trap 'rm -rf "$stage" "$binary_stage"' EXIT
-mkdir -p "$stage/Contents/MacOS" "$stage/Contents/Resources"
+mkdir -p "$stage/Contents/MacOS" "$stage/Contents/Resources" "$stage/Contents/Frameworks"
 
 swift build --package-path "$repo_root" -c release
 build_dir="$(swift build --package-path "$repo_root" -c release --show-bin-path)"
@@ -26,10 +26,14 @@ install -m 644 "$repo_root/LICENSE" "$stage/Contents/Resources/LICENSE"
 install -m 644 "$repo_root/PRIVACY.md" "$stage/Contents/Resources/PRIVACY.md"
 install -m 644 "$repo_root/SUPPORT.md" "$stage/Contents/Resources/SUPPORT.md"
 install -m 644 "$repo_root/UPDATES.md" "$stage/Contents/Resources/UPDATES.md"
+install -m 644 "$repo_root/.build/artifacts/sparkle/Sparkle/LICENSE" \
+  "$stage/Contents/Resources/SPARKLE-LICENSE"
 install -m 755 "$build_dir/QuotaTempo" "$binary_stage/QuotaTempo"
 strip -x "$binary_stage/QuotaTempo"
+install_name_tool -add_rpath @executable_path/../Frameworks "$binary_stage/QuotaTempo"
 codesign --force --sign - --timestamp=none "$binary_stage/QuotaTempo"
 install -m 755 "$binary_stage/QuotaTempo" "$stage/Contents/MacOS/QuotaTempo"
+ditto "$build_dir/Sparkle.framework" "$stage/Contents/Frameworks/Sparkle.framework"
 mkdir -p "$stage/Contents/Resources/QuotaTempoCoreResources"
 cp -R "$repo_root/Sources/QuotaTempoCore/Resources/en.lproj" \
   "$stage/Contents/Resources/QuotaTempoCoreResources/en.lproj"
