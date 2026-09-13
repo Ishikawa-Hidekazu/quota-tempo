@@ -6,10 +6,23 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp="$(mktemp -d /tmp/quota-tempo-reproducibility.XXXXXX)"
 trap 'if [[ "$tmp" == /tmp/quota-tempo-reproducibility.* ]]; then /bin/rm -rf -- "$tmp"; fi' EXIT
 
+test_repo="$repo_root"
+release_channel="$(tr -d '[:space:]' < "$repo_root/packaging/release-channel.txt")"
+if [[ "$release_channel" == "stable" ]]; then
+  test_repo="$tmp/rc-fixture"
+  git clone --quiet --no-hardlinks "$repo_root" "$test_repo"
+  printf 'rc.20\n' > "$test_repo/packaging/release-channel.txt"
+  git -C "$test_repo" add packaging/release-channel.txt
+  git -C "$test_repo" \
+    -c user.name='QuotaTempo CI' \
+    -c user.email='ci@invalid.example' \
+    commit --quiet -m 'Create isolated RC packaging fixture'
+fi
+
 first="$tmp/first"
 second="$tmp/second"
-"$repo_root/scripts/package-release.sh" "$first"
-"$repo_root/scripts/package-release.sh" "$second"
+"$test_repo/scripts/package-release.sh" "$first"
+"$test_repo/scripts/package-release.sh" "$second"
 
 first_archive="$(plutil -extract archive raw -o - "$first/RELEASE-METADATA.json")"
 second_archive="$(plutil -extract archive raw -o - "$second/RELEASE-METADATA.json")"
