@@ -3,6 +3,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+release_channel="$(tr -d '[:space:]' < "$repo_root/packaging/release-channel.txt")"
+if [[ "$release_channel" == "stable" ]]; then
+  printf 'package_reproducibility=SKIP\nreason=stable-requires-owner-managed-developer-id\n'
+  exit 0
+fi
+
 tmp="$(mktemp -d /tmp/quota-tempo-reproducibility.XXXXXX)"
 trap 'if [[ "$tmp" == /tmp/quota-tempo-reproducibility.* ]]; then /bin/rm -rf -- "$tmp"; fi' EXIT
 
