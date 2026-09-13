@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 — updater verification release
+
+- Publishes the first signed update after the 0.1.0 bridge release so GitHub, Sparkle, and Homebrew upgrade paths can be verified end to end.
+- Aligns the version reported to the Codex app-server with the installed QuotaTempo version.
+
 ## 0.1.0 — stable bridge release
 
 - Adds user-initiated, EdDSA-signed Sparkle update checks while keeping automatic installation disabled.
