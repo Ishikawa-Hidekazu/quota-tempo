@@ -122,8 +122,9 @@ team_identifier="$outer_team_identifier"
 # Normalize filesystem timestamps and write entries in a stable order. The app
 # contains only Sparkle's relative framework symlinks and no required extended
 # attributes, so Zip preserves the signed bundle while avoiding ditto's
-# run-specific AppleDouble metadata. Ad-hoc RC builds from the same commit are
-# therefore byte-identical.
+# run-specific AppleDouble metadata. Repeated ad-hoc RC builds in the same clean
+# checkout are therefore byte-identical; linker-generated Mach-O UUIDs put
+# independent fresh clones outside this guarantee.
 find "$app" ! -type l -exec touch -t 200001010000 {} +
 find "$app" -type l -exec touch -h -t 200001010000 {} +
 (
