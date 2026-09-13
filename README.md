@@ -15,7 +15,7 @@ V1 presents accurate numbers and a neutral side-by-side comparison. It does not 
 
 ## Status
 
-QuotaTempo 0.1.0 Public Beta is available now and remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The public beta has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
+The latest QuotaTempo Public Beta remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The public beta has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
 
 The current beta contains deterministic planning math, a native macOS menu-bar app with a focused first-run and reopenable application window, a bounded Codex app-server reader with verified official-desktop discovery and capability fallback, a hardened local snapshot store, an automatic local-first Claude adapter, provider selection, opt-in login launch, actionable compatibility diagnostics, and direct access to the bundled product policies.
 

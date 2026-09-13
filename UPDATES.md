@@ -8,6 +8,6 @@ The canonical download location is the [QuotaTempo releases page](https://github
 
 The public-beta 0.1.x line may receive compatibility, security, privacy, and display fixes. An update may change or remove an acquisition source when an upstream provider interface changes. The delivery model and pricing of future releases or additional features have not been decided. No particular update, feature, support period, or provider compatibility is promised.
 
-The first Sparkle-enabled release must still be installed manually from the canonical release page. Later signed releases can update that installation in place. Homebrew users may alternatively run `brew upgrade --cask quotatempo` after the cask becomes available.
+The first Sparkle-enabled release must still be installed manually from the canonical release page. Later signed releases can update that installation in place. Homebrew users who installed the published Cask may alternatively run `brew upgrade --cask quotatempo`.
 
 Before a manual update, quit QuotaTempo and keep the previous verified archive as the rollback source until the replacement passes the checks in the user guide. Normalized observations are stored separately under Application Support and are not required for rollback.
