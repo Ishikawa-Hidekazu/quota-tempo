@@ -42,7 +42,7 @@ Download the notarized ZIP and its SHA-256 from the [latest GitHub release](http
 
 Do not bypass Gatekeeper if macOS rejects the app. See the full [installation and usage guide](docs/user-guide.md) or the [Japanese guide](docs/user-guide.ja.md).
 
-The next stable release will be the update-capable bridge release. Install that release once from GitHub; later releases can be checked and installed with **Check for Updates...**. The updater uses a signed HTTPS feed, sends no system profile or quota data, and never forces silent installation. A Homebrew Cask is planned as a separate one-command install and upgrade route.
+Version 0.1.0 is the update-capable bridge release. Install it once from GitHub; later releases can be checked and installed with **Check for Updates...**. The updater uses a signed HTTPS feed, sends no system profile or quota data, and never forces silent installation. A Homebrew Cask is planned as a separate one-command install and upgrade route.
 
 ## Product focus
 

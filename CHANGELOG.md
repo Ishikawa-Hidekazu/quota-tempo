@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0 — stable bridge release
+
+- Adds user-initiated, EdDSA-signed Sparkle update checks while keeping automatic installation disabled.
+- Adds guarded appcast and Homebrew Cask generation for stable, Developer ID-signed, Apple-notarized artifacts only.
+- Pins the release identity, Sparkle signing account, update feed, and embedded public key verification boundary.
+- Adds same-clean-checkout package reproducibility coverage and documents the independent-clone Mach-O UUID boundary.
+
 ## 0.1.0-rc.19 — public beta candidate
 
 - Publishes QuotaTempo under the MIT License with public-beta support and update terms.
