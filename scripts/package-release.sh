@@ -59,6 +59,13 @@ if [[ "$sign_identity" == "-" ]]; then
 else
   sign_args+=(--timestamp)
 fi
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+codesign "${sign_args[@]}" "$sparkle/Versions/B/XPCServices/Installer.xpc"
+codesign "${sign_args[@]}" --preserve-metadata=entitlements \
+  "$sparkle/Versions/B/XPCServices/Downloader.xpc"
+codesign "${sign_args[@]}" "$sparkle/Versions/B/Autoupdate"
+codesign "${sign_args[@]}" "$sparkle/Versions/B/Updater.app"
+codesign "${sign_args[@]}" "$sparkle"
 codesign "${sign_args[@]}" "$app/Contents/MacOS/QuotaTempo"
 codesign "${sign_args[@]}" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
@@ -113,13 +120,15 @@ team_identifier="$outer_team_identifier"
   "$nested_team_identifier"
 
 # Normalize filesystem timestamps and write entries in a stable order. The app
-# contains no symlinks or required extended attributes, so a plain Zip archive
-# preserves the signed bundle while avoiding ditto's run-specific AppleDouble
-# metadata. Ad-hoc RC builds from the same commit are therefore byte-identical.
-find "$app" -exec touch -t 200001010000 {} +
+# contains only Sparkle's relative framework symlinks and no required extended
+# attributes, so Zip preserves the signed bundle while avoiding ditto's
+# run-specific AppleDouble metadata. Ad-hoc RC builds from the same commit are
+# therefore byte-identical.
+find "$app" ! -type l -exec touch -t 200001010000 {} +
+find "$app" -type l -exec touch -h -t 200001010000 {} +
 (
   cd "$tmp"
-  find QuotaTempo.app -print | LC_ALL=C sort | zip -X -q "$stage/$archive" -@
+  find QuotaTempo.app -print | LC_ALL=C sort | zip -X -y -q "$stage/$archive" -@
 )
 (
   cd "$stage"

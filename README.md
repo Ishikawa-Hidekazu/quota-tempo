@@ -42,6 +42,8 @@ Download the notarized ZIP and its SHA-256 from the [latest GitHub release](http
 
 Do not bypass Gatekeeper if macOS rejects the app. See the full [installation and usage guide](docs/user-guide.md) or the [Japanese guide](docs/user-guide.ja.md).
 
+The next stable release will be the update-capable bridge release. Install that release once from GitHub; later releases can be checked and installed with **Check for Updates...**. The updater uses a signed HTTPS feed, sends no system profile or quota data, and never forces silent installation. A Homebrew Cask is planned as a separate one-command install and upgrade route.
+
 ## Product focus
 
 The primary view is weekly:
@@ -131,6 +133,15 @@ After creating a Developer ID-signed release directory, submit it through an own
 The script validates the signed input, performs one `notarytool --wait` submission, staples the accepted ticket, verifies it with `stapler` and `spctl`, then regenerates the ZIP, SHA-256, and release metadata without overwriting the signed input. It does not accept Apple credentials as command-line arguments.
 
 `verify-release.sh` accepts a Developer ID-signed stable intermediate before notarization. Use `--require-notarized` only for the final public artifact; `notarize-release.sh` applies that stricter check automatically after stapling.
+
+For a notarized stable release, generate the signed Sparkle appcast and the Homebrew Cask from the verified release metadata:
+
+```bash
+./scripts/generate-appcast.sh dist/notarized dist/appcast
+./scripts/render-homebrew-cask.sh dist/notarized Casks/quotatempo.rb
+```
+
+The appcast generator uses Sparkle's owner-managed EdDSA key in the login Keychain and refuses unsigned output. The Cask renderer refuses non-stable metadata and derives the archive SHA-256 rather than accepting it as manual input. Publishing either artifact remains a separate release operation.
 
 Run the fixture-only menu-bar app locally:
 

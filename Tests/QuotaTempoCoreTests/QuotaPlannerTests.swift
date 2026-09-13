@@ -548,6 +548,8 @@ struct QuotaPlannerTests {
     #expect(MenuCopy(languageCode: "ja").source(.claudeLocalCache) == "Claudeローカルキャッシュ")
     #expect(MenuCopy(languageCode: "en").source(.claudeLocalMerged) == "Claude local sources")
     #expect(MenuCopy(languageCode: "en").text("refresh") == "Refresh")
+    #expect(MenuCopy(languageCode: "en").text("check.for.updates") == "Check for Updates...")
+    #expect(MenuCopy(languageCode: "ja").text("check.for.updates") == "アップデートを確認...")
     #expect(MenuCopy(languageCode: "en").status(.resetUnknown) == "Reset time unavailable")
     #expect(MenuCopy(languageCode: "ja").status(.resetUnknown) == "リセット時刻未取得")
     #expect(MenuCopy(languageCode: "en").text("claude.reset.help").contains("Claude Code"))

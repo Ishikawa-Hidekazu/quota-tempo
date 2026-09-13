@@ -71,6 +71,7 @@
 "refresh" = "更新";
 "refreshing" = "更新中…";
 "quit" = "QuotaTempoを終了";
+"check.for.updates" = "アップデートを確認...";
 "menu.bar.mode" = "メニューバー表示";
 "menu.bar.mode.full" = "すべて";
 "menu.bar.mode.compact" = "コンパクト";

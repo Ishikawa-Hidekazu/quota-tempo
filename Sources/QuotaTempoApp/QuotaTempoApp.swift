@@ -2,7 +2,31 @@ import AppKit
 import Combine
 import Foundation
 import QuotaTempoCore
+import Sparkle
 import SwiftUI
+
+@MainActor
+final class QuotaTempoUpdater {
+  private let controller: SPUStandardUpdaterController?
+
+  init(enabled: Bool = true, bundle: Bundle = .main) {
+    guard enabled, bundle.object(forInfoDictionaryKey: "SUFeedURL") != nil else {
+      self.controller = nil
+      return
+    }
+    self.controller = SPUStandardUpdaterController(
+      startingUpdater: true,
+      updaterDelegate: nil,
+      userDriverDelegate: nil
+    )
+  }
+
+  var isEnabled: Bool { self.controller != nil }
+
+  func checkForUpdates() {
+    self.controller?.checkForUpdates(nil)
+  }
+}
 
 @MainActor
 final class LiveQuotaModel: ObservableObject {
@@ -467,6 +491,7 @@ private struct QuotaTempoApplicationContent: View {
   @ObservedObject var presentation: QuotaTempoPresentationModel
   let appDelegate: QuotaTempoApplicationDelegate
   let productVersion: String
+  let updater: QuotaTempoUpdater
 
   var body: some View {
     QuotaMenuView(
@@ -500,6 +525,7 @@ private struct QuotaTempoApplicationContent: View {
         self.model.setProviderEnabled(provider, enabled: enabled)
       },
       onRefresh: { self.model.explicitRefresh() },
+      onCheckForUpdates: self.updater.isEnabled ? { self.updater.checkForUpdates() } : nil,
       onCopyDiagnostics: { self.copyDiagnostics() },
       onOpenWindow: { self.appDelegate.presentApplicationWindow() },
       onMenuOpen: {
@@ -539,6 +565,7 @@ struct QuotaTempoApp: App {
   @StateObject private var model: LiveQuotaModel
   @StateObject private var settings: QuotaTempoSettingsModel
   @StateObject private var presentation: QuotaTempoPresentationModel
+  private let updater: QuotaTempoUpdater
   private let clock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
   private let scheduledRefreshClock = Timer.publish(
     every: ProviderRefreshSchedule.interval,
@@ -572,6 +599,7 @@ struct QuotaTempoApp: App {
     self._settings = StateObject(
       wrappedValue: QuotaTempoSettingsModel(loginItemService: loginItemService)
     )
+    self.updater = QuotaTempoUpdater(enabled: !providerDisabled)
     if providerDisabled && arguments.contains("--exercise-provider-triggers") {
       model.menuOpened()
       model.scheduledRefresh()
@@ -629,6 +657,7 @@ struct QuotaTempoApp: App {
       presentation: self.presentation,
       appDelegate: self.appDelegate,
       productVersion: self.productVersion,
+      updater: self.updater
     )
   }
 

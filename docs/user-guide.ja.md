@@ -107,10 +107,11 @@ Codexの詳細画面では、未インストール、起動失敗、既知の旧
 
 ## 更新する
 
-1. **ログイン時に起動**が有効ならOFFにし、**QuotaTempoを終了**を選びます。
-2. 公式releaseページから新しいarchiveを取得し、SHA-256を確認します。
-3. 既存の`QuotaTempo.app`を新しいものへ置き換えます。
-4. QuotaTempoを開き、有効なprovider、取得元、鮮度、versionを確認します。
+最初のSparkle対応版だけは、公式releaseページから手動でインストールします。この版が、以後のアプリ内更新を有効にするbridge releaseです。
+
+bridge releaseの導入後は、QuotaTempoの**アップデートを確認...**からいつでも確認できます。macOSの確認画面で自動チェックを有効にした場合、Sparkleは最大1日1回確認し、インストール前に更新内容を表示します。QuotaTempoが無断で強制更新することはありません。
+
+Homebrew Caskも同じstable releaseで提供予定ですが、現時点では未公開です。公開後は`brew upgrade --cask quotatempo`を別のコマンド更新経路として利用できます。
 
 この確認が通るまでは、直前の検証済みarchiveをrollback元として保持してください。
 

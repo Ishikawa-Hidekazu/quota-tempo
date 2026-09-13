@@ -71,6 +71,7 @@
 "refresh" = "Refresh";
 "refreshing" = "Refreshing…";
 "quit" = "Quit QuotaTempo";
+"check.for.updates" = "Check for Updates...";
 "menu.bar.mode" = "Menu bar display";
 "menu.bar.mode.full" = "Full";
 "menu.bar.mode.compact" = "Compact";
