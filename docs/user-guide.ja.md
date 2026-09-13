@@ -107,11 +107,17 @@ Codexの詳細画面では、未インストール、起動失敗、既知の旧
 
 ## 更新する
 
-最初のSparkle対応版だけは、公式releaseページから手動でインストールします。この版が、以後のアプリ内更新を有効にするbridge releaseです。
+最初のSparkle対応版は、公式releaseページまたは下記のHomebrewコマンドからインストールします。この版が、以後のアプリ内更新を有効にするbridge releaseです。
 
 bridge releaseの導入後は、QuotaTempoの**アップデートを確認...**からいつでも確認できます。macOSの確認画面で自動チェックを有効にした場合、Sparkleは最大1日1回確認し、インストール前に更新内容を表示します。QuotaTempoが無断で強制更新することはありません。
 
-Homebrew Caskも同じstable releaseで提供予定ですが、現時点では未公開です。公開後は`brew upgrade --cask quotatempo`を別のコマンド更新経路として利用できます。
+Homebrewでは第三者Caskへの明示的なtrustが必要です。次の1行はQuotaTempoのCaskだけをtrustし、公開repoを配布元として登録して、同じnotarized releaseをインストールします。
+
+```bash
+brew trust --cask ishikawa-hidekazu/quotatempo/quotatempo && brew tap ishikawa-hidekazu/quotatempo https://github.com/Ishikawa-Hidekazu/quota-tempo.git && brew install --cask ishikawa-hidekazu/quotatempo/quotatempo
+```
+
+以後のコマンド更新には`brew upgrade --cask ishikawa-hidekazu/quotatempo/quotatempo`を使います。
 
 この確認が通るまでは、直前の検証済みarchiveをrollback元として保持してください。
 
