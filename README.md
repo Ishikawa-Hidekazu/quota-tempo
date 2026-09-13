@@ -117,14 +117,14 @@ The bundle sets `LSUIElement`, places the app at `Contents/MacOS/QuotaTempo`, it
 
 The current beta support matrix is macOS 14 or later on Apple silicon, with the official Codex app or CLI and Claude Desktop or Claude Code already signed in. QuotaTempo does not perform either provider's login. Unsupported or changed provider data fails closed. When Claude supplies a current balance after its last confirmed reset expires, QuotaTempo may project that exact weekly cadence once only when the new balance has increased, and marks the plan with `≈`. It never chains estimates. A valid weekly balance without confirmed or one-window projected timing remains visible, while its plan is labeled **Reset time unavailable**. Claude Desktop history does not supply that reset metadata; using Claude Code once can create the compatible local observation needed for `P`. A balance still attached to an elapsed reset is hidden as **Waiting for new quota window** until a current observation arrives.
 
-To create a local release candidate from a clean tree, run:
+To create a Developer ID-signed stable package from a clean tree, run:
 
 ```bash
-./scripts/package-release.sh dist/release
-./scripts/verify-release.sh dist/release --skip-launch
+./scripts/package-release.sh dist/signed "$DEVELOPER_ID_APPLICATION_IDENTITY"
+./scripts/verify-release.sh dist/signed --skip-launch
 ```
 
-This produces an RC-identified ad-hoc signed ZIP, external SHA-256 file, and metadata record for local QA. Repeated ad-hoc packaging in the same clean checkout is byte-identical; compiler-generated Mach-O UUIDs mean archives built in independent fresh clones are not claimed to be identical. Package-time verification checks the embedded source commit, build, channel, signature class, icon, architecture, and developer-path boundary without launching the extracted production-identifier copy. The dedicated isolated QA scripts use provider-disabled or QA-identifier bundles and cannot query the user's login-item record. Public distribution requires a Developer ID signature and Apple notarization; the ad-hoc artifact is not a public release.
+This produces a stable Developer ID-signed ZIP, external SHA-256 file, and metadata record ready for the separate notarization step. The identity value must name an owner-installed `Developer ID Application` certificate; the script does not accept credentials. Package-time verification checks the embedded source commit, build, channel, signature class, icon, architecture, and developer-path boundary without launching the extracted production-identifier copy. The dedicated isolated QA scripts use provider-disabled or QA-identifier bundles and cannot query the user's login-item record. CI tests ad-hoc RC reproducibility in an isolated clean fixture checkout; repeated packaging there is byte-identical, while independent fresh clones are outside that guarantee because linker-generated Mach-O UUIDs may differ.
 
 After creating a Developer ID-signed release directory, submit it through an owner-managed Keychain notary profile and write the stapled artifact to a new directory:
 
