@@ -38,7 +38,7 @@ cask "quotatempo" do
   homepage "https://ishikawa.co/en/projects/"
 
   depends_on arch: :arm64
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "QuotaTempo.app"
 
