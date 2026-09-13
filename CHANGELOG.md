@@ -122,7 +122,9 @@
 - Added low-frequency 15-minute provider refresh and immediate refresh after system wake, independent of whether the popover is open.
 - Distinguished a valid weekly observation with an unknown reset from a fully unavailable provider, and retained failed reset-acquisition metadata alongside the usable balance.
 - Added an original macOS application icon, deterministic development bundles, RC-specific archive identity, and signed release-candidate packaging verification.
-- Made ad-hoc RC archives byte-identical across repeated builds from the same clean commit by normalizing timestamps and entry order.
+- Made ad-hoc RC archives byte-identical across repeated builds in the same clean checkout by normalizing timestamps and entry order; independent fresh clones are outside this guarantee because the linker may generate different Mach-O UUIDs.
+- Added a signed Sparkle update feed and Homebrew Cask generation path that accepts only stable, Developer ID-signed, notarized artifacts after full release verification.
+- Kept Sparkle update checks user-initiated and disabled automatic download and installation.
 - Hardened provider subprocesses against early-exit SIGPIPE, incomplete process-group termination, and user-managed Codex installation paths.
 - Preserved atomic-save failures as visible in-memory acquisition state instead of silently reverting to an older snapshot.
 - Aligned popover and menu-bar provider deduplication, accumulated partial bridge input reads, and applied distributable app-bundle permissions.

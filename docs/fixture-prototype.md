@@ -34,6 +34,6 @@ swift test
 
 ## Safety boundary
 
-The source tree contains no network client, provider subprocess, provider-home lookup, credential reader, Keychain access, session reader, telemetry, updater, or persistence layer. The executable reads only package-bundled fixture resources.
+The fixture renderer execution path does not invoke the linked core's network client, provider subprocess, provider-home lookup, credential reader, Keychain access, session reader, telemetry, updater, or persistence layer. Its entry point reads only package-bundled fixture resources. The production app target invokes the separately documented Sparkle updater and local provider adapters; those runtime paths are outside this fixture-only boundary.
 
 The visual and accessibility copy is comparison-only. It does not recommend, select, or route work to a provider.

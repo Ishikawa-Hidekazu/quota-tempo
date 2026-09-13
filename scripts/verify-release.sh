@@ -116,8 +116,13 @@ test -f "$app/Contents/Resources/SPARKLE-LICENSE"
 test -f "$app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
 test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = \
   "https://ishikawa.co/downloads/quotatempo/appcast.xml"
-test -n "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
+expected_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' \
+  "$(dirname "$0")/../packaging/Info.plist")"
+test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")" = \
+  "$expected_public_key"
 test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$app/Contents/Info.plist")" = false
+test "$(/usr/libexec/PlistBuddy -c 'Print :SUAutomaticallyUpdate' "$app/Contents/Info.plist")" = false
+test "$(/usr/libexec/PlistBuddy -c 'Print :SUAllowsAutomaticUpdates' "$app/Contents/Info.plist")" = false
 otool -l "$app/Contents/MacOS/QuotaTempo" \
   | grep -q 'path @executable_path/../Frameworks'
 test ! -e "$app/Contents/Resources/SHA256SUMS"

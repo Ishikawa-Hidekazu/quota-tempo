@@ -98,6 +98,8 @@ Requirements: macOS 14 or later and Swift 6.
 ```bash
 swift build
 swift test
+./scripts/test-release-policy.sh
+./scripts/test-distribution-policy.sh
 ./scripts/render-fixture-proof.sh
 ./scripts/test-menu-bar-refresh.sh
 ```
@@ -122,7 +124,7 @@ To create a local release candidate from a clean tree, run:
 ./scripts/verify-release.sh dist/release --skip-launch
 ```
 
-This produces an RC-identified ad-hoc signed ZIP, external SHA-256 file, and metadata record for local QA. Repeated ad-hoc packaging from the same clean commit is byte-identical. Package-time verification checks the embedded source commit, build, channel, signature class, icon, architecture, and developer-path boundary without launching the extracted production-identifier copy. The dedicated isolated QA scripts use provider-disabled or QA-identifier bundles and cannot query the user's login-item record. Public distribution requires a Developer ID signature and Apple notarization; the ad-hoc artifact is not a public release.
+This produces an RC-identified ad-hoc signed ZIP, external SHA-256 file, and metadata record for local QA. Repeated ad-hoc packaging in the same clean checkout is byte-identical; compiler-generated Mach-O UUIDs mean archives built in independent fresh clones are not claimed to be identical. Package-time verification checks the embedded source commit, build, channel, signature class, icon, architecture, and developer-path boundary without launching the extracted production-identifier copy. The dedicated isolated QA scripts use provider-disabled or QA-identifier bundles and cannot query the user's login-item record. Public distribution requires a Developer ID signature and Apple notarization; the ad-hoc artifact is not a public release.
 
 After creating a Developer ID-signed release directory, submit it through an owner-managed Keychain notary profile and write the stapled artifact to a new directory:
 
@@ -141,7 +143,7 @@ For a notarized stable release, generate the signed Sparkle appcast and the Home
 ./scripts/render-homebrew-cask.sh dist/notarized Casks/quotatempo.rb
 ```
 
-The appcast generator uses Sparkle's owner-managed EdDSA key in the login Keychain and refuses unsigned output. The Cask renderer refuses non-stable metadata and derives the archive SHA-256 rather than accepting it as manual input. Publishing either artifact remains a separate release operation.
+Both generators require stable, Developer ID-signed, notarized release metadata and re-run full release verification. The appcast generator uses the explicitly selected Sparkle EdDSA account in the login Keychain, verifies that its public key matches the one embedded in QuotaTempo, and refuses unsigned output. The Cask renderer derives the archive SHA-256 rather than accepting it as manual input. Publishing either artifact remains a separate release operation.
 
 Run the fixture-only menu-bar app locally:
 

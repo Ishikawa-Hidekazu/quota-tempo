@@ -29,7 +29,10 @@ jobs:
           brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
           shellcheck scripts/*.sh
       - name: Release policy
-        run: ./scripts/test-release-policy.sh
+        run: |
+          ./scripts/test-release-policy.sh
+          ./scripts/test-distribution-policy.sh
+          ./scripts/test-package-reproducibility.sh
       - name: Deterministic bundle
         run: ./scripts/test-app-bundle.sh --skip-launch
       - name: Diff safety

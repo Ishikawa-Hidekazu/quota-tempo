@@ -2,7 +2,7 @@
 
 QuotaTempo uses Sparkle 2 to check the official HTTPS appcast for signed updates. Scheduled checks run at most once per day. QuotaTempo does not send system profiling data, quota values, reset times, provider data, diagnostics, credentials, or usage analytics with an update check.
 
-Use **Check for Updates...** in QuotaTempo to check manually. Sparkle presents the available version and release notes before installation. QuotaTempo does not force silent updates, and automatic installation is disabled.
+Use **Check for Updates...** in QuotaTempo to check manually. Sparkle presents the available version and release notes before installation. QuotaTempo does not force silent updates. Automatic installation is prohibited by the bundled update policy; update checks may be automatic after user opt-in, but installation always requires user interaction.
 
 The canonical download location is the [QuotaTempo releases page](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). Download the archive and SHA-256 from the same release. Do not download a build from an unofficial mirror.
 
