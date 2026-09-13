@@ -28,6 +28,8 @@ jobs:
         run: |
           brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
           shellcheck scripts/*.sh
+      - name: Homebrew Cask style
+        run: brew style Casks/*.rb
       - name: Release policy
         run: |
           ./scripts/test-release-policy.sh
