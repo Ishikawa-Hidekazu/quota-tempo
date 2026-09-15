@@ -151,7 +151,7 @@ Icon only  [neutral metronome glyph]
 
 The popover explains the abbreviations and retains the unabridged comparison:
 
-The operational popover requests enough height to show the comparison, both provider details, settings, and actions without scrolling when the menu-bar screen has room. Its viewport is clamped from the menu-bar screen's visible height with room for view padding, window chrome, and a bottom safety margin. On a smaller display or a scaled "Larger Text" workspace, the complete content remains reachable inside a visible ScrollView instead of placing the ScrollView itself beyond the screen. The independent application window uses the same clamp, updates its size when onboarding ends, refreshes state whenever it is presented, and exposes the same controls if the status item is obscured.
+The operational popover caps its viewport at 720 points so AppKit can keep the window attached to the menu-bar status item. Its viewport is also clamped from the screen's visible height with room for view padding, window chrome, and a bottom safety margin. The complete content remains reachable inside a visible ScrollView. The independent application window is not subject to the popover cap: it uses the larger content range, updates its size when onboarding ends, refreshes state whenever it is presented, and exposes the same controls if the status item is obscured.
 
 Primary table:
 
