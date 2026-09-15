@@ -111,6 +111,50 @@ struct QuotaPlannerTests {
     )
   }
 
+  @Test("Menu popover caps its viewport without shrinking the application window")
+  func menuPopoverUsesIndependentHeightCap() {
+    let availableHeight: CGFloat = 1_200
+    let popover = QuotaMenuLayout.viewportHeightRange(
+      onboarding: false,
+      availableHeight: availableHeight,
+      maximumHeight: QuotaMenuLayout.menuPopoverMaximumHeight
+    )
+    let applicationWindow = QuotaMenuLayout.viewportHeightRange(
+      onboarding: false,
+      availableHeight: availableHeight
+    )
+
+    #expect(popover.lowerBound == QuotaMenuLayout.menuPopoverMaximumHeight)
+    #expect(popover.upperBound == QuotaMenuLayout.menuPopoverMaximumHeight)
+    #expect(applicationWindow.lowerBound == QuotaMenuLayout.contentMinimumHeight)
+    #expect(applicationWindow.upperBound == QuotaMenuLayout.contentMaximumHeight)
+  }
+
+  @Test("Operational popover renders within its anchoring height budget")
+  @MainActor
+  func operationalPopoverFitsAnchoringBudget() throws {
+    let scenario = try FixtureLoader.load("baseline")
+    let view = QuotaMenuView(
+      scenario: scenario,
+      languageCode: "en",
+      timeZone: TimeZone(secondsFromGMT: 0)!,
+      availableHeight: 1_200,
+      maximumViewportHeight: QuotaMenuLayout.menuPopoverMaximumHeight,
+      enabledProviders: Set(scenario.snapshots.map(\.provider)),
+      onRefresh: {},
+      onQuit: {}
+    )
+    let renderer = ImageRenderer(content: view)
+    renderer.proposedSize = ProposedViewSize(width: QuotaMenuLayout.width, height: 1)
+    let rendered = try #require(renderer.nsImage).size
+
+    #expect(rendered.width == QuotaMenuLayout.width)
+    #expect(
+      rendered.height
+        <= QuotaMenuLayout.menuPopoverMaximumHeight + QuotaMenuLayout.verticalPadding
+    )
+  }
+
   @Test("Small-screen menu renders within its visible-height budget")
   @MainActor
   func smallScreenMenuFitsVisibleHeight() throws {

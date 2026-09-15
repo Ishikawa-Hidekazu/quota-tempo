@@ -11,17 +11,20 @@ public enum QuotaMenuLayout {
   static let onboardingMaximumHeight: CGFloat = 760
   static let contentMinimumHeight: CGFloat = 810
   static let contentMaximumHeight: CGFloat = 900
+  public static let menuPopoverMaximumHeight: CGFloat = 720
   static let verticalPadding: CGFloat = 36
   static let screenClearance: CGFloat = 44
   static let absoluteMinimumViewportHeight: CGFloat = 320
 
   public static func viewportHeightRange(
     onboarding: Bool,
-    availableHeight: CGFloat?
+    availableHeight: CGFloat?,
+    maximumHeight: CGFloat? = nil
   ) -> ClosedRange<CGFloat> {
     let baseMinimum = onboarding ? self.onboardingMinimumHeight : self.contentMinimumHeight
-    let baseMaximum = onboarding ? self.onboardingMaximumHeight : self.contentMaximumHeight
-    guard let availableHeight else { return baseMinimum...baseMaximum }
+    let uncappedMaximum = onboarding ? self.onboardingMaximumHeight : self.contentMaximumHeight
+    let baseMaximum = min(uncappedMaximum, maximumHeight ?? uncappedMaximum)
+    guard let availableHeight else { return min(baseMinimum, baseMaximum)...baseMaximum }
 
     let availableViewport = max(
       self.absoluteMinimumViewportHeight,
@@ -65,6 +68,7 @@ public struct QuotaMenuView: View {
   private let locale: Locale
   private let timeZone: TimeZone
   private let availableHeight: CGFloat?
+  private let maximumViewportHeight: CGFloat?
   private let onRefresh: (() -> Void)?
   private let onCheckForUpdates: (() -> Void)?
   private let onOpenWindow: (() -> Void)?
@@ -95,6 +99,7 @@ public struct QuotaMenuView: View {
     locale: Locale? = nil,
     timeZone: TimeZone = TimeZone(secondsFromGMT: 0)!,
     availableHeight: CGFloat? = nil,
+    maximumViewportHeight: CGFloat? = nil,
     menuBarDisplayMode: Binding<MenuBarDisplayMode> = .constant(.full),
     onboardingPresented: Binding<Bool> = .constant(false),
     refreshInFlight: Bool = false,
@@ -123,6 +128,7 @@ public struct QuotaMenuView: View {
     self.locale = locale ?? Locale(identifier: languageCode)
     self.timeZone = timeZone
     self.availableHeight = availableHeight
+    self.maximumViewportHeight = maximumViewportHeight
     self._menuBarDisplayMode = menuBarDisplayMode
     self._onboardingPresented = onboardingPresented
     self._launchAtLogin = launchAtLogin
@@ -150,7 +156,8 @@ public struct QuotaMenuView: View {
   public var body: some View {
     let viewportHeight = QuotaMenuLayout.viewportHeightRange(
       onboarding: self.onboardingPresented,
-      availableHeight: self.availableHeight
+      availableHeight: self.availableHeight,
+      maximumHeight: self.maximumViewportHeight
     )
     VStack(alignment: .leading, spacing: 16) {
       ScrollViewReader { proxy in

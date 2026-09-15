@@ -492,6 +492,7 @@ private struct QuotaTempoApplicationContent: View {
   let appDelegate: QuotaTempoApplicationDelegate
   let productVersion: String
   let updater: QuotaTempoUpdater
+  let maximumViewportHeight: CGFloat?
 
   var body: some View {
     QuotaMenuView(
@@ -500,6 +501,7 @@ private struct QuotaTempoApplicationContent: View {
       locale: .current,
       timeZone: .current,
       availableHeight: NSScreen.screens.first?.visibleFrame.height,
+      maximumViewportHeight: self.maximumViewportHeight,
       menuBarDisplayMode: self.$presentation.menuBarDisplayMode,
       onboardingPresented: self.$presentation.onboardingPresented,
       refreshInFlight: self.model.refreshInFlight,
@@ -611,7 +613,7 @@ struct QuotaTempoApp: App {
 
   var body: some Scene {
     MenuBarExtra {
-      self.applicationContent
+      self.menuBarContent
     } label: {
       Group {
         if self.presentation.menuBarDisplayMode != .iconOnly {
@@ -635,7 +637,7 @@ struct QuotaTempoApp: App {
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
       .onAppear {
         self.appDelegate.configureApplicationWindow {
-          AnyView(self.applicationContent)
+          AnyView(self.applicationWindowContent)
         } onboarding: {
           self.presentation.onboardingPresented
         } onPresent: {
@@ -650,14 +652,23 @@ struct QuotaTempoApp: App {
     .menuBarExtraStyle(.window)
   }
 
-  private var applicationContent: some View {
+  private var menuBarContent: some View {
+    self.applicationContent(maximumViewportHeight: QuotaMenuLayout.menuPopoverMaximumHeight)
+  }
+
+  private var applicationWindowContent: some View {
+    self.applicationContent(maximumViewportHeight: nil)
+  }
+
+  private func applicationContent(maximumViewportHeight: CGFloat?) -> some View {
     QuotaTempoApplicationContent(
       model: self.model,
       settings: self.settings,
       presentation: self.presentation,
       appDelegate: self.appDelegate,
       productVersion: self.productVersion,
-      updater: self.updater
+      updater: self.updater,
+      maximumViewportHeight: maximumViewportHeight
     )
   }
 
