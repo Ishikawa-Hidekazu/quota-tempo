@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 — menu popover positioning fix
+
+- Caps the menu-bar popover height so macOS can keep it attached to the status item.
+- Keeps the complete operational view reachable through scrolling without shrinking the independent application window.
+
 ## 0.1.1 — updater verification release
 
 - Publishes the first signed update after the 0.1.0 bridge release so GitHub, Sparkle, and Homebrew upgrade paths can be verified end to end.
