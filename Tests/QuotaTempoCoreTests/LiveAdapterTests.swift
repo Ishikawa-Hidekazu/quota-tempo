@@ -97,7 +97,7 @@ struct LiveAdapterTests {
     let lines = String(decoding: CodexRateLimitAdapter.protocolRequest, as: UTF8.self)
       .split(separator: "\n")
     #expect(lines.count == 3)
-    #expect(lines[0].contains(#""version":"0.1.1""#))
+    #expect(lines[0].contains(#""version":"0.1.2""#))
     #expect(lines[1] == #"{"method":"initialized"}"#)
     #expect(lines[2] == #"{"method":"account/rateLimits/read","id":2}"#)
   }
