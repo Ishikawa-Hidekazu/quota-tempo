@@ -138,10 +138,19 @@ To create a Developer ID-signed stable package from a clean tree, run:
 
 This produces a stable Developer ID-signed ZIP, external SHA-256 file, and metadata record ready for the separate notarization step. The identity value must name an owner-installed `Developer ID Application` certificate; the script does not accept credentials. Package-time verification checks the embedded source commit, build, channel, signature class, icon, architecture, and developer-path boundary without launching the extracted production-identifier copy. The dedicated isolated QA scripts use provider-disabled or QA-identifier bundles and cannot query the user's login-item record. CI tests ad-hoc RC reproducibility in an isolated clean fixture checkout; repeated packaging there is byte-identical, while independent fresh clones are outside that guarantee because linker-generated Mach-O UUIDs may differ.
 
-After creating a Developer ID-signed release directory, submit it through an owner-managed Keychain notary profile and write the stapled artifact to a new directory:
+Before the first notarization on a Mac, create the reusable `quotatempo-release` profile in that Mac's Keychain. Run the following command locally, and enter an Apple app-specific password only at the secure prompt. Never put the password in a command, file, issue, or chat:
 
 ```bash
-./scripts/notarize-release.sh dist/signed dist/notarized KEYCHAIN_PROFILE
+xcrun notarytool store-credentials quotatempo-release --apple-id YOUR_APPLE_ACCOUNT_EMAIL --team-id 9AQKR642UU
+./scripts/check-notary-profile.sh
+```
+
+The profile name is public configuration; the password stays in Keychain. Keep this profile across releases. On each release, run the read-only check first. If it fails, check the network and Keychain before creating another app-specific password. Apple Account password changes can revoke app-specific passwords, so this setup cannot be guaranteed forever.
+
+After creating a Developer ID-signed release directory, submit it through the stored profile and write the stapled artifact to a new directory:
+
+```bash
+./scripts/notarize-release.sh dist/signed dist/notarized
 ```
 
 The script validates the signed input, performs one `notarytool --wait` submission, staples the accepted ticket, verifies it with `stapler` and `spctl`, then regenerates the ZIP, SHA-256, and release metadata without overwriting the signed input. It does not accept Apple credentials as command-line arguments.

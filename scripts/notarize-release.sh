@@ -2,18 +2,18 @@
 
 set -euo pipefail
 
-if [[ $# -lt 3 || $# -gt 4 ]]; then
-  echo "Usage: $0 SIGNED_RELEASE_DIRECTORY OUTPUT_DIRECTORY KEYCHAIN_PROFILE [--resume-after-accepted]" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 SIGNED_RELEASE_DIRECTORY OUTPUT_DIRECTORY [--resume-after-accepted]" >&2
   exit 2
 fi
 
 input="$1"
 output="$2"
-keychain_profile="$3"
+keychain_profile="quotatempo-release"
 resume_after_accepted=false
-if [[ $# -eq 4 ]]; then
-  if [[ "$4" != "--resume-after-accepted" ]]; then
-    echo "Unknown option: $4" >&2
+if [[ $# -eq 3 ]]; then
+  if [[ "$3" != "--resume-after-accepted" ]]; then
+    echo "Unknown option: $3" >&2
     exit 2
   fi
   resume_after_accepted=true
@@ -47,6 +47,7 @@ test -f "$input/$archive"
 # Validate the signed input before the one authorized external submission.
 "$repo_root/scripts/verify-release.sh" "$input" --skip-launch
 if [[ "$resume_after_accepted" == false ]]; then
+  "$repo_root/scripts/check-notary-profile.sh"
   xcrun notarytool submit "$input/$archive" --keychain-profile "$keychain_profile" --wait
 fi
 
