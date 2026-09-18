@@ -31,6 +31,17 @@ struct LiveAdapterTests {
     #expect(ProviderRefreshSchedule.interval > ClaudeAutomaticAdapter.minimumRefreshInterval)
   }
 
+  @Test("Claude refresh can follow a new local observation within one minute")
+  func claudeRefreshTrigger() {
+    #expect(ClaudeAutomaticAdapter.shouldRefresh(lastAttemptAt: nil, now: self.now))
+    #expect(
+      !ClaudeAutomaticAdapter.shouldRefresh(
+        lastAttemptAt: self.now.addingTimeInterval(-54), now: self.now))
+    #expect(
+      ClaudeAutomaticAdapter.shouldRefresh(
+        lastAttemptAt: self.now.addingTimeInterval(-55), now: self.now))
+  }
+
   @Test("Codex classifies windows by duration and normalizes remaining capacity")
   func codexSuccess() {
     let runner = FakeRunner(result: .success(Self.codexResponse))
