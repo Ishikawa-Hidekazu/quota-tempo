@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 — Claude observation refresh
+
+- Checks Claude local observations approximately once per minute while the app is running, reducing the delay after Claude Desktop writes a new valid usage sample.
+- Keeps Codex polling unchanged and does not treat an unchanged or stale Claude sample as current.
+
 ## 0.1.2 — menu popover positioning fix
 
 - Caps the menu-bar popover height so macOS can keep it attached to the status item.
