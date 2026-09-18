@@ -204,6 +204,71 @@ struct QuotaTempoAppTests {
     #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 90)
   }
 
+  @Test("Minute clock acquires a new Claude history observation without opening the menu")
+  func clockAcquiresClaudeHistory() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)", isDirectory: true)
+    let suiteName = "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      defaults.removePersistentDomain(forName: suiteName)
+    }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("missing-cache.json")
+    let now = Date()
+    let oldCapture = now.addingTimeInterval(-120)
+    let store = NormalizedSnapshotStore(directory: root.appendingPathComponent("store"))
+    let preferences = ProviderSelectionPreferences(defaults: defaults)
+    preferences.save(ProviderSelection(enabled: [.claude]))
+    let oldSnapshot = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeDesktopHistory,
+      capturedAt: oldCapture,
+      weekly: QuotaWindow(remainingPercent: 70, durationSeconds: 604_800, resetAt: nil),
+      lastAttemptAt: now,
+      sourceState: .observationSucceeded
+    )
+    try store.save(oldSnapshot)
+    try Data("{\"samples\":[]}".utf8).write(to: history)
+    let model = LiveQuotaModel(
+      store: store,
+      acquisitionEnabled: true,
+      preferences: preferences,
+      claudeAdapter: ClaudeAutomaticAdapter(historyURL: history, cacheURL: cache)
+    )
+    for _ in 0..<100 where model.refreshInFlight {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.refreshInFlight)
+    let before = MenuBarTitleFormatter.renderIdentity(scenario: model.scenario, mode: .compact)
+
+    let eligibleSnapshot = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeDesktopHistory,
+      capturedAt: oldCapture,
+      weekly: oldSnapshot.weekly,
+      lastAttemptAt: now.addingTimeInterval(-60),
+      sourceState: .observationSucceeded
+    )
+    try store.save(eligibleSnapshot)
+    let timestamp = Int(now.timeIntervalSince1970 * 1_000)
+    try Data("{\"samples\":[{\"t\":\(timestamp),\"u\":{\"fh\":20,\"sd\":40}}]}".utf8)
+      .write(to: history)
+
+    model.clockAdvanced()
+
+    for _ in 0..<200 where model.scenario.snapshots.first?.weekly?.remainingPercent != 60 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try store.load(.claude)?.weekly?.remainingPercent == 60)
+    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 60)
+    #expect(
+      MenuBarTitleFormatter.renderIdentity(scenario: model.scenario, mode: .compact) != before)
+    #expect(model.enabledProviders == [.claude])
+  }
+
   @Test("Menu open presents current state before reloading disk asynchronously")
   func menuOpenReloadsSnapshotAsynchronously() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(

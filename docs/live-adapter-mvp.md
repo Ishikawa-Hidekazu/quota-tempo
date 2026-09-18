@@ -47,7 +47,7 @@ The shared subprocess runner sets `F_SETNOSIGPIPE`, makes provider input nonbloc
 
 ## Claude
 
-The app refreshes Claude on the same launch, 15-minute schedule, system-wake, menu-open, explicit-refresh, one-in-flight, and five-minute attempt boundary used by Codex. It acquires account-wide five-hour and weekly utilization without requiring CodexBar:
+The app refreshes Claude on launch, the shared 15-minute schedule, system wake, menu open, and explicit refresh. A 60-second clock also checks its local observation while the app runs. Claude uses a 55-second last-attempt guard so a regular clock tick is not skipped by timer jitter; Codex retains its five-minute guard. Only one Claude attempt may be in flight. A newly written source sample is normally picked up on a subsequent eligible tick, but this does not guarantee delivery within 60 seconds. It acquires account-wide five-hour and weekly utilization without requiring CodexBar:
 
 1. It reads Claude Desktop's `plan-usage-history.json` with an 8 MiB ceiling and rejects non-regular or symlink-selected paths. The newest sample supplies observed utilization but not a reset timestamp.
 2. It decodes only `cachedUsageUtilization` from Claude Code's local configuration with an 8 MiB ceiling. When Desktop history is newer, QuotaTempo combines its utilization with cached reset timestamps only if both observations fall within the same five-hour or weekly window. A complete current local result supplies utilization and reset timestamps without launching a process.

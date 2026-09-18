@@ -42,6 +42,7 @@ final class LiveQuotaModel: ObservableObject {
   private let store: NormalizedSnapshotStore
   private let acquisitionGate: ProviderAcquisitionGate
   private let preferences: ProviderSelectionPreferences?
+  private let claudeAdapter: ClaudeAutomaticAdapter
   private var selection: ProviderSelection
   private var initialDetectionPending: Bool
   private var initialDetectionTracker = InitialProviderDetectionTracker()
@@ -54,11 +55,13 @@ final class LiveQuotaModel: ObservableObject {
   init(
     store: NormalizedSnapshotStore,
     acquisitionEnabled: Bool,
-    preferences: ProviderSelectionPreferences? = nil
+    preferences: ProviderSelectionPreferences? = nil,
+    claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter()
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
     self.preferences = preferences
+    self.claudeAdapter = claudeAdapter
     let storedScenario = self.store.scenario(now: Date())
     if let configured = preferences?.load() {
       self.selection = configured
@@ -256,6 +259,7 @@ final class LiveQuotaModel: ObservableObject {
     self.claudeRefreshInFlight = true
     self.updateRefreshInFlight()
     let store = self.store
+    let adapter = self.claudeAdapter
     let transientSnapshots = self.transientSnapshots
     Task {
       let snapshot: ProviderSnapshot? = await withCheckedContinuation { continuation in
@@ -277,7 +281,7 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           continuation.resume(
-            returning: ClaudeAutomaticAdapter().refresh(previous: previous, now: now))
+            returning: adapter.refresh(previous: previous, now: now))
         }
       }
       if let snapshot {
