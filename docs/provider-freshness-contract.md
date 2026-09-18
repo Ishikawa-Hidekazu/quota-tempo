@@ -52,7 +52,7 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 
 ### Acquisition
 
-- Trigger on app launch, every 15 minutes while the menu-bar label remains active, after system wake, on menu open when the last attempt is older than 5 minutes, or explicit refresh.
+- Trigger on app launch, every 15 minutes while the menu-bar label remains active, after system wake, on menu open after the provider-specific last-attempt guard, or explicit refresh. Claude local observations are additionally checked every minute while running; Codex retains its five-minute guard.
 - Keep scheduling inside the menu-bar app; do not install a separate background daemon or login item.
 - Allow one in-flight attempt per provider.
 - Try no more than three recognized executable candidates. Each capability attempt has a 5-second timeout and 1 MiB combined output ceiling, strict recognized-field decoding, and process-tree termination. An explicit provider restriction stops fallback immediately.

@@ -84,6 +84,7 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   func clockAdvanced() {
+    self.refreshClaude(trigger: .scheduledRefresh, force: false)
     let now = Date()
     self.scenario = FixtureScenario(
       id: self.scenario.id,

@@ -60,7 +60,7 @@ public enum ClaudeCLIExecutableResolver {
 }
 
 public struct ClaudeAutomaticAdapter: Sendable {
-  public static let minimumRefreshInterval: TimeInterval = 5 * 60
+  public static let minimumRefreshInterval: TimeInterval = 55
   public static let localCacheMaximumAge: TimeInterval = 15 * 60
   public static let historyInputLimit = 8 * 1_024 * 1_024
   public static let cacheInputLimit = 8 * 1_024 * 1_024
