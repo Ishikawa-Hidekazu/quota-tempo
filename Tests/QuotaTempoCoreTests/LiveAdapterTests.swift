@@ -1076,8 +1076,8 @@ struct LiveAdapterTests {
     #expect(snapshot.errorCode == nil)
   }
 
-  @Test("Claude Desktop observation still reports a malformed optional cache")
-  func claudeAutomaticReportsMalformedOptionalCache() throws {
+  @Test("Claude Desktop observation survives a malformed optional cache")
+  func claudeAutomaticIgnoresMalformedOptionalCache() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1094,8 +1094,30 @@ struct LiveAdapterTests {
 
     #expect(snapshot.source == .claudeDesktopHistory)
     #expect(snapshot.weekly?.remainingPercent == 63)
-    #expect(snapshot.sourceState == .attemptFailed)
-    #expect(snapshot.errorCode == .invalidResponse)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+  }
+
+  @Test("Claude Desktop observation survives an oversized optional cache")
+  func claudeAutomaticIgnoresOversizedOptionalCache() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try self.historyJSON(samples: [(self.now.addingTimeInterval(-60), 22, 37)]).write(to: history)
+    try Data(repeating: 0x20, count: ClaudeAutomaticAdapter.cacheInputLimit + 1)
+      .write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 63)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
   }
 
   @Test("Claude empty local sources are unavailable rather than malformed")

@@ -120,12 +120,11 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
     guard self.cliFallbackEnabled else {
       if let retained = Self.preferredObservation(local: local, previous: previous, now: now) {
-        // A valid current local observation is sufficient. Claude Desktop-only users do not
-        // necessarily have the sibling Claude Code cache, so its absence is not a refresh failure.
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if local != nil, localError == nil || localError == .sourceUnavailable {
+        // Each local source is optional when the other has a valid observation.
+        if local != nil {
           return Self.success(retained, attemptedAt: now)
         }
+        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
         if let error = localError {
           return ProviderSnapshot(
             provider: .claude,

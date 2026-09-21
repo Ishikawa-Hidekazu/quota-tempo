@@ -87,6 +87,7 @@ V1 reads only recognized aggregate fields from Claude Desktop history and Claude
 
 - Read the two documented product paths named in `PRIVACY.md` with strict size and regular-file checks.
 - Decode only the recognized history and `cachedUsageUtilization` structures.
+- A valid observation from either local source succeeds independently; a malformed or oversized optional sibling source does not turn it into a failed refresh. Report a local read failure only when neither source yields a valid observation.
 - Combine a newer utilization reading with an older reset only when both observations belong to the same quota window.
 - Treat five-hour and seven-day windows as independently optional.
 - Exclude model-specific weekly buckets and Extra Usage.
