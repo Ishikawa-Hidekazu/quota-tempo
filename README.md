@@ -13,6 +13,10 @@ QuotaTempo is a weekly AI capacity planner for Codex and Claude. Use either prov
 
 V1 presents accurate numbers and a neutral side-by-side comparison. It does not recommend which provider to use; each user makes that decision from their own work context.
 
+[![Watch the 12-second QuotaTempo menu-bar demo](https://ishikawa.co/assets/video/quotatempo-demo-v013-landscape-poster.jpg)](https://ishikawa.co/en/products/quotatempo/#quota-demo)
+
+[Watch the 12-second demo](https://ishikawa.co/en/products/quotatempo/#quota-demo) of the menu-bar label, weekly comparison, and display modes. It uses a v0.1.3 fixture, not live quota readings; your values will differ.
+
 ## Status
 
 The latest QuotaTempo Public Beta remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The public beta has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
