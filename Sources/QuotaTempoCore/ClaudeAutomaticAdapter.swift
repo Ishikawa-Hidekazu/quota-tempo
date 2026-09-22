@@ -110,6 +110,21 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
     let local = Self.localCandidate(history: history, cache: cache)
+    let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+
+    if localError == .unsafePath {
+      let retained = Self.preferredObservation(local: local, previous: previous, now: now)
+      return ProviderSnapshot(
+        provider: .claude,
+        source: retained?.source ?? .claudeDesktopHistory,
+        capturedAt: retained?.capturedAt,
+        weekly: retained?.weekly,
+        fiveHour: retained?.fiveHour,
+        lastAttemptAt: now,
+        sourceState: .attemptFailed,
+        errorCode: .unsafePath
+      )
+    }
 
     if let local, Self.isCompleteAndFresh(local, now: now) {
       return Self.success(
@@ -124,20 +139,16 @@ public struct ClaudeAutomaticAdapter: Sendable {
         if local != nil {
           return Self.success(retained, attemptedAt: now)
         }
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if let error = localError {
-          return ProviderSnapshot(
-            provider: .claude,
-            source: retained.source,
-            capturedAt: retained.capturedAt,
-            weekly: retained.weekly,
-            fiveHour: retained.fiveHour,
-            lastAttemptAt: now,
-            sourceState: .attemptFailed,
-            errorCode: Self.acquisitionError(for: error)
-          )
-        }
-        return Self.success(retained, attemptedAt: now)
+        return ProviderSnapshot(
+          provider: .claude,
+          source: retained.source,
+          capturedAt: retained.capturedAt,
+          weekly: retained.weekly,
+          fiveHour: retained.fiveHour,
+          lastAttemptAt: now,
+          sourceState: .attemptFailed,
+          errorCode: localError.map(Self.acquisitionError(for:)) ?? .sourceUnavailable
+        )
       }
       return ProviderSnapshot(
         provider: .claude,
@@ -147,8 +158,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         fiveHour: nil,
         lastAttemptAt: now,
         sourceState: .attemptFailed,
-        errorCode: Self.preferredLocalError(historyRead.error, cacheRead.error)
-          .map(Self.acquisitionError(for:)) ?? .sourceUnavailable
+        errorCode: localError.map(Self.acquisitionError(for:)) ?? .sourceUnavailable
       )
     }
 
