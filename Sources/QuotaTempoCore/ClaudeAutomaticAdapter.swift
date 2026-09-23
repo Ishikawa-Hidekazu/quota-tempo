@@ -17,11 +17,11 @@ public struct FileBoundedLocalDataReader: BoundedLocalDataReading {
 
   public func read(from url: URL, limit: Int) throws -> Data {
     let manager = FileManager.default
-    guard manager.fileExists(atPath: url.path) else {
-      throw ClaudeAutomaticAdapterError.sourceUnavailable
-    }
     guard !LocalPathSafety.containsSymlink(atOrAbove: url, fileManager: manager) else {
       throw ClaudeAutomaticAdapterError.unsafePath
+    }
+    guard manager.fileExists(atPath: url.path) else {
+      throw ClaudeAutomaticAdapterError.sourceUnavailable
     }
     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
     guard values.isRegularFile == true else { throw ClaudeAutomaticAdapterError.unsafePath }
