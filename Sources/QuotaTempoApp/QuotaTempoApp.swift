@@ -57,6 +57,7 @@ final class LiveQuotaModel: ObservableObject {
     acquisitionEnabled: Bool,
     preferences: ProviderSelectionPreferences? = nil,
     claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
       resolveCLIOnRefresh: true,
       ptyProbeEnabled: true
     )
