@@ -54,6 +54,18 @@ private struct FailingUsagePTYProbe: ClaudeUsageProbing {
   func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
 }
 
+private struct AdapterFailingUsagePTYProbe: ClaudeUsageProbing {
+  let error: ClaudeAutomaticAdapterError
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
+private struct ProcessFailingUsagePTYProbe: ClaudeUsageProbing {
+  let error: BoundedProcessError
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
 struct ClaudeAutomaticPTYTests {
   @Test("Live Claude guard tolerates jitter before the fifteen-minute scheduler")
   func probeInterval() {
@@ -109,7 +121,7 @@ struct ClaudeAutomaticPTYTests {
     ).refresh(previous: nil, now: now)
 
     #expect(snapshot.sourceState == .attemptFailed)
-    #expect(snapshot.errorCode == .sourceUnavailable)
+    #expect(snapshot.errorCode == .invalidResponse)
     #expect(snapshot.weekly?.resetAt == nil)
   }
 
@@ -377,5 +389,36 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.weekly == previous.weekly)
     #expect(snapshot.sourceState == .attemptFailed)
     #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
+  @Test("PTY failures retain actionable diagnostic categories")
+  func diagnosticCategories() {
+    let now = Date()
+    let base = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: AdapterFailingUsagePTYProbe(error: .invalidInput)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(base.errorCode == .invalidResponse)
+
+    let unsafe = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: AdapterFailingUsagePTYProbe(error: .unsafePath)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(unsafe.errorCode == .unsafePath)
+
+    let launch = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: ProcessFailingUsagePTYProbe(error: .launchFailed)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(launch.errorCode == .launchFailed)
   }
 }

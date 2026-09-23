@@ -1290,8 +1290,27 @@ struct LiveAdapterTests {
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: executable)
 
     #expect(
-      ClaudeCLIExecutableResolver.resolve(homeDirectory: root)
+      ClaudeCLIExecutableResolver.resolve(homeDirectory: root, trustCheck: { _ in true })
         == executable.resolvingSymlinksInPath())
+  }
+
+  @Test("Claude CLI resolver rejects an untrusted executable")
+  func claudeCLIResolverRejectsUntrustedCandidate() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = root.appendingPathComponent(".local/bin/claude")
+    try FileManager.default.createDirectory(
+      at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\n".utf8).write(to: local)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: local.path)
+
+    let resolved = ClaudeCLIExecutableResolver.resolve(
+      homeDirectory: root,
+      trustCheck: { _ in false },
+      fileManager: .default
+    )
+
+    #expect(resolved == nil)
   }
 
   @Test("Claude automatic adapter fails closed when no CLI executable is available")

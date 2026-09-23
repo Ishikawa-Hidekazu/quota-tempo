@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum ClaudeAutomaticAdapterError: Error, Equatable {
   case sourceUnavailable
@@ -35,9 +36,50 @@ public struct FileBoundedLocalDataReader: BoundedLocalDataReading {
   }
 }
 
+public enum ClaudeCLITrustVerifier {
+  public static let expectedIdentifier = "com.anthropic.claude-code"
+  public static let expectedTeamIdentifier = "Q6L2SF6YDW"
+  static let requirement =
+    #"anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW""#
+
+  public static func isTrusted(_ executable: URL) -> Bool {
+    var staticCode: SecStaticCode?
+    guard
+      SecStaticCodeCreateWithPath(executable as CFURL, [], &staticCode) == errSecSuccess,
+      let staticCode
+    else { return false }
+
+    var requirement: SecRequirement?
+    guard
+      SecRequirementCreateWithString(self.requirement as CFString, [], &requirement)
+        == errSecSuccess,
+      let requirement,
+      SecStaticCodeCheckValidity(
+        staticCode,
+        SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures),
+        requirement
+      ) == errSecSuccess
+    else { return false }
+
+    var information: CFDictionary?
+    guard
+      SecCodeCopySigningInformation(
+        staticCode,
+        SecCSFlags(rawValue: kSecCSSigningInformation),
+        &information
+      ) == errSecSuccess,
+      let values = information as? [String: Any],
+      values[kSecCodeInfoIdentifier as String] as? String == self.expectedIdentifier,
+      values[kSecCodeInfoTeamIdentifier as String] as? String == self.expectedTeamIdentifier
+    else { return false }
+    return true
+  }
+}
+
 public enum ClaudeCLIExecutableResolver {
   public static func resolve(
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    trustCheck: @Sendable (URL) -> Bool = ClaudeCLITrustVerifier.isTrusted,
     fileManager: FileManager = .default
   ) -> URL? {
     let candidates = [
@@ -53,6 +95,7 @@ public enum ClaudeCLIExecutableResolver {
         values.isRegularFile == true,
         fileManager.isExecutableFile(atPath: resolved.path)
       else { continue }
+      guard trustCheck(resolved) else { continue }
       return resolved
     }
     return nil
@@ -167,6 +210,21 @@ public struct ClaudeAutomaticAdapter: Sendable {
         return self.fallback(
           local: local, previous: previous, now: now,
           state: .attemptFailed, error: .outputLimitExceeded
+        )
+      } catch BoundedProcessError.launchFailed, BoundedProcessError.inputWriteFailed {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .launchFailed
+        )
+      } catch ClaudeAutomaticAdapterError.unsafePath {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .unsafePath
+        )
+      } catch ClaudeAutomaticAdapterError.invalidInput {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .invalidResponse
         )
       } catch {
         return self.fallback(
