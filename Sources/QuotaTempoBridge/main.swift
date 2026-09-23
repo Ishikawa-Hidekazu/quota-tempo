@@ -36,9 +36,45 @@ do {
   case "refresh-claude":
     let output = URL(fileURLWithPath: try value(after: "--output", in: arguments))
     let previous = try? NormalizedSnapshotStore.load(from: output, expectedProvider: .claude)
-    let snapshot = ClaudeAutomaticAdapter().refresh(previous: previous, now: Date())
+    let snapshot = ClaudeAutomaticAdapter(ptyProbeEnabled: true).refresh(
+      previous: previous, now: Date(), forceLiveProbe: arguments.contains("--force-pty")
+    )
     try FileAtomicDataWriter().write(try NormalizedSnapshotCodec.encode(snapshot), to: output)
     if snapshot.sourceState != .observationSucceeded { exit(3) }
+  case "diagnose-claude-pty":
+    guard let executable = ClaudeCLIExecutableResolver.resolve() else {
+      print(#"{"stage":"cliMissing"}"#)
+      exit(3)
+    }
+    let freshDirectory = arguments.contains("--fresh-directory")
+    let directory =
+      freshDirectory
+      ? FileManager.default.temporaryDirectory.appendingPathComponent(
+        "QuotaTempoClaudeProbe-Fresh", isDirectory: true)
+      : FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask
+      )[0].appendingPathComponent("QuotaTempo/ClaudeProbe", isDirectory: true)
+    if freshDirectory, FileManager.default.fileExists(atPath: directory.path) {
+      try FileManager.default.removeItem(at: directory)
+    }
+    defer {
+      if freshDirectory { try? FileManager.default.removeItem(at: directory) }
+    }
+    do {
+      let output = try FoundationClaudeUsagePTYProbe().capture(
+        executable: executable, workingDirectory: directory
+      )
+      let parsed = ClaudeUsageTextParser.parse(output, now: Date())
+      print(
+        "{\"stage\":\"panelCaptured\",\"capturedBytes\":\(output.count),\"weeklyExactResetPresent\":\(parsed?.weekly?.resetAt != nil),\"fiveHourExactResetPresent\":\(parsed?.fiveHour?.resetAt != nil)}"
+      )
+    } catch let error as ClaudeUsagePTYProbeError {
+      switch error {
+      case .timeout(let stage): print("{\"stage\":\"\(stage.rawValue)\"}")
+      case .authenticationRequired: print(#"{"stage":"authenticationRequired"}"#)
+      }
+      exit(3)
+    }
   case "ingest-claude":
     let output = URL(fileURLWithPath: try value(after: "--output", in: arguments))
     let snapshot = try ClaudeStatusLineBridge.normalize(

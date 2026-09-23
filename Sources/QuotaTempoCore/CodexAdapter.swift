@@ -96,7 +96,7 @@ private final class ProcessInputCloser: @unchecked Sendable {
   }
 }
 
-private final class RunningProcessRegistry: @unchecked Sendable {
+final class RunningProcessRegistry: @unchecked Sendable {
   static let shared = RunningProcessRegistry()
 
   private let lock = NSLock()
@@ -430,7 +430,7 @@ public struct FoundationBoundedProcessRunner: BoundedProcessRunning {
     }
   }
 
-  private static func terminateTree(_ process: Process, grace: TimeInterval) {
+  static func terminateTree(_ process: Process, grace: TimeInterval) {
     guard process.isRunning else { return }
     let pid = process.processIdentifier
     let descendants = Self.descendantPIDs(of: pid)
@@ -449,7 +449,7 @@ public struct FoundationBoundedProcessRunner: BoundedProcessRunning {
     if process.isRunning { _ = kill(pid, SIGKILL) }
   }
 
-  private static func descendantPIDs(of rootPID: pid_t) -> [pid_t] {
+  static func descendantPIDs(of rootPID: pid_t) -> [pid_t] {
     var result: [pid_t] = []
     var pending = [rootPID]
     var seen = Set<pid_t>()
@@ -1001,7 +1001,7 @@ public struct CodexRateLimitAdapter: Sendable {
 
   static let protocolRequest = Data(
     """
-    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.3"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
+    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.4"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
     {"method":"initialized"}
     {"method":"account/rateLimits/read","id":2}
 

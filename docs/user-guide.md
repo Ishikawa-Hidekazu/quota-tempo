@@ -83,7 +83,7 @@ On first launch, QuotaTempo selects providers for which it can find an existing 
 
 ## Refresh and freshness
 
-QuotaTempo performs a bounded refresh for enabled providers when it starts, every 15 minutes while it remains running, and after the Mac wakes. While running, Claude's local observation is also checked approximately once per minute, so a newly written valid Desktop history sample can be picked up without manual refresh. Menu-open refreshes respect each provider's last-attempt guard (five minutes for Codex, 55 seconds for Claude). Automatic and menu-open refreshes never start a second request while the same provider is already in flight. Choose **Refresh** to request every enabled provider immediately. While an enabled provider is being checked, the control reads **Refreshing…** and is disabled.
+QuotaTempo performs a bounded refresh for enabled providers when it starts, every 15 minutes while it remains running, and after the Mac wakes. Menu-open refreshes respect each provider's last-attempt guard (five minutes for Codex and 14 minutes for Claude; the shorter Claude guard prevents timer jitter from skipping a scheduled cycle). Automatic and menu-open refreshes never start a second request while the same provider is already in flight. Choose **Refresh** to request every enabled provider immediately. While an enabled provider is being checked, the control reads **Refreshing…** and is disabled.
 
 - **Current** or **Recent** values can be compared with the plan.
 - **Stale** preserves the last observed weekly value as `W?`. If its reset is still valid, QuotaTempo continues to calculate `P` and the reset-derived checkpoint schedule, but withholds the difference and available capacity until a current balance arrives.

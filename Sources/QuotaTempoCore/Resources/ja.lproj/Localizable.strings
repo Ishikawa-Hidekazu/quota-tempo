@@ -31,7 +31,7 @@
 "claude.local.boundary" = "このMacで最後に確認した値です。";
 "stale.comparison.confirmed.help" = "W?は最後に確認した残量です。Pは最後に確認したリセットから計算しています。目標差と利用可能量は最新の残量待ちです。";
 "stale.comparison.estimated.help" = "W?は最後に確認した残量です。P≈はリセットを1期間だけ進めた推定から計算しています。目標差と利用可能量は最新の残量待ちです。";
-"claude.reset.help" = "Pの表示にはリセット時刻を含むClaude Codeのローカル利用情報が必要です。Claude Codeを利用後に更新してください。";
+"claude.reset.help" = "Claudeの現在のリセット時刻を確認できませんでした。Claude Codeへサインイン済みか確認してから更新してください。";
 "source.state.neverObserved" = "未取得";
 "source.state.observationSucceeded" = "取得成功";
 "source.state.accessRestricted" = "provider側で利用制限中";
@@ -52,6 +52,7 @@
 "error.versionTooOld" = "Codexのバージョンが古いため取得できません。CodexまたはChatGPTを更新してから再度更新してください。";
 "error.protocolIncompatible" = "Codex app-serverに互換性がありません。CodexとQuotaTempoを更新してから再度更新してください。";
 "error.temporaryFailure" = "Codexの利用状況を一時的に取得できません。Codexへログイン済みか確認してから更新してください。";
+"error.authenticationRequired" = "Claude Codeにサインインしていません。公式のClaude Codeでサインインしてから更新してください。";
 "freshness.live" = "最新";
 "freshness.recent" = "最近";
 "freshness.stale" = "更新待ち";

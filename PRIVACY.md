@@ -5,9 +5,9 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 ## Data read
 
 - Codex: rate-limit metadata returned by the installed official `codex app-server` process.
-- Claude: only the recognized usage fields in `~/Library/Application Support/Claude/plan-usage-history.json` and the `cachedUsageUtilization` subtree in `~/.claude.json`. Other fields in those files are not decoded or retained. The V1 release path does not launch Claude CLI as a fallback.
+- Claude: only the recognized usage fields in `~/Library/Application Support/Claude/plan-usage-history.json` and the `cachedUsageUtilization` subtree in `~/.claude.json`. Other fields in those files are not decoded or retained. QuotaTempo can launch the already-installed, already-signed-in Claude Code CLI in a bounded pseudo-terminal, enter `/usage`, and read only the session and all-model weekly percentages and reset times from its rendered panel. It first uses a complete recent local observation. Automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard; explicit **Refresh** invokes it immediately. QuotaTempo does not copy the raw terminal output to its store or diagnostics.
 
-QuotaTempo does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. Provider-owned processes remain subject to their providers' own privacy terms and network behavior.
+QuotaTempo does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. It disables tools, hooks, MCP configuration, user setting sources, Remote Control startup, and auto-update for the probe, caps its runtime and output, requests a normal CLI exit, and terminates discovered child processes afterward. The provider-owned CLI still uses its existing sign-in, contacts Anthropic for current usage, and may update its own local usage or session metadata; its own privacy terms and network behavior apply.
 
 ## Data stored
 

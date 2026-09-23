@@ -31,7 +31,7 @@
 "claude.local.boundary" = "Last observed on this Mac.";
 "stale.comparison.confirmed.help" = "W? is the last observed balance. P is calculated from the last confirmed reset. Difference and available capacity are waiting for a current balance.";
 "stale.comparison.estimated.help" = "W? is the last observed balance. P≈ is calculated from a one-window reset estimate. Difference and available capacity are waiting for a current balance.";
-"claude.reset.help" = "To show P, use Claude Code once so its local usage data includes the reset time, then refresh.";
+"claude.reset.help" = "QuotaTempo could not confirm Claude's current reset time. Confirm that Claude Code is signed in, then refresh.";
 "source.state.neverObserved" = "Never observed";
 "source.state.observationSucceeded" = "Observation succeeded";
 "source.state.accessRestricted" = "Provider access restricted";
@@ -52,6 +52,7 @@
 "error.versionTooOld" = "This Codex version is too old. Update Codex or ChatGPT, then refresh.";
 "error.protocolIncompatible" = "This Codex app-server is not compatible. Update Codex and QuotaTempo, then refresh.";
 "error.temporaryFailure" = "Codex usage is temporarily unavailable. Confirm that Codex is signed in, then refresh.";
+"error.authenticationRequired" = "Claude Code is not signed in. Sign in with the official Claude Code app, then refresh.";
 "freshness.live" = "Current";
 "freshness.recent" = "Recent";
 "freshness.stale" = "Stale";

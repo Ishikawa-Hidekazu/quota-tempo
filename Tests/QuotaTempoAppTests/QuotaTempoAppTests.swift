@@ -204,8 +204,8 @@ struct QuotaTempoAppTests {
     #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 90)
   }
 
-  @Test("Minute clock acquires a new Claude history observation without opening the menu")
-  func clockAcquiresClaudeHistory() async throws {
+  @Test("Minute clock does not acquire Claude; scheduled refresh does")
+  func clockDoesNotAcquireClaude() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)", isDirectory: true)
     let suiteName = "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)"
@@ -249,7 +249,7 @@ struct QuotaTempoAppTests {
       source: .claudeDesktopHistory,
       capturedAt: oldCapture,
       weekly: oldSnapshot.weekly,
-      lastAttemptAt: now.addingTimeInterval(-60),
+      lastAttemptAt: now.addingTimeInterval(-15 * 60),
       sourceState: .observationSucceeded
     )
     try store.save(eligibleSnapshot)
@@ -258,7 +258,13 @@ struct QuotaTempoAppTests {
       .write(to: history)
 
     model.clockAdvanced()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(try store.load(.claude)?.weekly?.remainingPercent == 70)
+    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 70)
+    #expect(
+      MenuBarTitleFormatter.renderIdentity(scenario: model.scenario, mode: .compact) == before)
 
+    model.scheduledRefresh()
     for _ in 0..<200 where model.scenario.snapshots.first?.weekly?.remainingPercent != 60 {
       try await Task.sleep(for: .milliseconds(10))
     }

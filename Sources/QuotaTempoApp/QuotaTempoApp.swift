@@ -56,7 +56,7 @@ final class LiveQuotaModel: ObservableObject {
     store: NormalizedSnapshotStore,
     acquisitionEnabled: Bool,
     preferences: ProviderSelectionPreferences? = nil,
-    claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter()
+    claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter(ptyProbeEnabled: true)
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
@@ -87,7 +87,6 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   func clockAdvanced() {
-    self.refreshClaude(trigger: .scheduledRefresh, force: false)
     let now = Date()
     self.scenario = FixtureScenario(
       id: self.scenario.id,
@@ -281,7 +280,7 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           continuation.resume(
-            returning: adapter.refresh(previous: previous, now: now))
+            returning: adapter.refresh(previous: previous, now: now, forceLiveProbe: force))
         }
       }
       if let snapshot {
