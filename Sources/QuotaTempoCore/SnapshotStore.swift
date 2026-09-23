@@ -53,6 +53,9 @@ enum LocalPathSafety {
     var candidate = URL(fileURLWithPath: "/")
     for component in URL(fileURLWithPath: canonicalPath).pathComponents.dropFirst() {
       candidate.appendPathComponent(component)
+      if (try? fileManager.destinationOfSymbolicLink(atPath: candidate.path)) != nil {
+        return true
+      }
       guard fileManager.fileExists(atPath: candidate.path) else { continue }
       if (try? candidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
         return true

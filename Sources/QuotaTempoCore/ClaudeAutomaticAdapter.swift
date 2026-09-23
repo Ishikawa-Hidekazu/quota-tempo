@@ -17,11 +17,11 @@ public struct FileBoundedLocalDataReader: BoundedLocalDataReading {
 
   public func read(from url: URL, limit: Int) throws -> Data {
     let manager = FileManager.default
-    guard manager.fileExists(atPath: url.path) else {
-      throw ClaudeAutomaticAdapterError.sourceUnavailable
-    }
     guard !LocalPathSafety.containsSymlink(atOrAbove: url, fileManager: manager) else {
       throw ClaudeAutomaticAdapterError.unsafePath
+    }
+    guard manager.fileExists(atPath: url.path) else {
+      throw ClaudeAutomaticAdapterError.sourceUnavailable
     }
     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
     guard values.isRegularFile == true else { throw ClaudeAutomaticAdapterError.unsafePath }
@@ -172,6 +172,20 @@ public struct ClaudeAutomaticAdapter: Sendable {
       livePTYAvailable
       ? Self.newestUnmerged(history: history, cache: cache)
       : Self.localCandidate(history: history, cache: cache)
+    let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+
+    if localError == .unsafePath {
+      let failedSource: SnapshotSource =
+        historyRead.error == .unsafePath ? .claudeDesktopHistory : .claudeLocalCache
+      return self.fallback(
+        local: local,
+        previous: previous,
+        now: now,
+        state: .attemptFailed,
+        error: .unsafePath,
+        emptySource: failedSource
+      )
+    }
 
     if !forceLiveProbe, let local, Self.isCompleteAndFresh(local, now: now) {
       return Self.success(
@@ -188,20 +202,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         let retained =
           Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
           ?? local
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if localError == nil || localError == .sourceUnavailable {
-          return Self.success(retained, attemptedAt: now)
-        }
-        return ProviderSnapshot(
-          provider: .claude,
-          source: retained.source,
-          capturedAt: retained.capturedAt,
-          weekly: retained.weekly,
-          fiveHour: retained.fiveHour,
-          lastAttemptAt: now,
-          sourceState: .attemptFailed,
-          errorCode: localError.map(Self.acquisitionError(for:))
-        )
+        return Self.success(retained, attemptedAt: now)
       }
       do {
         return Self.success(try self.readPTY(executable: cliExecutable), attemptedAt: now)
@@ -261,10 +262,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
     guard self.cliFallbackEnabled else {
       if let retained = Self.preferredObservation(local: local, previous: previous, now: now) {
-        // A valid current local observation is sufficient. Claude Desktop-only users do not
-        // necessarily have the sibling Claude Code cache, so its absence is not a refresh failure.
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if local != nil, localError == nil || localError == .sourceUnavailable {
+        // Each local source is optional when the other has a valid observation.
+        if local != nil {
           return Self.success(retained, attemptedAt: now)
         }
         if let error = localError {
@@ -289,8 +288,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         fiveHour: nil,
         lastAttemptAt: now,
         sourceState: .attemptFailed,
-        errorCode: Self.preferredLocalError(historyRead.error, cacheRead.error)
-          .map(Self.acquisitionError(for:)) ?? .sourceUnavailable
+        errorCode: localError.map(Self.acquisitionError(for:)) ?? .sourceUnavailable
       )
     }
 
@@ -372,7 +370,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
     previous: ProviderSnapshot?,
     now: Date,
     state: SourceState,
-    error: AcquisitionErrorCode
+    error: AcquisitionErrorCode,
+    emptySource: SnapshotSource = .claudeCLI
   ) -> ProviderSnapshot {
     if let previous, Self.hasCurrentExactReset(previous, now: now) {
       return ProviderSnapshot(
@@ -404,7 +403,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     return AcquisitionRecords.preservingFailure(
       previous: nil,
       provider: .claude,
-      source: .claudeCLI,
+      source: emptySource,
       attemptedAt: now,
       state: state,
       error: error

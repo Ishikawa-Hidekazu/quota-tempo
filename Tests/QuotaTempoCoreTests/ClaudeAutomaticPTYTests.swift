@@ -475,8 +475,8 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.sourceState == .observationSucceeded)
   }
 
-  @Test("Claude Code absence does not hide malformed local usage data")
-  func desktopOnlyWithoutCLIRetainsLocalError() throws {
+  @Test("Claude Code absence keeps a valid Desktop observation despite a malformed cache")
+  func desktopOnlyWithoutCLIIgnoresMalformedOptionalCache() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -503,8 +503,108 @@ struct ClaudeAutomaticPTYTests {
 
     #expect(snapshot.source == .claudeDesktopHistory)
     #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+  }
+
+  @Test("Unsafe local paths fail before the live PTY probe")
+  func unsafeLocalPathPreventsPTYProbe() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let realCache = root.appendingPathComponent("real-cache.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    try Data("{}".utf8).write(to: realCache)
+    try FileManager.default.createSymbolicLink(at: cache, withDestinationURL: realCache)
+    let probe = ExecutableRecordingPTYProbe(
+      output: Data(
+        "Current week (all models)\n20% used\nResets 2026-09-29T05:00:00Z".utf8
+      )
+    )
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 63, durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42, durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)),
+      lastAttemptAt: now.addingTimeInterval(-600),
+      sourceState: .observationSucceeded
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: probe,
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.fiveHour == previous.fiveHour)
+    #expect(snapshot.capturedAt == previous.capturedAt)
     #expect(snapshot.sourceState == .attemptFailed)
-    #expect(snapshot.errorCode == .invalidResponse)
+    #expect(snapshot.errorCode == .unsafePath)
+    #expect(probe.executables.isEmpty)
+  }
+
+  @Test("Dangling local symlinks fail before the live PTY probe")
+  func danglingLocalSymlinkPreventsPTYProbe() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    try FileManager.default.createSymbolicLink(
+      at: cache,
+      withDestinationURL: root.appendingPathComponent("missing-cache.json")
+    )
+    let probe = ExecutableRecordingPTYProbe(
+      output: Data(
+        "Current week (all models)\n20% used\nResets 2026-09-29T05:00:00Z".utf8
+      )
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: probe,
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .unsafePath)
+    #expect(probe.executables.isEmpty)
   }
 
   @Test("Late authentication prompt stages remain authentication failures")
