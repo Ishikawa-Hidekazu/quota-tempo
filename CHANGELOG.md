@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 — resilient Claude local observations
+
+- Keeps a valid Claude Desktop or Claude Code observation available when the optional sibling source is malformed or oversized.
+- Retains a current exact reset when a local source fails its path-safety check, while preserving the failed source in diagnostics.
+- Rejects regular and dangling symlink-selected local sources before starting the live PTY probe.
+
 ## 0.1.4 — live Claude usage
 
 - Reads Claude Code's rendered `/usage` panel through a bounded local PTY when current reset times are unavailable from recognized local observations.
