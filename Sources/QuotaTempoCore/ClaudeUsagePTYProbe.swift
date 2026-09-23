@@ -32,6 +32,31 @@ public enum ClaudeUsagePTYProbeError: Error, Equatable, Sendable {
   }
 }
 
+final class ClaudeSessionArtifactRegistry: @unchecked Sendable {
+  static let shared = ClaudeSessionArtifactRegistry()
+
+  private let lock = NSLock()
+  private var sessions: [String: URL] = [:]
+
+  func register(_ id: String, directory: URL) {
+    self.lock.lock()
+    defer { self.lock.unlock() }
+    self.sessions[id] = directory
+  }
+
+  func unregister(_ id: String) {
+    self.lock.lock()
+    defer { self.lock.unlock() }
+    self.sessions.removeValue(forKey: id)
+  }
+
+  func snapshot() -> [(String, URL)] {
+    self.lock.lock()
+    defer { self.lock.unlock() }
+    return self.sessions.map { ($0.key, $0.value) }
+  }
+}
+
 public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
   public let timeout: TimeInterval
   public let outputLimit: Int
@@ -112,7 +137,11 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
     }
     process.environment = environment
-    do { try process.run() } catch { throw BoundedProcessError.launchFailed }
+    ClaudeSessionArtifactRegistry.shared.register(sessionID, directory: workingDirectory)
+    do { try process.run() } catch {
+      ClaudeSessionArtifactRegistry.shared.unregister(sessionID)
+      throw BoundedProcessError.launchFailed
+    }
     _ = setpgid(process.processIdentifier, process.processIdentifier)
     let processGroup =
       getpgid(process.processIdentifier) == process.processIdentifier
@@ -124,6 +153,7 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       Self.stop(process, group: processGroup, descendants: knownDescendants)
       if self.registerForShutdown { RunningProcessRegistry.shared.unregister(process) }
       Self.cleanupSession(sessionID, in: workingDirectory)
+      ClaudeSessionArtifactRegistry.shared.unregister(sessionID)
     }
 
     let startedAt = Date()
@@ -390,5 +420,12 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       (try? artifact.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     else { return }
     try? FileManager.default.removeItem(at: artifact)
+  }
+
+  static func cleanupRegisteredSessions() {
+    for (id, directory) in ClaudeSessionArtifactRegistry.shared.snapshot() {
+      self.cleanupSession(id, in: directory)
+      ClaudeSessionArtifactRegistry.shared.unregister(id)
+    }
   }
 }

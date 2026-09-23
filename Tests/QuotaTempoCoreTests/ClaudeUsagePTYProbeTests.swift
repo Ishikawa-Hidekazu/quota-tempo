@@ -249,6 +249,31 @@ struct ClaudeUsagePTYProbeTests {
     }
   }
 
+  @Test("Application shutdown removes a registered Claude session artifact")
+  func shutdownRemovesRegisteredSession() throws {
+    let directory = URL(fileURLWithPath: "/tmp/QuotaTempoProbeShutdownTest")
+    let id = UUID().uuidString.lowercased()
+    let projectName = directory.path.utf16.map { unit -> Character in
+      switch unit {
+      case 48...57, 65...90, 97...122: Character(UnicodeScalar(unit)!)
+      default: "-"
+      }
+    }
+    let project = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".claude/projects", isDirectory: true)
+      .appendingPathComponent(String(projectName), isDirectory: true)
+    let artifact = project.appendingPathComponent("\(id).jsonl")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Data("temporary".utf8).write(to: artifact)
+    defer { try? FileManager.default.removeItem(at: artifact) }
+    ClaudeSessionArtifactRegistry.shared.register(id, directory: directory)
+
+    FoundationBoundedProcessRunner.terminateAllRunningProcesses()
+
+    #expect(!FileManager.default.fileExists(atPath: artifact.path))
+    #expect(!ClaudeSessionArtifactRegistry.shared.snapshot().contains { $0.0 == id })
+  }
+
   @Test("PTY probe terminates a CLI child even when its parent exits")
   func stopsExitedParentChild() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -428,6 +428,7 @@ public struct FoundationBoundedProcessRunner: BoundedProcessRunning {
     for process in RunningProcessRegistry.shared.snapshot() {
       self.terminateTree(process, grace: 0.3)
     }
+    FoundationClaudeUsagePTYProbe.cleanupRegisteredSessions()
   }
 
   static func terminateTree(_ process: Process, grace: TimeInterval) {
