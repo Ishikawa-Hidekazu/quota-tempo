@@ -532,6 +532,19 @@ struct ClaudeAutomaticPTYTests {
         "Current week (all models)\n20% used\nResets 2026-09-29T05:00:00Z".utf8
       )
     )
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 63, durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42, durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)),
+      lastAttemptAt: now.addingTimeInterval(-600),
+      sourceState: .observationSucceeded
+    )
 
     let snapshot = ClaudeAutomaticAdapter(
       cliExecutable: URL(fileURLWithPath: "/mock/claude"),
@@ -540,10 +553,12 @@ struct ClaudeAutomaticPTYTests {
       ptyProbeEnabled: true,
       ptyProbe: probe,
       probeDirectory: root.appendingPathComponent("probe")
-    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
 
-    #expect(snapshot.source == .claudeDesktopHistory)
-    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.fiveHour == previous.fiveHour)
+    #expect(snapshot.capturedAt == previous.capturedAt)
     #expect(snapshot.sourceState == .attemptFailed)
     #expect(snapshot.errorCode == .unsafePath)
     #expect(probe.executables.isEmpty)

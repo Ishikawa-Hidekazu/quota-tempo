@@ -175,19 +175,12 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
 
     if localError == .unsafePath {
-      let retained = Self.preferredObservation(
-        local: local, previous: previous, now: now,
-        allowMerge: !livePTYAvailable
-      )
-      return ProviderSnapshot(
-        provider: .claude,
-        source: retained?.source ?? .claudeDesktopHistory,
-        capturedAt: retained?.capturedAt,
-        weekly: retained?.weekly,
-        fiveHour: retained?.fiveHour,
-        lastAttemptAt: now,
-        sourceState: .attemptFailed,
-        errorCode: .unsafePath
+      return self.fallback(
+        local: local,
+        previous: previous,
+        now: now,
+        state: .attemptFailed,
+        error: .unsafePath
       )
     }
 
