@@ -36,12 +36,12 @@ final class ClaudeSessionArtifactRegistry: @unchecked Sendable {
   static let shared = ClaudeSessionArtifactRegistry()
 
   private let lock = NSLock()
-  private var sessions: [String: URL] = [:]
+  private var sessions: [String: (URL, URL)] = [:]
 
-  func register(_ id: String, directory: URL) {
+  func register(_ id: String, directory: URL, projectsDirectory: URL) {
     self.lock.lock()
     defer { self.lock.unlock() }
-    self.sessions[id] = directory
+    self.sessions[id] = (directory, projectsDirectory)
   }
 
   func unregister(_ id: String) {
@@ -50,10 +50,10 @@ final class ClaudeSessionArtifactRegistry: @unchecked Sendable {
     self.sessions.removeValue(forKey: id)
   }
 
-  func snapshot() -> [(String, URL)] {
+  func snapshot() -> [(String, URL, URL)] {
     self.lock.lock()
     defer { self.lock.unlock() }
-    return self.sessions.map { ($0.key, $0.value) }
+    return self.sessions.map { ($0.key, $0.value.0, $0.value.1) }
   }
 }
 
@@ -61,17 +61,29 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
   public let timeout: TimeInterval
   public let outputLimit: Int
   private let registerForShutdown: Bool
+  private let sessionProjectsDirectory: URL
 
   public init(timeout: TimeInterval = 40, outputLimit: Int = 1_048_576) {
     self.timeout = timeout
     self.outputLimit = outputLimit
     self.registerForShutdown = true
+    self.sessionProjectsDirectory = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".claude/projects", isDirectory: true)
   }
 
-  init(timeout: TimeInterval, outputLimit: Int = 1_048_576, registerForShutdown: Bool) {
+  init(
+    timeout: TimeInterval,
+    outputLimit: Int = 1_048_576,
+    registerForShutdown: Bool,
+    sessionProjectsDirectory: URL? = nil
+  ) {
     self.timeout = timeout
     self.outputLimit = outputLimit
     self.registerForShutdown = registerForShutdown
+    self.sessionProjectsDirectory =
+      sessionProjectsDirectory
+      ?? FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".claude/projects", isDirectory: true)
   }
 
   public func capture(executable: URL, workingDirectory: URL) throws -> Data {
@@ -79,6 +91,11 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
     guard !LocalPathSafety.containsSymlink(atOrAbove: workingDirectory, fileManager: manager) else {
       throw ClaudeAutomaticAdapterError.unsafePath
     }
+    guard
+      !LocalPathSafety.containsSymlink(
+        atOrAbove: self.sessionProjectsDirectory, fileManager: manager),
+      Self.isOwnedDirectoryIfPresent(self.sessionProjectsDirectory)
+    else { throw ClaudeAutomaticAdapterError.unsafePath }
     try manager.createDirectory(
       at: workingDirectory,
       withIntermediateDirectories: true,
@@ -137,7 +154,11 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
     }
     process.environment = environment
-    ClaudeSessionArtifactRegistry.shared.register(sessionID, directory: workingDirectory)
+    ClaudeSessionArtifactRegistry.shared.register(
+      sessionID,
+      directory: workingDirectory,
+      projectsDirectory: self.sessionProjectsDirectory
+    )
     do { try process.run() } catch {
       ClaudeSessionArtifactRegistry.shared.unregister(sessionID)
       throw BoundedProcessError.launchFailed
@@ -151,7 +172,11 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       Self.requestExit(process, descriptor: master)
       Self.stop(process, group: processGroup)
       if self.registerForShutdown { RunningProcessRegistry.shared.unregister(process) }
-      Self.cleanupSession(sessionID, in: workingDirectory)
+      Self.cleanupSession(
+        sessionID,
+        in: workingDirectory,
+        projectsDirectory: self.sessionProjectsDirectory
+      )
       ClaudeSessionArtifactRegistry.shared.unregister(sessionID)
     }
 
@@ -403,15 +428,25 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
     process.waitUntilExit()
   }
 
-  private static func cleanupSession(_ id: String, in directory: URL) {
+  private static func isOwnedDirectoryIfPresent(_ directory: URL) -> Bool {
+    var directoryStat = stat()
+    if lstat(directory.path, &directoryStat) != 0 { return errno == ENOENT }
+    return directoryStat.st_uid == geteuid() && directoryStat.st_mode & S_IFMT == S_IFDIR
+  }
+
+  private static func cleanupSession(
+    _ id: String,
+    in directory: URL,
+    projectsDirectory: URL
+  ) {
     let name = directory.path.precomposedStringWithCanonicalMapping.utf16.map { unit -> Character in
       switch unit {
       case 48...57, 65...90, 97...122: Character(UnicodeScalar(unit)!)
       default: "-"
       }
     }
-    let project = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".claude/projects", isDirectory: true)
+    let project =
+      projectsDirectory
       .appendingPathComponent(String(name), isDirectory: true)
     let artifact = project.appendingPathComponent("\(id).jsonl")
     guard !LocalPathSafety.containsSymlink(atOrAbove: artifact, fileManager: .default),
@@ -421,8 +456,8 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
   }
 
   static func cleanupRegisteredSessions() {
-    for (id, directory) in ClaudeSessionArtifactRegistry.shared.snapshot() {
-      self.cleanupSession(id, in: directory)
+    for (id, directory, projectsDirectory) in ClaudeSessionArtifactRegistry.shared.snapshot() {
+      self.cleanupSession(id, in: directory, projectsDirectory: projectsDirectory)
       ClaudeSessionArtifactRegistry.shared.unregister(id)
     }
   }

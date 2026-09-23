@@ -251,7 +251,10 @@ struct ClaudeUsagePTYProbeTests {
 
   @Test("Application shutdown removes a registered Claude session artifact")
   func shutdownRemovesRegisteredSession() throws {
-    let directory = URL(fileURLWithPath: "/tmp/QuotaTempoProbeShutdownTest")
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("probe", isDirectory: true)
+    let projectsDirectory = root.appendingPathComponent("projects", isDirectory: true)
     let id = UUID().uuidString.lowercased()
     let projectName = directory.path.utf16.map { unit -> Character in
       switch unit {
@@ -259,19 +262,49 @@ struct ClaudeUsagePTYProbeTests {
       default: "-"
       }
     }
-    let project = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".claude/projects", isDirectory: true)
+    let project =
+      projectsDirectory
       .appendingPathComponent(String(projectName), isDirectory: true)
     let artifact = project.appendingPathComponent("\(id).jsonl")
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     try Data("temporary".utf8).write(to: artifact)
-    defer { try? FileManager.default.removeItem(at: artifact) }
-    ClaudeSessionArtifactRegistry.shared.register(id, directory: directory)
+    ClaudeSessionArtifactRegistry.shared.register(
+      id,
+      directory: directory,
+      projectsDirectory: projectsDirectory
+    )
 
     FoundationBoundedProcessRunner.terminateAllRunningProcesses()
 
     #expect(!FileManager.default.fileExists(atPath: artifact.path))
     #expect(!ClaudeSessionArtifactRegistry.shared.snapshot().contains { $0.0 == id })
+  }
+
+  @Test("A symlinked Claude projects directory is rejected before launch")
+  func rejectsSymlinkedProjectsDirectory() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let projectsDirectory = root.appendingPathComponent("projects", isDirectory: true)
+    let linkedProjectsDirectory = root.appendingPathComponent("linked-projects", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: projectsDirectory,
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createSymbolicLink(
+      at: linkedProjectsDirectory,
+      withDestinationURL: projectsDirectory
+    )
+
+    #expect(throws: ClaudeAutomaticAdapterError.unsafePath) {
+      try FoundationClaudeUsagePTYProbe(
+        timeout: 1,
+        registerForShutdown: false,
+        sessionProjectsDirectory: linkedProjectsDirectory
+      ).capture(
+        executable: URL(fileURLWithPath: "/bin/false"),
+        workingDirectory: root.appendingPathComponent("probe", isDirectory: true)
+      )
+    }
   }
 
   @Test("PTY probe terminates a CLI child even when its parent exits")
