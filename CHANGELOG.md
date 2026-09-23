@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 — live Claude usage
+
+- Reads Claude Code's rendered `/usage` panel through a bounded local PTY when current reset times are unavailable from recognized local observations.
+- Refreshes Claude automatically every 15 minutes and immediately on explicit refresh while retaining the last current exact observation on temporary failures.
+- Hardens startup, authentication, safety-dialog, process cleanup, parsing, privacy, and diagnostics boundaries for the live probe.
+
 ## 0.1.3 — Claude observation refresh
 
 - Checks Claude local observations approximately once per minute while the app is running, reducing the delay after Claude Desktop writes a new valid usage sample.

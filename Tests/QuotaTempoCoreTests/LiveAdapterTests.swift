@@ -24,22 +24,22 @@ struct LiveAdapterTests {
     #expect(invocationCount == 0)
   }
 
-  @Test("Automatic refresh is low-frequency and slower than both adapter guards")
+  @Test("Automatic refresh is low-frequency and honors both adapter guards")
   func automaticRefreshSchedule() {
     #expect(ProviderRefreshSchedule.interval == 900)
     #expect(ProviderRefreshSchedule.interval > CodexRateLimitAdapter.minimumRefreshInterval)
-    #expect(ProviderRefreshSchedule.interval > ClaudeAutomaticAdapter.minimumRefreshInterval)
+    #expect(ProviderRefreshSchedule.interval >= ClaudeAutomaticAdapter.minimumRefreshInterval)
   }
 
-  @Test("Claude refresh can follow a new local observation within one minute")
+  @Test("Claude refresh guard runs before the fifteen-minute scheduler")
   func claudeRefreshTrigger() {
     #expect(ClaudeAutomaticAdapter.shouldRefresh(lastAttemptAt: nil, now: self.now))
     #expect(
       !ClaudeAutomaticAdapter.shouldRefresh(
-        lastAttemptAt: self.now.addingTimeInterval(-54), now: self.now))
+        lastAttemptAt: self.now.addingTimeInterval(-(14 * 60 - 1)), now: self.now))
     #expect(
       ClaudeAutomaticAdapter.shouldRefresh(
-        lastAttemptAt: self.now.addingTimeInterval(-55), now: self.now))
+        lastAttemptAt: self.now.addingTimeInterval(-14 * 60), now: self.now))
   }
 
   @Test("Codex classifies windows by duration and normalizes remaining capacity")
@@ -108,7 +108,7 @@ struct LiveAdapterTests {
     let lines = String(decoding: CodexRateLimitAdapter.protocolRequest, as: UTF8.self)
       .split(separator: "\n")
     #expect(lines.count == 3)
-    #expect(lines[0].contains(#""version":"0.1.3""#))
+    #expect(lines[0].contains(#""version":"0.1.4""#))
     #expect(lines[1] == #"{"method":"initialized"}"#)
     #expect(lines[2] == #"{"method":"account/rateLimits/read","id":2}"#)
   }
@@ -259,10 +259,11 @@ struct LiveAdapterTests {
       completed.signal()
     }
 
-    let markerDeadline = Date().addingTimeInterval(2)
+    let markerDeadline = Date().addingTimeInterval(5)
     while !FileManager.default.fileExists(atPath: marker.path), Date() < markerDeadline {
       usleep(10_000)
     }
+    try #require(FileManager.default.fileExists(atPath: marker.path))
     let pidText = try String(contentsOf: marker, encoding: .utf8)
     let pid = try #require(pid_t(pidText))
 
@@ -1289,8 +1290,27 @@ struct LiveAdapterTests {
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: executable)
 
     #expect(
-      ClaudeCLIExecutableResolver.resolve(homeDirectory: root)
+      ClaudeCLIExecutableResolver.resolve(homeDirectory: root, trustCheck: { _ in true })
         == executable.resolvingSymlinksInPath())
+  }
+
+  @Test("Claude CLI resolver rejects an untrusted executable")
+  func claudeCLIResolverRejectsUntrustedCandidate() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = root.appendingPathComponent(".local/bin/claude")
+    try FileManager.default.createDirectory(
+      at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\n".utf8).write(to: local)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: local.path)
+
+    let resolved = ClaudeCLIExecutableResolver.resolve(
+      homeDirectory: root,
+      trustCheck: { _ in false },
+      fileManager: .default
+    )
+
+    #expect(resolved == nil)
   }
 
   @Test("Claude automatic adapter fails closed when no CLI executable is available")

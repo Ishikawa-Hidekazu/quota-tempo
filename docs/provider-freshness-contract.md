@@ -52,7 +52,7 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 
 ### Acquisition
 
-- Trigger on app launch, every 15 minutes while the menu-bar label remains active, after system wake, on menu open after the provider-specific last-attempt guard, or explicit refresh. Claude local observations are additionally checked every minute while running; Codex retains its five-minute guard.
+- Trigger on app launch, every 15 minutes while the menu-bar label remains active, after system wake, on menu open after the provider-specific last-attempt guard, or explicit refresh. Claude observations use a 14-minute last-attempt guard so timer jitter cannot skip the 15-minute schedule; Codex retains its five-minute guard.
 - Keep scheduling inside the menu-bar app; do not install a separate background daemon or login item.
 - Allow one in-flight attempt per provider.
 - Try no more than three recognized executable candidates. Each capability attempt has a 5-second timeout and 1 MiB combined output ceiling, strict recognized-field decoding, and process-tree termination. An explicit provider restriction stops fallback immediately.
@@ -81,7 +81,7 @@ The UI must show both `Captured` and, after a failed attempt, `Last refresh atte
 
 ## Claude local-observation contract
 
-V1 reads only recognized aggregate fields from Claude Desktop history and Claude Code's local usage cache. It does not install or activate a status-line bridge, launch Claude CLI, call an undocumented endpoint, or ask the user to enter quota data.
+QuotaTempo reads only recognized aggregate fields from Claude Desktop history and Claude Code's local usage cache before using the bounded, signed-in Claude Code `/usage` PTY path described in `product-spec.md`. It does not install or activate a status-line bridge, call an undocumented endpoint, read credentials, or require manual quota entry.
 
 ### Acquisition
 
@@ -101,6 +101,7 @@ Claude freshness means `last observed on this Mac`, not guaranteed current accou
 - Usage on another device may not appear until Claude updates one of the recognized local sources.
 - A long interval without a valid local observation moves data from recent to stale.
 - A current CLI compatibility check found no five-hour or weekly windows in `get_usage`; the experimental decoder stays disabled in V1.
+- In version 0.1.4, an incomplete or old local observation can trigger `/usage` after the 14-minute live-probe guard. A successfully parsed current panel provides confirmed reset windows. If the probe fails, an earlier exact, still-current observation and its `capturedAt` are retained regardless of whether it came from the CLI or local cache, while the new attempt time and error remain visible; previous data is never relabeled as a fresh observation.
 
 ### Result mapping
 

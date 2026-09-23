@@ -9,8 +9,8 @@ public enum ProviderAcquisitionTrigger: Sendable {
 }
 
 public enum ProviderRefreshSchedule {
-  /// Codex acquisition remains low-frequency. Each adapter retains its own
-  /// last-attempt guard; Claude also checks local observations on minute ticks.
+  /// Provider acquisition remains low-frequency. Each adapter retains its own
+  /// last-attempt guard.
   public static let interval: TimeInterval = 15 * 60
 }
 

@@ -53,6 +53,7 @@ public enum AcquisitionErrorCode: String, Codable, Equatable, Sendable {
   case versionTooOld
   case protocolIncompatible
   case temporaryFailure
+  case authenticationRequired
 }
 
 public struct QuotaWindow: Codable, Equatable, Sendable {

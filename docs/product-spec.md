@@ -64,14 +64,15 @@ This adapter is implemented in the public-beta app.
 
 ## Claude acquisition
 
-The public-beta app uses a local-first automatic adapter and does not require CodexBar or manual entry. It reads only recognized usage fields from bounded Claude Desktop history and Claude Code cache files, combining utilization and reset metadata only when they belong to the same quota window. The V1 app does not launch Claude CLI: a bounded live `get_usage` check on the current official CLI returned no quota windows.
+QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local cache avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.
 
 Required boundaries:
 
 - Do not read credentials, tokens, cookies, Keychain values, browser state, prompts, transcripts, or session contents.
 - Reject symlink-selected and oversized local sources.
-- Keep experimental CLI decoding test-only until a stable, independently verified quota response exists.
-- Apply time and output ceilings and accept only the matching structured response.
+- Keep the old noninteractive `get_usage` decoder test-only; it is not the `/usage` acquisition path.
+- Bound PTY time and output, disable tools, hooks, MCP configuration, Remote Control startup, and auto-update, and terminate the process tree.
+- Reject stale or loading usage panels and reject ambiguous reset times; a failed probe retains a prior exact, still-current observation and its older captured time regardless of whether it came from the CLI or local cache rather than making it current.
 - Tolerate independently absent windows and fail closed when utilization and reset metadata cannot be safely reconciled.
 - Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, and acquisition state.
 

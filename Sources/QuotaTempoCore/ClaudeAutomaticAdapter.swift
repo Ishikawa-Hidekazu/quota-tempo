@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum ClaudeAutomaticAdapterError: Error, Equatable {
   case sourceUnavailable
@@ -35,9 +36,50 @@ public struct FileBoundedLocalDataReader: BoundedLocalDataReading {
   }
 }
 
+public enum ClaudeCLITrustVerifier {
+  public static let expectedIdentifier = "com.anthropic.claude-code"
+  public static let expectedTeamIdentifier = "Q6L2SF6YDW"
+  static let requirement =
+    #"anchor apple generic and identifier "com.anthropic.claude-code" and certificate leaf[subject.OU] = "Q6L2SF6YDW""#
+
+  public static func isTrusted(_ executable: URL) -> Bool {
+    var staticCode: SecStaticCode?
+    guard
+      SecStaticCodeCreateWithPath(executable as CFURL, [], &staticCode) == errSecSuccess,
+      let staticCode
+    else { return false }
+
+    var requirement: SecRequirement?
+    guard
+      SecRequirementCreateWithString(self.requirement as CFString, [], &requirement)
+        == errSecSuccess,
+      let requirement,
+      SecStaticCodeCheckValidity(
+        staticCode,
+        SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures),
+        requirement
+      ) == errSecSuccess
+    else { return false }
+
+    var information: CFDictionary?
+    guard
+      SecCodeCopySigningInformation(
+        staticCode,
+        SecCSFlags(rawValue: kSecCSSigningInformation),
+        &information
+      ) == errSecSuccess,
+      let values = information as? [String: Any],
+      values[kSecCodeInfoIdentifier as String] as? String == self.expectedIdentifier,
+      values[kSecCodeInfoTeamIdentifier as String] as? String == self.expectedTeamIdentifier
+    else { return false }
+    return true
+  }
+}
+
 public enum ClaudeCLIExecutableResolver {
   public static func resolve(
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    trustCheck: @Sendable (URL) -> Bool = ClaudeCLITrustVerifier.isTrusted,
     fileManager: FileManager = .default
   ) -> URL? {
     let candidates = [
@@ -53,6 +95,7 @@ public enum ClaudeCLIExecutableResolver {
         values.isRegularFile == true,
         fileManager.isExecutableFile(atPath: resolved.path)
       else { continue }
+      guard trustCheck(resolved) else { continue }
       return resolved
     }
     return nil
@@ -60,7 +103,7 @@ public enum ClaudeCLIExecutableResolver {
 }
 
 public struct ClaudeAutomaticAdapter: Sendable {
-  public static let minimumRefreshInterval: TimeInterval = 55
+  public static let minimumRefreshInterval: TimeInterval = 14 * 60
   public static let localCacheMaximumAge: TimeInterval = 15 * 60
   public static let historyInputLimit = 8 * 1_024 * 1_024
   public static let cacheInputLimit = 8 * 1_024 * 1_024
@@ -69,9 +112,13 @@ public struct ClaudeAutomaticAdapter: Sendable {
   private let reader: any BoundedLocalDataReading
   private let runner: any BoundedProcessRunning
   private let cliExecutable: URL?
+  private let resolveCLIOnRefresh: Bool
+  private let cliResolver: @Sendable () -> URL?
   private let historyURL: URL
   private let cacheURL: URL
   private let cliFallbackEnabled: Bool
+  private let ptyProbeEnabled: Bool
+  private let ptyProbe: any ClaudeUsageProbing
   private let probeDirectory: URL
 
   public init(
@@ -85,11 +132,15 @@ public struct ClaudeAutomaticAdapter: Sendable {
       ]
     ),
     cliExecutable: URL? = ClaudeCLIExecutableResolver.resolve(),
+    resolveCLIOnRefresh: Bool = false,
+    cliResolver: @escaping @Sendable () -> URL? = { ClaudeCLIExecutableResolver.resolve() },
     historyURL: URL = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json"),
     cacheURL: URL = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".claude.json"),
     cliFallbackEnabled: Bool = false,
+    ptyProbeEnabled: Bool = false,
+    ptyProbe: any ClaudeUsageProbing = FoundationClaudeUsagePTYProbe(),
     probeDirectory: URL = FileManager.default.urls(
       for: .applicationSupportDirectory,
       in: .userDomainMask
@@ -98,24 +149,114 @@ public struct ClaudeAutomaticAdapter: Sendable {
     self.reader = reader
     self.runner = runner
     self.cliExecutable = cliExecutable
+    self.resolveCLIOnRefresh = resolveCLIOnRefresh
+    self.cliResolver = cliResolver
     self.historyURL = historyURL
     self.cacheURL = cacheURL
     self.cliFallbackEnabled = cliFallbackEnabled
+    self.ptyProbeEnabled = ptyProbeEnabled
+    self.ptyProbe = ptyProbe
     self.probeDirectory = probeDirectory
   }
 
-  public func refresh(previous: ProviderSnapshot?, now: Date) -> ProviderSnapshot {
+  public func refresh(
+    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
+  ) -> ProviderSnapshot {
     let historyRead = Self.captureLocalRead { try self.readHistory(now: now) }
     let cacheRead = Self.captureLocalRead { try self.readCache(now: now) }
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
-    let local = Self.localCandidate(history: history, cache: cache)
+    let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
+    let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
+    let local =
+      livePTYAvailable
+      ? Self.newestUnmerged(history: history, cache: cache)
+      : Self.localCandidate(history: history, cache: cache)
 
-    if let local, Self.isCompleteAndFresh(local, now: now) {
+    if !forceLiveProbe, let local, Self.isCompleteAndFresh(local, now: now) {
       return Self.success(
-        Self.preferredObservation(local: local, previous: previous, now: now) ?? local,
+        Self.preferredObservation(
+          local: local, previous: previous, now: now,
+          allowMerge: !livePTYAvailable
+        ) ?? local,
         attemptedAt: now
       )
+    }
+
+    if self.ptyProbeEnabled {
+      if cliExecutable == nil, let local {
+        let retained =
+          Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
+          ?? local
+        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+        if localError == nil || localError == .sourceUnavailable {
+          return Self.success(retained, attemptedAt: now)
+        }
+        return ProviderSnapshot(
+          provider: .claude,
+          source: retained.source,
+          capturedAt: retained.capturedAt,
+          weekly: retained.weekly,
+          fiveHour: retained.fiveHour,
+          lastAttemptAt: now,
+          sourceState: .attemptFailed,
+          errorCode: localError.map(Self.acquisitionError(for:))
+        )
+      }
+      do {
+        return Self.success(try self.readPTY(executable: cliExecutable), attemptedAt: now)
+      } catch ClaudeUsagePTYProbeError.authenticationRequired {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .authenticationRequired
+        )
+      } catch ClaudeUsagePTYProbeError.timeout(let stage) {
+        if stage == .authPromptSeen {
+          return self.fallback(
+            local: local, previous: previous, now: now,
+            state: .attemptFailed, error: .authenticationRequired
+          )
+        }
+        let invalidResponse: Bool = [
+          .cliErrorSeen, .commandPaletteSeen, .unsupportedOption, .sessionConflict,
+          .usageLoadFailed, .usageSentAfterSafety, .usageSentWithoutSafety,
+        ].contains(stage)
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: invalidResponse ? .attemptFailed : .attemptTimedOut,
+          error: invalidResponse ? .invalidResponse : .timeout
+        )
+      } catch BoundedProcessError.timeout {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptTimedOut, error: .timeout
+        )
+      } catch BoundedProcessError.outputLimitExceeded {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .outputLimitExceeded
+        )
+      } catch BoundedProcessError.launchFailed, BoundedProcessError.inputWriteFailed {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .launchFailed
+        )
+      } catch ClaudeAutomaticAdapterError.unsafePath {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .unsafePath
+        )
+      } catch ClaudeAutomaticAdapterError.invalidInput {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .invalidResponse
+        )
+      } catch {
+        return self.fallback(
+          local: local, previous: previous, now: now,
+          state: .attemptFailed, error: .sourceUnavailable
+        )
+      }
     }
 
     guard self.cliFallbackEnabled else {
@@ -233,7 +374,22 @@ public struct ClaudeAutomaticAdapter: Sendable {
     state: SourceState,
     error: AcquisitionErrorCode
   ) -> ProviderSnapshot {
-    if let retained = Self.preferredObservation(local: local, previous: previous, now: now) {
+    if let previous, Self.hasCurrentExactReset(previous, now: now) {
+      return ProviderSnapshot(
+        provider: .claude,
+        source: previous.source,
+        capturedAt: previous.capturedAt,
+        weekly: previous.weekly,
+        fiveHour: previous.fiveHour,
+        lastAttemptAt: now,
+        sourceState: state,
+        errorCode: error
+      )
+    }
+    if let retained = Self.preferredObservation(
+      local: local, previous: previous, now: now,
+      allowMerge: !self.ptyProbeEnabled
+    ) {
       return ProviderSnapshot(
         provider: .claude,
         source: retained.source,
@@ -255,6 +411,14 @@ public struct ClaudeAutomaticAdapter: Sendable {
     )
   }
 
+  private static func hasCurrentExactReset(_ snapshot: ProviderSnapshot, now: Date) -> Bool {
+    guard let weekly = snapshot.weekly,
+      !weekly.isResetEstimated,
+      let resetAt = weekly.resetAt
+    else { return false }
+    return resetAt > now
+  }
+
   private static func success(_ snapshot: ProviderSnapshot, attemptedAt: Date) -> ProviderSnapshot {
     ProviderSnapshot(
       provider: .claude,
@@ -270,13 +434,15 @@ public struct ClaudeAutomaticAdapter: Sendable {
   private static func preferredObservation(
     local: ProviderSnapshot?,
     previous: ProviderSnapshot?,
-    now: Date
+    now: Date,
+    allowMerge: Bool = true
   ) -> ProviderSnapshot? {
     guard let local else { return previous }
     guard let previous else { return local }
     guard let localCapturedAt = local.capturedAt else { return previous }
     guard let previousCapturedAt = previous.capturedAt else { return local }
     guard localCapturedAt > previousCapturedAt else { return previous }
+    guard allowMerge else { return local }
 
     let mergedWeekly = Self.mergedWindow(
       latest: local.weekly,
@@ -310,7 +476,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
   private static func isCompleteAndFresh(_ snapshot: ProviderSnapshot, now: Date) -> Bool {
     guard let capturedAt = snapshot.capturedAt,
       let weeklyReset = snapshot.weekly?.resetAt,
-      weeklyReset > now
+      weeklyReset > now,
+      let fiveHourReset = snapshot.fiveHour?.resetAt,
+      fiveHourReset > now
     else { return false }
     let age = now.timeIntervalSince(capturedAt)
     return age >= 0 && age <= self.localCacheMaximumAge
@@ -352,6 +520,17 @@ public struct ClaudeAutomaticAdapter: Sendable {
       fiveHour: fiveHour,
       sourceState: .observationSucceeded
     )
+  }
+
+  private static func newestUnmerged(
+    history: ProviderSnapshot?, cache: ProviderSnapshot?
+  ) -> ProviderSnapshot? {
+    guard let history else { return cache }
+    guard let cache else { return history }
+    guard let historyAt = history.capturedAt, let cacheAt = cache.capturedAt else {
+      return cache.capturedAt != nil ? cache : history
+    }
+    return cacheAt >= historyAt ? cache : history
   }
 
   private static func mergedWindow(
@@ -560,6 +739,26 @@ public struct ClaudeAutomaticAdapter: Sendable {
       capturedAt: now,
       weekly: weekly,
       fiveHour: fiveHour,
+      sourceState: .observationSucceeded
+    )
+  }
+
+  private func readPTY(executable cliExecutable: URL?) throws -> ProviderSnapshot {
+    guard let cliExecutable else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
+    let output = try self.ptyProbe.capture(
+      executable: cliExecutable,
+      workingDirectory: self.probeDirectory
+    )
+    let observedAt = Date()
+    guard !ClaudeUsageTextParser.indicatesStaleUsage(output) else {
+      throw ClaudeAutomaticAdapterError.invalidInput
+    }
+    guard let parsed = ClaudeUsageTextParser.parse(output, now: observedAt),
+      parsed.weekly?.resetAt != nil
+    else { throw ClaudeAutomaticAdapterError.invalidInput }
+    return ProviderSnapshot(
+      provider: .claude, source: .claudeCLI, capturedAt: observedAt,
+      weekly: parsed.weekly, fiveHour: parsed.fiveHour,
       sourceState: .observationSucceeded
     )
   }

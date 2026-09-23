@@ -1,0 +1,580 @@
+import Foundation
+import Testing
+
+@testable import QuotaTempoCore
+
+private struct CacheUpdatingPTYProbe: ClaudeUsageProbing {
+  let cacheURL: URL
+  let shouldUpdate: Bool
+  let output: Data
+
+  init(
+    cacheURL: URL, shouldUpdate: Bool,
+    output: Data = Data("Current session\nCurrent week (all models)\nResets".utf8)
+  ) {
+    self.cacheURL = cacheURL
+    self.shouldUpdate = shouldUpdate
+    self.output = output
+  }
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data {
+    if shouldUpdate {
+      let now = Date()
+      let formatter = ISO8601DateFormatter()
+      let data = try JSONSerialization.data(withJSONObject: [
+        "cachedUsageUtilization": [
+          "fetchedAtMs": Int64(now.timeIntervalSince1970 * 1_000),
+          "utilization": [
+            "five_hour": [
+              "utilization": 32.0,
+              "resets_at": formatter.string(from: now.addingTimeInterval(10_000)),
+            ],
+            "seven_day": [
+              "utilization": 41.0,
+              "resets_at": formatter.string(from: now.addingTimeInterval(300_000)),
+            ],
+          ],
+        ]
+      ])
+      try data.write(to: cacheURL, options: .atomic)
+    }
+    return output
+  }
+}
+
+private struct RenderedUsagePTYProbe: ClaudeUsageProbing {
+  let output: Data
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { output }
+}
+
+private struct FailingUsagePTYProbe: ClaudeUsageProbing {
+  let error: ClaudeUsagePTYProbeError
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
+private struct AdapterFailingUsagePTYProbe: ClaudeUsageProbing {
+  let error: ClaudeAutomaticAdapterError
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
+private struct ProcessFailingUsagePTYProbe: ClaudeUsageProbing {
+  let error: BoundedProcessError
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
+private final class CLIResolutionSequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [URL]
+
+  init(_ values: [URL]) { self.values = values }
+
+  func next() -> URL? {
+    self.lock.lock()
+    defer { self.lock.unlock() }
+    guard !self.values.isEmpty else { return nil }
+    return self.values.removeFirst()
+  }
+}
+
+private final class ExecutableRecordingPTYProbe: @unchecked Sendable, ClaudeUsageProbing {
+  private let lock = NSLock()
+  private(set) var executables: [URL] = []
+  let output: Data
+
+  init(output: Data) { self.output = output }
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data {
+    self.lock.lock()
+    self.executables.append(executable)
+    self.lock.unlock()
+    return self.output
+  }
+}
+
+struct ClaudeAutomaticPTYTests {
+  @Test("Production Claude adapter resolves the CLI for every refresh")
+  func resolvesCLIForEveryRefresh() {
+    let first = URL(fileURLWithPath: "/mock/claude-1")
+    let second = URL(fileURLWithPath: "/mock/claude-2")
+    let sequence = CLIResolutionSequence([first, second])
+    let probe = ExecutableRecordingPTYProbe(
+      output: Data(
+        "Current week (all models)\n20% used\nResets 2026-09-29T05:00:00Z".utf8
+      )
+    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let adapter = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      resolveCLIOnRefresh: true,
+      cliResolver: { sequence.next() },
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: root.appendingPathComponent("missing-cache.json"),
+      ptyProbeEnabled: true,
+      ptyProbe: probe,
+      probeDirectory: root.appendingPathComponent("probe")
+    )
+    let now = ISO8601DateFormatter().date(from: "2026-09-23T00:00:00Z")!
+
+    _ = adapter.refresh(previous: nil, now: now, forceLiveProbe: true)
+    _ = adapter.refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(probe.executables == [first, second])
+  }
+
+  @Test("Live Claude guard tolerates jitter before the fifteen-minute scheduler")
+  func probeInterval() {
+    let now = Date()
+    #expect(
+      !ClaudeAutomaticAdapter.shouldRefresh(
+        lastAttemptAt: now.addingTimeInterval(-(14 * 60 - 1)), now: now))
+    #expect(
+      ClaudeAutomaticAdapter.shouldRefresh(
+        lastAttemptAt: now.addingTimeInterval(-14 * 60), now: now))
+    #expect(
+      ClaudeAutomaticAdapter.shouldRefresh(
+        lastAttemptAt: now.addingTimeInterval(-899), now: now))
+  }
+
+  @Test("A concurrently refreshed cache does not make an incomplete PTY panel successful")
+  func refreshedCache() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("{}".utf8).write(to: cache)
+    let now = Date()
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: CacheUpdatingPTYProbe(cacheURL: cache, shouldUpdate: true),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.fiveHour?.resetAt == nil)
+  }
+
+  @Test("PTY success without a fresh structured cache does not invent a reset")
+  func missingRefresh() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("{}".utf8).write(to: cache)
+    let now = Date()
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: CacheUpdatingPTYProbe(cacheURL: cache, shouldUpdate: false),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .invalidResponse)
+    #expect(snapshot.weekly?.resetAt == nil)
+  }
+
+  @Test("Rendered usage supplies exact windows when Claude does not refresh its cache")
+  func parsedWithoutCacheUpdate() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("{}".utf8).write(to: cache)
+    let now = Date()
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+    let sessionReset = now.addingTimeInterval(2 * 60 * 60)
+    let weeklyReset = now.addingTimeInterval(3 * 24 * 60 * 60)
+    let sessionText = DateFormatter()
+    sessionText.locale = Locale(identifier: "en_US_POSIX")
+    sessionText.timeZone = calendar.timeZone
+    sessionText.dateFormat = "h:mma"
+    let weeklyText = DateFormatter()
+    weeklyText.locale = Locale(identifier: "en_US_POSIX")
+    weeklyText.timeZone = calendar.timeZone
+    weeklyText.dateFormat = "MMM d 'at' h:mma"
+    let output = Data(
+      """
+      Currentsession
+      ███ 32%used
+      Resets\(sessionText.string(from: sessionReset))(Asia/Tokyo)
+      Currentweek(allmodels)
+      ████ 41%used
+      Resets\(weeklyText.string(from: weeklyReset))(Asia/Tokyo)
+      Current week (Fable)
+      90%used
+      Resets\(weeklyText.string(from: weeklyReset))(Asia/Tokyo)
+      """.utf8)
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: RenderedUsagePTYProbe(output: output),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.fiveHour?.remainingPercent == 68)
+    #expect(snapshot.weekly?.remainingPercent == 59)
+    #expect(snapshot.fiveHour?.resetAt != nil)
+    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(snapshot.weekly?.isResetEstimated == false)
+  }
+
+  @Test("PTY path never joins Desktop utilization to an unverified cache account")
+  func noCrossAccountMerge() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    let formatter = ISO8601DateFormatter()
+    let historyData = try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-other-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ])
+    let cacheData = try JSONSerialization.data(withJSONObject: [
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "five_hour": [
+            "utilization": 70.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(10_000)),
+          ],
+          "seven_day": [
+            "utilization": 80.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(300_000)),
+          ],
+        ],
+      ]
+    ])
+    try historyData.write(to: history)
+    try cacheData.write(to: cache)
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: CacheUpdatingPTYProbe(cacheURL: cache, shouldUpdate: false),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.sourceState == .attemptFailed)
+  }
+
+  @Test("A failed probe retains a previous exact CLI observation")
+  func retainsPreviousCLIObservation() {
+    let now = Date()
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 63, durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42, durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)),
+      lastAttemptAt: now.addingTimeInterval(-600),
+      sourceState: .observationSucceeded
+    )
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .usageSent))
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.fiveHour == previous.fiveHour)
+    #expect(snapshot.capturedAt == previous.capturedAt)
+    #expect(snapshot.lastAttemptAt == now)
+    #expect(snapshot.sourceState == .attemptTimedOut)
+    #expect(snapshot.errorCode == .timeout)
+  }
+
+  @Test("A failed probe retains a previous exact local-cache observation")
+  func retainsPreviousCacheObservation() {
+    let now = Date()
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeLocalCache,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 63, durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42, durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)),
+      sourceState: .observationSucceeded
+    )
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .usageSent))
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.fiveHour == previous.fiveHour)
+    #expect(snapshot.sourceState == .attemptTimedOut)
+  }
+
+  @Test(
+    "A failed probe prefers newer local weekly usage when only the old five-hour reset is current")
+  func expiredPreviousWeeklyDoesNotHideNewLocalUsage() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 15,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(-60)
+      ),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42,
+        durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)
+      ),
+      sourceState: .observationSucceeded
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: root.appendingPathComponent("missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .usageSent))
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.fiveHour?.remainingPercent == 80)
+    #expect(snapshot.sourceState == .attemptTimedOut)
+    #expect(snapshot.errorCode == .timeout)
+  }
+
+  @Test("Desktop history remains successful when Claude Code is not installed")
+  func desktopOnlyWithoutCLI() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let data = try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ])
+    try data.write(to: history)
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: root.appendingPathComponent("missing-cache"),
+      ptyProbeEnabled: true
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+    #expect(snapshot.weekly?.resetAt == nil)
+  }
+
+  @Test("Desktop history keeps exact cache resets when Claude Code is not installed")
+  func desktopOnlyWithoutCLIMergesCacheReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    let formatter = ISO8601DateFormatter()
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    try JSONSerialization.data(withJSONObject: [
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "five_hour": [
+            "utilization": 25.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(10_000)),
+          ],
+          "seven_day": [
+            "utilization": 35.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(300_000)),
+          ],
+        ],
+      ]
+    ]).write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeLocalMerged)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(snapshot.fiveHour?.remainingPercent == 80)
+    #expect(snapshot.fiveHour?.resetAt != nil)
+    #expect(snapshot.sourceState == .observationSucceeded)
+  }
+
+  @Test("Claude Code absence does not hide malformed local usage data")
+  func desktopOnlyWithoutCLIRetainsLocalError() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("not-json".utf8).write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .invalidResponse)
+  }
+
+  @Test("Late authentication prompt stages remain authentication failures")
+  func lateAuthenticationPrompt() {
+    let now = Date()
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .authPromptSeen))
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
+  @Test("Authentication prompts are exposed without discarding the last exact observation")
+  func authenticationRequired() {
+    let now = Date()
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 63, durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)),
+      sourceState: .observationSucceeded
+    )
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
+  @Test("PTY failures retain actionable diagnostic categories")
+  func diagnosticCategories() {
+    let now = Date()
+    let base = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: AdapterFailingUsagePTYProbe(error: .invalidInput)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(base.errorCode == .invalidResponse)
+
+    let unsafe = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: AdapterFailingUsagePTYProbe(error: .unsafePath)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(unsafe.errorCode == .unsafePath)
+
+    let launch = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: ProcessFailingUsagePTYProbe(error: .launchFailed)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(launch.errorCode == .launchFailed)
+  }
+}
