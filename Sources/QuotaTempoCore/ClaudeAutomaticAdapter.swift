@@ -412,12 +412,11 @@ public struct ClaudeAutomaticAdapter: Sendable {
   }
 
   private static func hasCurrentExactReset(_ snapshot: ProviderSnapshot, now: Date) -> Bool {
-    [snapshot.weekly, snapshot.fiveHour].contains { window in
-      guard let window, !window.isResetEstimated, let resetAt = window.resetAt else {
-        return false
-      }
-      return resetAt > now
-    }
+    guard let weekly = snapshot.weekly,
+      !weekly.isResetEstimated,
+      let resetAt = weekly.resetAt
+    else { return false }
+    return resetAt > now
   }
 
   private static func success(_ snapshot: ProviderSnapshot, attemptedAt: Date) -> ProviderSnapshot {

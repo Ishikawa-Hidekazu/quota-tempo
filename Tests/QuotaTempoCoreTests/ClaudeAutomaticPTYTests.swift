@@ -346,6 +346,56 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.sourceState == .attemptTimedOut)
   }
 
+  @Test(
+    "A failed probe prefers newer local weekly usage when only the old five-hour reset is current")
+  func expiredPreviousWeeklyDoesNotHideNewLocalUsage() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 15,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(-60)
+      ),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42,
+        durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)
+      ),
+      sourceState: .observationSucceeded
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: root.appendingPathComponent("missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .usageSent))
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.fiveHour?.remainingPercent == 80)
+    #expect(snapshot.sourceState == .attemptTimedOut)
+    #expect(snapshot.errorCode == .timeout)
+  }
+
   @Test("Desktop history remains successful when Claude Code is not installed")
   func desktopOnlyWithoutCLI() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
