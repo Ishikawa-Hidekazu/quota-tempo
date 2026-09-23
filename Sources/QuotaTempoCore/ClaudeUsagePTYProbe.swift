@@ -106,8 +106,8 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       "PWD": workingDirectory.path,
     ]
     for key in [
-      "USER", "LOGNAME", "SHELL", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR",
-      "COLORTERM", "TERM_PROGRAM",
+      "USER", "LOGNAME", "SHELL", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "COLORTERM",
+      "TERM_PROGRAM",
     ] {
       if let value = ProcessInfo.processInfo.environment[key] { environment[key] = value }
     }
@@ -310,16 +310,9 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
   }
 
   private static func hasCompleteUsagePanel(_ normalized: String) -> Bool {
-    guard
-      let sessionStart = normalized.range(of: "currentsession")?.lowerBound,
-      let weeklyRange = normalized.range(
-        of: "currentweek(allmodels)", range: sessionStart..<normalized.endIndex)
-    else { return false }
-
-    let session = normalized[sessionStart..<weeklyRange.lowerBound]
+    guard let weeklyRange = normalized.range(of: "currentweek(allmodels)") else { return false }
     let weekly = normalized[weeklyRange.lowerBound..<normalized.endIndex]
-    return session.contains("%used") && session.contains("resets")
-      && weekly.contains("%used") && weekly.contains("resets")
+    return weekly.contains("%used") && weekly.contains("resets")
   }
 
   private static func send(_ text: String, to descriptor: Int32) throws {

@@ -178,10 +178,22 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
     if self.ptyProbeEnabled {
       if self.cliExecutable == nil, let local {
-        return Self.success(
+        let retained =
           Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
-            ?? local,
-          attemptedAt: now
+          ?? local
+        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+        if localError == nil || localError == .sourceUnavailable {
+          return Self.success(retained, attemptedAt: now)
+        }
+        return ProviderSnapshot(
+          provider: .claude,
+          source: retained.source,
+          capturedAt: retained.capturedAt,
+          weekly: retained.weekly,
+          fiveHour: retained.fiveHour,
+          lastAttemptAt: now,
+          sourceState: .attemptFailed,
+          errorCode: localError.map(Self.acquisitionError(for:))
         )
       }
       do {
@@ -192,6 +204,12 @@ public struct ClaudeAutomaticAdapter: Sendable {
           state: .attemptFailed, error: .authenticationRequired
         )
       } catch ClaudeUsagePTYProbeError.timeout(let stage) {
+        if stage == .authPromptSeen {
+          return self.fallback(
+            local: local, previous: previous, now: now,
+            state: .attemptFailed, error: .authenticationRequired
+          )
+        }
         let invalidResponse: Bool = [
           .cliErrorSeen, .commandPaletteSeen, .unsupportedOption, .sessionConflict,
           .usageLoadFailed, .usageSentAfterSafety, .usageSentWithoutSafety,

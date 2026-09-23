@@ -366,6 +366,53 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.sourceState == .observationSucceeded)
   }
 
+  @Test("Claude Code absence does not hide malformed local usage data")
+  func desktopOnlyWithoutCLIRetainsLocalError() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 20.0, "sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("not-json".utf8).write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 70)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .invalidResponse)
+  }
+
+  @Test("Late authentication prompt stages remain authentication failures")
+  func lateAuthenticationPrompt() {
+    let now = Date()
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: URL(fileURLWithPath: "/missing-history"),
+      cacheURL: URL(fileURLWithPath: "/missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .timeout(stage: .authPromptSeen))
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
   @Test("Authentication prompts are exposed without discarding the last exact observation")
   func authenticationRequired() {
     let now = Date()

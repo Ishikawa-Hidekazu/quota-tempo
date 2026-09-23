@@ -71,6 +71,34 @@ struct ClaudeUsagePTYProbeTests {
     #expect(text.contains("Resets 2026-09-29"))
   }
 
+  @Test("PTY probe accepts a complete weekly panel when session usage is unavailable")
+  func capturesWeeklyOnlyPanel() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let fake = root.appendingPathComponent("claude")
+    let script = """
+      #!/bin/sh
+      printf 'Claude Code\r\n❯ '
+      while IFS= read -r input; do
+        case "$input" in
+          *"/usage"*)
+            printf 'Current session\r\nCurrent week (all models)\r\n12%% used\r\nResets 2026-09-29T05:00:00Z\r\n'
+            ;;
+          *"/exit"*) exit 0 ;;
+        esac
+      done
+      """
+    try Data(script.utf8).write(to: fake)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fake.path)
+
+    let captured = try FoundationClaudeUsagePTYProbe(timeout: 12, registerForShutdown: false)
+      .capture(executable: fake, workingDirectory: root.appendingPathComponent("probe"))
+    let text = String(decoding: captured, as: UTF8.self)
+    #expect(text.contains("Current week (all models)"))
+    #expect(text.contains("Resets 2026-09-29"))
+  }
+
   @Test("PTY probe selects Yes in the safety dialog before sending usage")
   func acceptsSafetyDialog() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
