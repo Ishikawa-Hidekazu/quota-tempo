@@ -1077,8 +1077,8 @@ struct LiveAdapterTests {
     #expect(snapshot.errorCode == nil)
   }
 
-  @Test("Claude Desktop observation still reports a malformed optional cache")
-  func claudeAutomaticReportsMalformedOptionalCache() throws {
+  @Test("Claude Desktop observation survives a malformed optional cache")
+  func claudeAutomaticIgnoresMalformedOptionalCache() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1095,8 +1095,80 @@ struct LiveAdapterTests {
 
     #expect(snapshot.source == .claudeDesktopHistory)
     #expect(snapshot.weekly?.remainingPercent == 63)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+  }
+
+  @Test("Claude Desktop observation survives an oversized optional cache")
+  func claudeAutomaticIgnoresOversizedOptionalCache() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try self.historyJSON(samples: [(self.now.addingTimeInterval(-60), 22, 37)]).write(to: history)
+    try Data(repeating: 0x20, count: ClaudeAutomaticAdapter.cacheInputLimit + 1)
+      .write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 63)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+  }
+
+  @Test("Claude Desktop observation reports an unsafe optional cache path")
+  func claudeAutomaticReportsUnsafeOptionalCache() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("history.json")
+    let realCache = root.appendingPathComponent("real-cache.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try self.historyJSON(samples: [(self.now.addingTimeInterval(-60), 22, 37)]).write(to: history)
+    try Data("{}".utf8).write(to: realCache)
+    try FileManager.default.createSymbolicLink(at: cache, withDestinationURL: realCache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 63)
     #expect(snapshot.sourceState == .attemptFailed)
-    #expect(snapshot.errorCode == .invalidResponse)
+    #expect(snapshot.errorCode == .unsafePath)
+  }
+
+  @Test("Complete Claude Code cache still reports an unsafe Desktop history path")
+  func claudeAutomaticReportsUnsafeHistoryWithCompleteCache() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let realHistory = root.appendingPathComponent("real-history.json")
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("{}".utf8).write(to: realHistory)
+    try FileManager.default.createSymbolicLink(at: history, withDestinationURL: realHistory)
+    try self.cacheJSON(
+      fetchedAt: self.now.addingTimeInterval(-60),
+      fiveHourUsed: 22,
+      weeklyUsed: 37
+    ).write(to: cache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly?.remainingPercent == 63)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .unsafePath)
   }
 
   @Test("Claude empty local sources are unavailable rather than malformed")

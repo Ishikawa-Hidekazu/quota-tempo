@@ -172,6 +172,24 @@ public struct ClaudeAutomaticAdapter: Sendable {
       livePTYAvailable
       ? Self.newestUnmerged(history: history, cache: cache)
       : Self.localCandidate(history: history, cache: cache)
+    let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+
+    if localError == .unsafePath {
+      let retained = Self.preferredObservation(
+        local: local, previous: previous, now: now,
+        allowMerge: !livePTYAvailable
+      )
+      return ProviderSnapshot(
+        provider: .claude,
+        source: retained?.source ?? .claudeDesktopHistory,
+        capturedAt: retained?.capturedAt,
+        weekly: retained?.weekly,
+        fiveHour: retained?.fiveHour,
+        lastAttemptAt: now,
+        sourceState: .attemptFailed,
+        errorCode: .unsafePath
+      )
+    }
 
     if !forceLiveProbe, let local, Self.isCompleteAndFresh(local, now: now) {
       return Self.success(
@@ -188,20 +206,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         let retained =
           Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
           ?? local
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if localError == nil || localError == .sourceUnavailable {
-          return Self.success(retained, attemptedAt: now)
-        }
-        return ProviderSnapshot(
-          provider: .claude,
-          source: retained.source,
-          capturedAt: retained.capturedAt,
-          weekly: retained.weekly,
-          fiveHour: retained.fiveHour,
-          lastAttemptAt: now,
-          sourceState: .attemptFailed,
-          errorCode: localError.map(Self.acquisitionError(for:))
-        )
+        return Self.success(retained, attemptedAt: now)
       }
       do {
         return Self.success(try self.readPTY(executable: cliExecutable), attemptedAt: now)
@@ -261,10 +266,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
     guard self.cliFallbackEnabled else {
       if let retained = Self.preferredObservation(local: local, previous: previous, now: now) {
-        // A valid current local observation is sufficient. Claude Desktop-only users do not
-        // necessarily have the sibling Claude Code cache, so its absence is not a refresh failure.
-        let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
-        if local != nil, localError == nil || localError == .sourceUnavailable {
+        // Each local source is optional when the other has a valid observation.
+        if local != nil {
           return Self.success(retained, attemptedAt: now)
         }
         if let error = localError {
@@ -289,8 +292,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         fiveHour: nil,
         lastAttemptAt: now,
         sourceState: .attemptFailed,
-        errorCode: Self.preferredLocalError(historyRead.error, cacheRead.error)
-          .map(Self.acquisitionError(for:)) ?? .sourceUnavailable
+        errorCode: localError.map(Self.acquisitionError(for:)) ?? .sourceUnavailable
       )
     }
 

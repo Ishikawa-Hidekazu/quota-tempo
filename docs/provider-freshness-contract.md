@@ -87,6 +87,7 @@ QuotaTempo reads only recognized aggregate fields from Claude Desktop history an
 
 - Read the two documented product paths named in `PRIVACY.md` with strict size and regular-file checks.
 - Decode only the recognized history and `cachedUsageUtilization` structures.
+- Keep a valid observation successful when the optional sibling source is malformed or oversized, but fail closed before probing when either selected path is unsafe.
 - Combine a newer utilization reading with an older reset only when both observations belong to the same quota window.
 - Treat five-hour and seven-day windows as independently optional.
 - Exclude model-specific weekly buckets and Extra Usage.
