@@ -175,12 +175,15 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
 
     if localError == .unsafePath {
+      let failedSource: SnapshotSource =
+        historyRead.error == .unsafePath ? .claudeDesktopHistory : .claudeLocalCache
       return self.fallback(
         local: local,
         previous: previous,
         now: now,
         state: .attemptFailed,
-        error: .unsafePath
+        error: .unsafePath,
+        emptySource: failedSource
       )
     }
 
@@ -367,7 +370,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
     previous: ProviderSnapshot?,
     now: Date,
     state: SourceState,
-    error: AcquisitionErrorCode
+    error: AcquisitionErrorCode,
+    emptySource: SnapshotSource = .claudeCLI
   ) -> ProviderSnapshot {
     if let previous, Self.hasCurrentExactReset(previous, now: now) {
       return ProviderSnapshot(
@@ -399,7 +403,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     return AcquisitionRecords.preservingFailure(
       previous: nil,
       provider: .claude,
-      source: .claudeCLI,
+      source: emptySource,
       attemptedAt: now,
       state: state,
       error: error

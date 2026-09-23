@@ -1144,6 +1144,28 @@ struct LiveAdapterTests {
     #expect(snapshot.errorCode == .unsafePath)
   }
 
+  @Test("Unsafe Claude cache without observations retains its local source")
+  func claudeAutomaticLabelsUnsafeCacheWithoutObservations() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("missing-history.json")
+    let realCache = root.appendingPathComponent("real-cache.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try Data("{}".utf8).write(to: realCache)
+    try FileManager.default.createSymbolicLink(at: cache, withDestinationURL: realCache)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.capturedAt == nil)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .unsafePath)
+  }
+
   @Test("Complete Claude Code cache still reports an unsafe Desktop history path")
   func claudeAutomaticReportsUnsafeHistoryWithCompleteCache() throws {
     let root = try self.temporaryDirectory()
