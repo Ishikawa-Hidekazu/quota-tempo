@@ -66,7 +66,66 @@ private struct ProcessFailingUsagePTYProbe: ClaudeUsageProbing {
   func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
 }
 
+private final class CLIResolutionSequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [URL]
+
+  init(_ values: [URL]) { self.values = values }
+
+  func next() -> URL? {
+    self.lock.lock()
+    defer { self.lock.unlock() }
+    guard !self.values.isEmpty else { return nil }
+    return self.values.removeFirst()
+  }
+}
+
+private final class ExecutableRecordingPTYProbe: @unchecked Sendable, ClaudeUsageProbing {
+  private let lock = NSLock()
+  private(set) var executables: [URL] = []
+  let output: Data
+
+  init(output: Data) { self.output = output }
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data {
+    self.lock.lock()
+    self.executables.append(executable)
+    self.lock.unlock()
+    return self.output
+  }
+}
+
 struct ClaudeAutomaticPTYTests {
+  @Test("Production Claude adapter resolves the CLI for every refresh")
+  func resolvesCLIForEveryRefresh() {
+    let first = URL(fileURLWithPath: "/mock/claude-1")
+    let second = URL(fileURLWithPath: "/mock/claude-2")
+    let sequence = CLIResolutionSequence([first, second])
+    let probe = ExecutableRecordingPTYProbe(
+      output: Data(
+        "Current week (all models)\n20% used\nResets 2026-09-29T05:00:00Z".utf8
+      )
+    )
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let adapter = ClaudeAutomaticAdapter(
+      cliExecutable: nil,
+      resolveCLIOnRefresh: true,
+      cliResolver: { sequence.next() },
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: root.appendingPathComponent("missing-cache.json"),
+      ptyProbeEnabled: true,
+      ptyProbe: probe,
+      probeDirectory: root.appendingPathComponent("probe")
+    )
+    let now = ISO8601DateFormatter().date(from: "2026-09-23T00:00:00Z")!
+
+    _ = adapter.refresh(previous: nil, now: now, forceLiveProbe: true)
+    _ = adapter.refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(probe.executables == [first, second])
+  }
+
   @Test("Live Claude guard tolerates jitter before the fifteen-minute scheduler")
   func probeInterval() {
     let now = Date()

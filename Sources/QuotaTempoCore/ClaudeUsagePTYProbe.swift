@@ -146,11 +146,10 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
     let processGroup =
       getpgid(process.processIdentifier) == process.processIdentifier
       ? process.processIdentifier : nil
-    var knownDescendants = Set<pid_t>()
     if self.registerForShutdown { RunningProcessRegistry.shared.register(process) }
     defer {
       Self.requestExit(process, descriptor: master)
-      Self.stop(process, group: processGroup, descendants: knownDescendants)
+      Self.stop(process, group: processGroup)
       if self.registerForShutdown { RunningProcessRegistry.shared.unregister(process) }
       Self.cleanupSession(sessionID, in: workingDirectory)
       ClaudeSessionArtifactRegistry.shared.unregister(sessionID)
@@ -177,8 +176,6 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
     var chunk = [UInt8](repeating: 0, count: 16_384)
 
     while Date() < deadline {
-      knownDescendants.formUnion(
-        FoundationBoundedProcessRunner.descendantPIDs(of: process.processIdentifier))
       let count = read(master, &chunk, chunk.count)
       if count > 0 {
         guard output.count + count <= self.outputLimit else {
@@ -395,13 +392,14 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
     while process.isRunning && Date() < deadline { usleep(10_000) }
   }
 
-  private static func stop(_ process: Process, group: pid_t?, descendants: Set<pid_t>) {
-    if let group { _ = kill(-group, SIGTERM) }
-    for pid in descendants { _ = kill(pid, SIGTERM) }
-    if process.isRunning { FoundationBoundedProcessRunner.terminateTree(process, grace: 0.3) }
+  private static func stop(_ process: Process, group: pid_t?) {
+    if let group {
+      _ = kill(-group, SIGTERM)
+    } else if process.isRunning {
+      FoundationBoundedProcessRunner.terminateTree(process, grace: 0.3)
+    }
     usleep(100_000)
     if let group { _ = kill(-group, SIGKILL) }
-    for pid in descendants where kill(pid, 0) == 0 { _ = kill(pid, SIGKILL) }
     process.waitUntilExit()
   }
 

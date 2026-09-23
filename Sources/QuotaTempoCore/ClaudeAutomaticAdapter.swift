@@ -112,6 +112,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
   private let reader: any BoundedLocalDataReading
   private let runner: any BoundedProcessRunning
   private let cliExecutable: URL?
+  private let resolveCLIOnRefresh: Bool
+  private let cliResolver: @Sendable () -> URL?
   private let historyURL: URL
   private let cacheURL: URL
   private let cliFallbackEnabled: Bool
@@ -130,6 +132,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
       ]
     ),
     cliExecutable: URL? = ClaudeCLIExecutableResolver.resolve(),
+    resolveCLIOnRefresh: Bool = false,
+    cliResolver: @escaping @Sendable () -> URL? = { ClaudeCLIExecutableResolver.resolve() },
     historyURL: URL = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json"),
     cacheURL: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -145,6 +149,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
     self.reader = reader
     self.runner = runner
     self.cliExecutable = cliExecutable
+    self.resolveCLIOnRefresh = resolveCLIOnRefresh
+    self.cliResolver = cliResolver
     self.historyURL = historyURL
     self.cacheURL = cacheURL
     self.cliFallbackEnabled = cliFallbackEnabled
@@ -160,7 +166,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let cacheRead = Self.captureLocalRead { try self.readCache(now: now) }
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
-    let livePTYAvailable = self.ptyProbeEnabled && self.cliExecutable != nil
+    let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
+    let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
     let local =
       livePTYAvailable
       ? Self.newestUnmerged(history: history, cache: cache)
@@ -177,7 +184,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     }
 
     if self.ptyProbeEnabled {
-      if self.cliExecutable == nil, let local {
+      if cliExecutable == nil, let local {
         let retained =
           Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
           ?? local
@@ -197,7 +204,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         )
       }
       do {
-        return Self.success(try self.readPTY(), attemptedAt: now)
+        return Self.success(try self.readPTY(executable: cliExecutable), attemptedAt: now)
       } catch ClaudeUsagePTYProbeError.authenticationRequired {
         return self.fallback(
           local: local, previous: previous, now: now,
@@ -737,7 +744,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     )
   }
 
-  private func readPTY() throws -> ProviderSnapshot {
+  private func readPTY(executable cliExecutable: URL?) throws -> ProviderSnapshot {
     guard let cliExecutable else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
     let output = try self.ptyProbe.capture(
       executable: cliExecutable,

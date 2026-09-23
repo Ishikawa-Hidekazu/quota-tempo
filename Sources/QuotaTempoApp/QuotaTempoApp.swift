@@ -56,7 +56,10 @@ final class LiveQuotaModel: ObservableObject {
     store: NormalizedSnapshotStore,
     acquisitionEnabled: Bool,
     preferences: ProviderSelectionPreferences? = nil,
-    claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter(ptyProbeEnabled: true)
+    claudeAdapter: ClaudeAutomaticAdapter = ClaudeAutomaticAdapter(
+      resolveCLIOnRefresh: true,
+      ptyProbeEnabled: true
+    )
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
