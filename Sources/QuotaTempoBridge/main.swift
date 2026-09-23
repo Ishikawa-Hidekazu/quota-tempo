@@ -50,13 +50,10 @@ do {
     let directory =
       freshDirectory
       ? FileManager.default.temporaryDirectory.appendingPathComponent(
-        "QuotaTempoClaudeProbe-Fresh", isDirectory: true)
+        "QuotaTempoClaudeProbe-Fresh-\(UUID().uuidString)", isDirectory: true)
       : FileManager.default.urls(
         for: .applicationSupportDirectory, in: .userDomainMask
       )[0].appendingPathComponent("QuotaTempo/ClaudeProbe", isDirectory: true)
-    if freshDirectory, FileManager.default.fileExists(atPath: directory.path) {
-      try FileManager.default.removeItem(at: directory)
-    }
     defer {
       if freshDirectory { try? FileManager.default.removeItem(at: directory) }
     }

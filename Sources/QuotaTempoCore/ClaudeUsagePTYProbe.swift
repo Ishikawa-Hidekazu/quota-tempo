@@ -206,10 +206,7 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
           try Self.send("\r", to: master)
           sentPalette = true
         }
-        if normalized.contains("currentsession"),
-          normalized.contains("currentweek(allmodels)"),
-          normalized.contains("resets")
-        {
+        if Self.hasCompleteUsagePanel(normalized) {
           panelSeenAt = panelSeenAt ?? Date()
         }
       } else if count < 0, errno != EAGAIN, errno != EWOULDBLOCK, errno != EINTR {
@@ -310,6 +307,19 @@ public struct FoundationClaudeUsagePTYProbe: ClaudeUsageProbing {
       throw ClaudeUsagePTYProbeError.timeout(stage: stage)
     }
     return output
+  }
+
+  private static func hasCompleteUsagePanel(_ normalized: String) -> Bool {
+    guard
+      let sessionStart = normalized.range(of: "currentsession")?.lowerBound,
+      let weeklyRange = normalized.range(
+        of: "currentweek(allmodels)", range: sessionStart..<normalized.endIndex)
+    else { return false }
+
+    let session = normalized[sessionStart..<weeklyRange.lowerBound]
+    let weekly = normalized[weeklyRange.lowerBound..<normalized.endIndex]
+    return session.contains("%used") && session.contains("resets")
+      && weekly.contains("%used") && weekly.contains("resets")
   }
 
   private static func send(_ text: String, to descriptor: Int32) throws {
