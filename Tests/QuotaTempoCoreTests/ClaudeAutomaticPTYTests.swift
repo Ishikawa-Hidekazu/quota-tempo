@@ -346,6 +346,60 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.sourceState == .attemptTimedOut)
   }
 
+  @Test("A failed probe prefers newer Desktop usage without an unverified reset")
+  func failedProbeKeepsCurrentUsageWithoutUnverifiedReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 69.0, "sd": 77.0],
+        ]
+      ]
+    ]).write(to: history)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 31,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)
+      ),
+      fiveHour: QuotaWindow(
+        remainingPercent: 42,
+        durationSeconds: 18_000,
+        resetAt: now.addingTimeInterval(8_000)
+      ),
+      sourceState: .observationSucceeded
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: root.appendingPathComponent("missing-cache"),
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(
+      abs(
+        (snapshot.capturedAt?.timeIntervalSince1970 ?? 0)
+          - now.addingTimeInterval(-30).timeIntervalSince1970) < 0.001)
+    #expect(snapshot.weekly?.remainingPercent == 23)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.fiveHour?.remainingPercent == 31)
+    #expect(snapshot.fiveHour?.resetAt == nil)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
   @Test(
     "A failed probe prefers newer local weekly usage when only the old five-hour reset is current")
   func expiredPreviousWeeklyDoesNotHideNewLocalUsage() throws {

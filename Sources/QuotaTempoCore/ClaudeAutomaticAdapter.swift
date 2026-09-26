@@ -374,12 +374,19 @@ public struct ClaudeAutomaticAdapter: Sendable {
     emptySource: SnapshotSource = .claudeCLI
   ) -> ProviderSnapshot {
     if let previous, Self.hasCurrentExactReset(previous, now: now) {
+      let retained =
+        error != .unsafePath
+        ? Self.preferredObservation(
+          local: local, previous: previous, now: now,
+          allowMerge: false
+        ) ?? previous
+        : previous
       return ProviderSnapshot(
         provider: .claude,
-        source: previous.source,
-        capturedAt: previous.capturedAt,
-        weekly: previous.weekly,
-        fiveHour: previous.fiveHour,
+        source: retained.source,
+        capturedAt: retained.capturedAt,
+        weekly: retained.weekly,
+        fiveHour: retained.fiveHour,
         lastAttemptAt: now,
         sourceState: state,
         errorCode: error

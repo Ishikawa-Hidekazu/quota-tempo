@@ -72,7 +72,7 @@ Required boundaries:
 - Reject symlink-selected and oversized local sources.
 - Keep the old noninteractive `get_usage` decoder test-only; it is not the `/usage` acquisition path.
 - Bound PTY time and output, disable tools, hooks, MCP configuration, Remote Control startup, and auto-update, and terminate the process tree.
-- Reject stale or loading usage panels and reject ambiguous reset times; a failed probe retains a prior exact, still-current observation and its older captured time regardless of whether it came from the CLI or local cache rather than making it current.
+- Reject stale or loading usage panels and reject ambiguous reset times. After a failed probe, use a newer valid local observation without inheriting an unverified reset; otherwise retain the prior exact, still-current observation and its older captured time.
 - Tolerate independently absent windows and fail closed when utilization and reset metadata cannot be safely reconciled.
 - Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, and acquisition state.
 
