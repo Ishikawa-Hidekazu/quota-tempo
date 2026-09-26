@@ -102,7 +102,7 @@ Claude freshness means `last observed on this Mac`, not guaranteed current accou
 - Usage on another device may not appear until Claude updates one of the recognized local sources.
 - A long interval without a valid local observation moves data from recent to stale.
 - A current CLI compatibility check found no five-hour or weekly windows in `get_usage`; the experimental decoder stays disabled in V1.
-- In version 0.1.4, an incomplete or old local observation can trigger `/usage` after the 14-minute live-probe guard. A successfully parsed current panel provides confirmed reset windows. If the probe fails, an earlier exact, still-current observation and its `capturedAt` are retained regardless of whether it came from the CLI or local cache, while the new attempt time and error remain visible; previous data is never relabeled as a fresh observation.
+- In version 0.1.4, an incomplete or old local observation can trigger `/usage` after the 14-minute live-probe guard. A successfully parsed current panel provides confirmed reset windows. If the probe fails and a newer valid local observation exists, that newer usage replaces the old usage without inheriting an unverified reset. Otherwise, an earlier exact, still-current observation and its `capturedAt` are retained. In both cases the new attempt time and error remain visible, and previous data is never relabeled as a fresh observation.
 
 ### Result mapping
 
