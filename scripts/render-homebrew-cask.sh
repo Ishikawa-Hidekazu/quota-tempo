@@ -35,7 +35,7 @@ cask "quotatempo" do
   url "https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/download/v#{version}/QuotaTempo-#{version}-macOS.zip"
   name "QuotaTempo"
   desc "Weekly AI capacity planner for Codex and Claude"
-  homepage "https://ishikawa.co/en/projects/"
+  homepage "https://ishikawa.co/en/products/quotatempo/"
 
   depends_on arch: :arm64
   depends_on macos: :sonoma
