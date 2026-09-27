@@ -24,6 +24,7 @@ The latest QuotaTempo Public Beta remains under active development. Public build
 The current beta contains deterministic planning math, a native macOS menu-bar app with a focused first-run and reopenable application window, a bounded Codex app-server reader with verified official-desktop discovery and capability fallback, a hardened local snapshot store, an automatic local-first Claude adapter, provider selection, opt-in login launch, actionable compatibility diagnostics, and direct access to the bundled product policies.
 
 When recognized local Claude observations lack current reset times, QuotaTempo can launch the already-installed, signed-in Claude Code CLI in a bounded pseudo-terminal and read its rendered `/usage` panel. It does not request provider credentials or depend on CodexBar.
+Claude Desktop alone can provide a weekly balance, but its local history does not provide the next exact reset. A previous same-account cached reset may temporarily support `P`; after that window expires, `P` and the difference can disappear until a new exact reset is observed. A signed-in Claude Code CLI is currently needed to reacquire it automatically. This Desktop-only limitation is under investigation in [issue #23](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/23).
 
 ## Your first 60 seconds after launch
 

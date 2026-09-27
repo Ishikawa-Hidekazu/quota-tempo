@@ -10,6 +10,8 @@ This guide applies to the signed and notarized QuotaTempo public beta distribute
 
 QuotaTempo does not require CodexBar. It does not sign in to either provider and does not ask for provider tokens, cookies, or API keys.
 
+With Claude Desktop alone, the weekly balance may be available while the next exact reset time is not. A previously observed reset can support `P` only until that quota window ends. After rollover, a new exact `P` and difference require a signed-in official Claude Code CLI to supply the reset; sign in to that CLI with the same account if you want those fields to refresh automatically. QuotaTempo never asks you to enter the CLI credentials.
+
 ## Verify and install
 
 1. Download the QuotaTempo ZIP and its published SHA-256 from the same official release page.
