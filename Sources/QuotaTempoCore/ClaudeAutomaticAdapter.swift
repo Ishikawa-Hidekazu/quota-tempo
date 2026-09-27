@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -162,16 +163,17 @@ public struct ClaudeAutomaticAdapter: Sendable {
   public func refresh(
     previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
   ) -> ProviderSnapshot {
+    let accountBeforeRefresh = try? self.readAccountIdentity()
+    let effectivePrevious = Self.previousCompatibleWithCurrentAccount(
+      previous, currentAccount: accountBeforeRefresh)
     let historyRead = Self.captureLocalRead { try self.readHistory(now: now) }
     let cacheRead = Self.captureLocalRead { try self.readCache(now: now) }
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
     let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
     let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
-    let local =
-      livePTYAvailable
-      ? Self.newestUnmerged(history: history, cache: cache)
-      : Self.localCandidate(history: history, cache: cache)
+    let local = Self.localCandidate(
+      history: history, cache: cache, currentAccount: accountBeforeRefresh)
     let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
 
     if localError == .unsafePath {
@@ -179,7 +181,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         historyRead.error == .unsafePath ? .claudeDesktopHistory : .claudeLocalCache
       return self.fallback(
         local: local,
-        previous: previous,
+        previous: effectivePrevious,
         now: now,
         state: .attemptFailed,
         error: .unsafePath,
@@ -190,7 +192,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     if !forceLiveProbe, let local, Self.isCompleteAndFresh(local, now: now) {
       return Self.success(
         Self.preferredObservation(
-          local: local, previous: previous, now: now,
+          local: local, previous: effectivePrevious, now: now,
           allowMerge: !livePTYAvailable
         ) ?? local,
         attemptedAt: now
@@ -200,21 +202,39 @@ public struct ClaudeAutomaticAdapter: Sendable {
     if self.ptyProbeEnabled {
       if cliExecutable == nil, let local {
         let retained =
-          Self.preferredObservation(local: local, previous: previous, now: now, allowMerge: true)
+          Self.preferredObservation(
+            local: local, previous: effectivePrevious, now: now, allowMerge: true)
           ?? local
         return Self.success(retained, attemptedAt: now)
       }
       do {
-        return Self.success(try self.readPTY(executable: cliExecutable), attemptedAt: now)
+        let observed = try self.readPTY(executable: cliExecutable)
+        let accountAfterProbe = try? self.readAccountIdentity()
+        guard accountBeforeRefresh == accountAfterProbe else {
+          let previousAfterSwitch = Self.previousCompatibleWithCurrentAccount(
+            previous, currentAccount: accountAfterProbe)
+          return self.fallback(
+            local: nil, previous: previousAfterSwitch, now: now,
+            state: .attemptFailed, error: .sourceUnavailable
+          )
+        }
+        let verifiedAccount = accountAfterProbe
+        return Self.success(
+          Self.withAccountFingerprint(
+            observed,
+            fingerprint: verifiedAccount?.accountFingerprint,
+            organizationFingerprint: verifiedAccount?.organizationFingerprint),
+          attemptedAt: now
+        )
       } catch ClaudeUsagePTYProbeError.authenticationRequired {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .authenticationRequired
         )
       } catch ClaudeUsagePTYProbeError.timeout(let stage) {
         if stage == .authPromptSeen {
-          return self.fallback(
-            local: local, previous: previous, now: now,
+          return self.fallbackAfterPTY(
+            local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
             state: .attemptFailed, error: .authenticationRequired
           )
         }
@@ -222,46 +242,48 @@ public struct ClaudeAutomaticAdapter: Sendable {
           .cliErrorSeen, .commandPaletteSeen, .unsupportedOption, .sessionConflict,
           .usageLoadFailed, .usageSentAfterSafety, .usageSentWithoutSafety,
         ].contains(stage)
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: invalidResponse ? .attemptFailed : .attemptTimedOut,
           error: invalidResponse ? .invalidResponse : .timeout
         )
       } catch BoundedProcessError.timeout {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptTimedOut, error: .timeout
         )
       } catch BoundedProcessError.outputLimitExceeded {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .outputLimitExceeded
         )
       } catch BoundedProcessError.launchFailed, BoundedProcessError.inputWriteFailed {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .launchFailed
         )
       } catch ClaudeAutomaticAdapterError.unsafePath {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .unsafePath
         )
       } catch ClaudeAutomaticAdapterError.invalidInput {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .invalidResponse
         )
       } catch {
-        return self.fallback(
-          local: local, previous: previous, now: now,
+        return self.fallbackAfterPTY(
+          local: local, previous: previous, accountBeforeProbe: accountBeforeRefresh, now: now,
           state: .attemptFailed, error: .sourceUnavailable
         )
       }
     }
 
     guard self.cliFallbackEnabled else {
-      if let retained = Self.preferredObservation(local: local, previous: previous, now: now) {
+      if let retained = Self.preferredObservation(
+        local: local, previous: effectivePrevious, now: now)
+      {
         // Each local source is optional when the other has a valid observation.
         if local != nil {
           return Self.success(retained, attemptedAt: now)
@@ -275,7 +297,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
             fiveHour: retained.fiveHour,
             lastAttemptAt: now,
             sourceState: .attemptFailed,
-            errorCode: Self.acquisitionError(for: error)
+            errorCode: Self.acquisitionError(for: error),
+            claudeAccountFingerprint: retained.claudeAccountFingerprint,
+            claudeOrganizationFingerprint: retained.claudeOrganizationFingerprint
           )
         }
         return Self.success(retained, attemptedAt: now)
@@ -297,7 +321,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     } catch BoundedProcessError.timeout {
       return self.fallback(
         local: local,
-        previous: previous,
+        previous: effectivePrevious,
         now: now,
         state: .attemptTimedOut,
         error: .timeout
@@ -305,7 +329,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     } catch BoundedProcessError.outputLimitExceeded {
       return self.fallback(
         local: local,
-        previous: previous,
+        previous: effectivePrevious,
         now: now,
         state: .attemptFailed,
         error: .outputLimitExceeded
@@ -313,7 +337,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     } catch {
       return self.fallback(
         local: local,
-        previous: previous,
+        previous: effectivePrevious,
         now: now,
         state: .attemptFailed,
         error: .sourceUnavailable
@@ -378,7 +402,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         error != .unsafePath
         ? Self.preferredObservation(
           local: local, previous: previous, now: now,
-          allowMerge: false
+          allowMerge: true
         ) ?? previous
         : previous
       return ProviderSnapshot(
@@ -389,7 +413,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
         fiveHour: retained.fiveHour,
         lastAttemptAt: now,
         sourceState: state,
-        errorCode: error
+        errorCode: error,
+        claudeAccountFingerprint: retained.claudeAccountFingerprint,
+        claudeOrganizationFingerprint: retained.claudeOrganizationFingerprint
       )
     }
     if let retained = Self.preferredObservation(
@@ -404,7 +430,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
         fiveHour: retained.fiveHour,
         lastAttemptAt: now,
         sourceState: state,
-        errorCode: error
+        errorCode: error,
+        claudeAccountFingerprint: retained.claudeAccountFingerprint,
+        claudeOrganizationFingerprint: retained.claudeOrganizationFingerprint
       )
     }
     return AcquisitionRecords.preservingFailure(
@@ -414,6 +442,26 @@ public struct ClaudeAutomaticAdapter: Sendable {
       attemptedAt: now,
       state: state,
       error: error
+    )
+  }
+
+  private func fallbackAfterPTY(
+    local: ProviderSnapshot?,
+    previous: ProviderSnapshot?,
+    accountBeforeProbe: ClaudeAccountIdentity?,
+    now: Date,
+    state: SourceState,
+    error: AcquisitionErrorCode
+  ) -> ProviderSnapshot {
+    let accountAfterProbe = try? self.readAccountIdentity()
+    let accountChanged = accountBeforeProbe != accountAfterProbe
+    return self.fallback(
+      local: accountChanged ? nil : local,
+      previous: Self.previousCompatibleWithCurrentAccount(
+        previous, currentAccount: accountAfterProbe),
+      now: now,
+      state: state,
+      error: accountChanged ? .sourceUnavailable : error
     )
   }
 
@@ -433,8 +481,18 @@ public struct ClaudeAutomaticAdapter: Sendable {
       weekly: snapshot.weekly,
       fiveHour: snapshot.fiveHour,
       lastAttemptAt: attemptedAt,
-      sourceState: .observationSucceeded
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: snapshot.claudeAccountFingerprint,
+      claudeOrganizationFingerprint: snapshot.claudeOrganizationFingerprint
     )
+  }
+
+  private static func previousCompatibleWithCurrentAccount(
+    _ previous: ProviderSnapshot?, currentAccount: ClaudeAccountIdentity?
+  ) -> ProviderSnapshot? {
+    guard let previous, let currentAccount else { return previous }
+    guard let previousAccount = previous.claudeAccountFingerprint else { return previous }
+    return previousAccount == currentAccount.accountFingerprint ? previous : nil
   }
 
   private static func preferredObservation(
@@ -445,10 +503,36 @@ public struct ClaudeAutomaticAdapter: Sendable {
   ) -> ProviderSnapshot? {
     guard let local else { return previous }
     guard let previous else { return local }
+    if let localAccount = local.claudeAccountFingerprint,
+      let previousAccount = previous.claudeAccountFingerprint,
+      localAccount != previousAccount
+    {
+      return local
+    }
     guard let localCapturedAt = local.capturedAt else { return previous }
     guard let previousCapturedAt = previous.capturedAt else { return local }
     guard localCapturedAt > previousCapturedAt else { return previous }
+    // Unowned observations cannot prove they belong to the same account. Keep an exact
+    // observation intact until a verified observation replaces it; never transfer its reset.
+    if !Self.hasCurrentExactReset(local, now: now),
+      Self.hasCurrentExactReset(previous, now: now)
+    {
+      guard
+        let localAccount = local.claudeAccountFingerprint,
+        localAccount == previous.claudeAccountFingerprint
+      else { return previous }
+    }
+    if local.claudeAccountFingerprint == nil,
+      previous.claudeAccountFingerprint != nil,
+      Self.hasCurrentExactReset(previous, now: now)
+    {
+      return previous
+    }
     guard allowMerge else { return local }
+    guard
+      let localAccount = local.claudeAccountFingerprint,
+      localAccount == previous.claudeAccountFingerprint
+    else { return local }
 
     let mergedWeekly = Self.mergedWindow(
       latest: local.weekly,
@@ -475,7 +559,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
         latestCapturedAt: localCapturedAt,
         resetCapturedAt: previousCapturedAt
       ),
-      sourceState: local.sourceState
+      sourceState: local.sourceState,
+      claudeAccountFingerprint: localAccount,
+      claudeOrganizationFingerprint: local.claudeOrganizationFingerprint
     )
   }
 
@@ -492,40 +578,16 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
   private static func localCandidate(
     history: ProviderSnapshot?,
-    cache: ProviderSnapshot?
+    cache: ProviderSnapshot?,
+    currentAccount: ClaudeAccountIdentity?
   ) -> ProviderSnapshot? {
-    guard let history else { return cache }
-    guard let cache else { return history }
-    guard
-      let historyCapturedAt = history.capturedAt,
-      let cacheCapturedAt = cache.capturedAt,
-      historyCapturedAt >= cacheCapturedAt
-    else { return cache }
-
-    let weekly = Self.mergedWindow(
-      latest: history.weekly,
-      resetCarrier: cache.weekly,
-      latestCapturedAt: historyCapturedAt,
-      resetCapturedAt: cacheCapturedAt
-    )
-    let fiveHour = Self.mergedWindow(
-      latest: history.fiveHour,
-      resetCarrier: cache.fiveHour,
-      latestCapturedAt: historyCapturedAt,
-      resetCapturedAt: cacheCapturedAt
-    )
-    let transferredReset =
-      (history.weekly?.resetAt == nil && weekly?.resetAt != nil)
-      || (history.fiveHour?.resetAt == nil && fiveHour?.resetAt != nil)
-    guard transferredReset else { return history }
-    return ProviderSnapshot(
-      provider: .claude,
-      source: .claudeLocalMerged,
-      capturedAt: historyCapturedAt,
-      weekly: weekly,
-      fiveHour: fiveHour,
-      sourceState: .observationSucceeded
-    )
+    if let cache,
+      let currentAccount,
+      cache.claudeAccountFingerprint == currentAccount.accountFingerprint
+    {
+      return cache
+    }
+    return Self.newestUnmerged(history: history, cache: cache)
   }
 
   private static func newestUnmerged(
@@ -649,7 +711,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
       capturedAt: capturedAt,
       weekly: weekly,
       fiveHour: fiveHour,
-      sourceState: .observationSucceeded
+      sourceState: .observationSucceeded,
+      claudeOrganizationFingerprint: Self.fingerprint(sample.organizationUUID)
     )
   }
 
@@ -685,7 +748,24 @@ public struct ClaudeAutomaticAdapter: Sendable {
       capturedAt: capturedAt,
       weekly: weekly,
       fiveHour: fiveHour,
-      sourceState: .observationSucceeded
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: Self.accountFingerprint(root.oauthAccount),
+      claudeOrganizationFingerprint: Self.fingerprint(root.oauthAccount?.organizationUUID)
+    )
+  }
+
+  private func readAccountIdentity() throws -> ClaudeAccountIdentity {
+    let data = try self.reader.read(from: self.cacheURL, limit: Self.cacheInputLimit)
+    let root: AccountRoot
+    do { root = try JSONDecoder().decode(AccountRoot.self, from: data) } catch {
+      throw ClaudeAutomaticAdapterError.invalidInput
+    }
+    guard let accountFingerprint = Self.accountFingerprint(root.oauthAccount),
+      let organizationFingerprint = Self.fingerprint(root.oauthAccount?.organizationUUID)
+    else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
+    return ClaudeAccountIdentity(
+      accountFingerprint: accountFingerprint,
+      organizationFingerprint: organizationFingerprint
     )
   }
 
@@ -843,6 +923,53 @@ public struct ClaudeAutomaticAdapter: Sendable {
     return formatter.date(from: value)
   }
 
+  private static func fingerprint(_ identifier: String?) -> String? {
+    guard let identifier = identifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !identifier.isEmpty
+    else { return nil }
+    return SHA256.hash(data: Data(identifier.lowercased().utf8))
+      .map { String(format: "%02x", $0) }.joined()
+  }
+
+  private static func accountFingerprint(_ account: OAuthAccount?) -> String? {
+    Self.accountFingerprint(
+      accountUUID: account?.accountUUID,
+      organizationUUID: account?.organizationUUID
+    )
+  }
+
+  private static func accountFingerprint(
+    accountUUID: String?, organizationUUID: String?
+  ) -> String? {
+    guard let accountUUID = accountUUID?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !accountUUID.isEmpty,
+      let organizationUUID = organizationUUID?.trimmingCharacters(
+        in: .whitespacesAndNewlines),
+      !organizationUUID.isEmpty
+    else { return nil }
+    return Self.fingerprint(
+      "claude-owner-v1:\(accountUUID.lowercased()):\(organizationUUID.lowercased())")
+  }
+
+  private static func withAccountFingerprint(
+    _ snapshot: ProviderSnapshot,
+    fingerprint: String?,
+    organizationFingerprint: String?
+  ) -> ProviderSnapshot {
+    ProviderSnapshot(
+      provider: snapshot.provider,
+      source: snapshot.source,
+      capturedAt: snapshot.capturedAt,
+      weekly: snapshot.weekly,
+      fiveHour: snapshot.fiveHour,
+      lastAttemptAt: snapshot.lastAttemptAt,
+      sourceState: snapshot.sourceState,
+      errorCode: snapshot.errorCode,
+      claudeAccountFingerprint: fingerprint,
+      claudeOrganizationFingerprint: organizationFingerprint
+    )
+  }
+
   static let cliRequest = Data(
     """
     {"type":"control_request","request_id":"quota-tempo-usage","request":{"subtype":"get_usage"}}
@@ -857,10 +984,12 @@ private struct HistoryRoot: Decodable {
 
 private struct HistorySample: Decodable {
   let timestampMilliseconds: Int64
+  let organizationUUID: String?
   let usage: HistoryUsage
 
   enum CodingKeys: String, CodingKey {
     case timestampMilliseconds = "t"
+    case organizationUUID = "org"
     case usage = "u"
   }
 }
@@ -877,6 +1006,26 @@ private struct HistoryUsage: Decodable {
 
 private struct CacheRoot: Decodable {
   let cachedUsageUtilization: CachedUsage?
+  let oauthAccount: OAuthAccount?
+}
+
+private struct AccountRoot: Decodable {
+  let oauthAccount: OAuthAccount?
+}
+
+private struct OAuthAccount: Decodable {
+  let accountUUID: String?
+  let organizationUUID: String?
+
+  enum CodingKeys: String, CodingKey {
+    case accountUUID = "accountUuid"
+    case organizationUUID = "organizationUuid"
+  }
+}
+
+private struct ClaudeAccountIdentity: Equatable {
+  let accountFingerprint: String
+  let organizationFingerprint: String
 }
 
 private struct CachedUsage: Decodable {

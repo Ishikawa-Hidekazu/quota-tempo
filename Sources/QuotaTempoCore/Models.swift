@@ -88,6 +88,8 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
   public let errorCode: AcquisitionErrorCode?
   public let codexExecutableSource: CodexExecutableSource?
   public let codexExecutableVersion: String?
+  public let claudeAccountFingerprint: String?
+  public let claudeOrganizationFingerprint: String?
 
   public init(
     provider: ProviderID,
@@ -99,7 +101,9 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     sourceState: SourceState? = nil,
     errorCode: AcquisitionErrorCode? = nil,
     codexExecutableSource: CodexExecutableSource? = nil,
-    codexExecutableVersion: String? = nil
+    codexExecutableVersion: String? = nil,
+    claudeAccountFingerprint: String? = nil,
+    claudeOrganizationFingerprint: String? = nil
   ) {
     self.provider = provider
     self.source = source
@@ -111,6 +115,8 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     self.errorCode = errorCode
     self.codexExecutableSource = codexExecutableSource
     self.codexExecutableVersion = codexExecutableVersion
+    self.claudeAccountFingerprint = claudeAccountFingerprint
+    self.claudeOrganizationFingerprint = claudeOrganizationFingerprint
   }
 }
 

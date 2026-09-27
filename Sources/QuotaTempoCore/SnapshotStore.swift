@@ -220,13 +220,26 @@ public enum NormalizedSnapshotCodec {
     switch snapshot.provider {
     case .claude:
       return snapshot.codexExecutableSource == nil && snapshot.codexExecutableVersion == nil
+        && self.isValidClaudeFingerprint(snapshot.claudeAccountFingerprint)
+        && self.isValidClaudeFingerprint(snapshot.claudeOrganizationFingerprint)
     case .codex:
+      guard snapshot.claudeAccountFingerprint == nil,
+        snapshot.claudeOrganizationFingerprint == nil
+      else { return false }
       guard snapshot.codexExecutableVersion == nil || snapshot.codexExecutableSource != nil else {
         return false
       }
       guard let version = snapshot.codexExecutableVersion else { return true }
       return self.isNormalizedSemanticVersion(version)
     }
+  }
+
+  private static func isValidClaudeFingerprint(_ value: String?) -> Bool {
+    guard let value else { return true }
+    return value.utf8.count == 64
+      && value.utf8.allSatisfy { byte in
+        (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+      }
   }
 
   private static func isNormalizedSemanticVersion(_ value: String) -> Bool {
@@ -333,7 +346,9 @@ public enum AcquisitionRecords {
       sourceState: state,
       errorCode: error,
       codexExecutableSource: previous?.codexExecutableSource,
-      codexExecutableVersion: previous?.codexExecutableVersion
+      codexExecutableVersion: previous?.codexExecutableVersion,
+      claudeAccountFingerprint: previous?.claudeAccountFingerprint,
+      claudeOrganizationFingerprint: previous?.claudeOrganizationFingerprint
     )
   }
 }

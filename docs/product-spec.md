@@ -72,9 +72,9 @@ Required boundaries:
 - Reject symlink-selected and oversized local sources.
 - Keep the old noninteractive `get_usage` decoder test-only; it is not the `/usage` acquisition path.
 - Bound PTY time and output, disable tools, hooks, MCP configuration, Remote Control startup, and auto-update, and terminate the process tree.
-- Reject stale or loading usage panels and reject ambiguous reset times. After a failed probe, use a newer valid local observation without inheriting an unverified reset; otherwise retain the prior exact, still-current observation and its older captured time.
+- Reject stale or loading usage panels and reject ambiguous reset times. Prefer a Claude Code cache whose one-way fingerprint matches the current account over unowned Desktop history. After a failed probe, retain a prior exact, still-current observation rather than transferring its reset to unowned Desktop data. Discard old-account snapshots as soon as a verified account switch is observed.
 - Tolerate independently absent windows and fail closed when utilization and reset metadata cannot be safely reconciled.
-- Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, and acquisition state.
+- Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, acquisition state, and optional SHA-256 Claude ownership fingerprints. Never persist raw account or organization UUIDs.
 
 The previously tested Claude `statusLine` bridge remains rollback-only code and is not activated by current onboarding. Claude model-specific buckets and Extra Usage remain out of scope because no stable third-party contract has been established.
 
@@ -140,7 +140,7 @@ Icon only  [neutral metronome glyph]
 - On screen, the Full and Compact modes replace `Cx` and `Cl` with neutral monochrome SF Symbols. Provider logos are not bundled. The text forms above remain the canonical plain-text and VoiceOver representation.
 - `W` is weekly capacity left.
 - `P` is the continuous reset-relative plan at the current instant, assuming capacity is consumed evenly across the provider's seven-day window.
-- `P≈` means Claude's last confirmed exact weekly reset was advanced by exactly one seven-day duration. An estimate is never used to generate another estimate; a new exact reset removes the marker automatically.
+- `P≈` means Claude's last confirmed exact weekly reset was advanced by exactly one seven-day duration using a newer observation with the same one-way account fingerprint. Unowned Desktop history cannot create or advance an estimate. An estimate is never used to generate another estimate; a new exact reset removes the marker automatically.
 - `↑`, `↓`, and `=0` express the signed difference without recommending a provider.
 - Missing weekly capacity renders the provider as `—`.
 - Missing reset-relative comparison data that has neither a confirmed reset nor an eligible one-window projection preserves weekly capacity, renders plan and difference as `—`, and labels the detail state **Reset time unavailable**. For a Claude Desktop-only observation, explain that Claude Code must first produce compatible local reset metadata before `P` can be calculated. Stale data remains a separate state.

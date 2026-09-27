@@ -86,12 +86,12 @@ QuotaTempo reads only recognized aggregate fields from Claude Desktop history an
 ### Acquisition
 
 - Read the two documented product paths named in `PRIVACY.md` with strict size and regular-file checks.
-- Decode only the recognized history and `cachedUsageUtilization` structures.
+- Decode only the recognized history, Claude Code `cachedUsageUtilization`, account UUID, and organization UUID fields. Hash the UUIDs immediately and never persist their raw values.
 - Keep a valid observation successful when the optional sibling source is malformed or oversized, but fail closed before probing when either selected path is unsafe.
-- Combine a newer utilization reading with an older reset only when both observations belong to the same quota window.
+- Keep Desktop history and Claude Code cache observations separate because history does not carry a verifiable account principal. Transfer a reset only between observations with matching one-way account fingerprints and compatible quota windows.
 - Treat five-hour and seven-day windows as independently optional.
 - Exclude model-specific weekly buckets and Extra Usage.
-- If the last confirmed weekly reset has just elapsed and a newer Desktop observation belongs to the immediately following window, advance that exact reset by one seven-day duration and mark `P≈` as estimated.
+- Project a reset into the immediately following window only between observations with matching one-way account fingerprints. Never use unowned Desktop history to advance a reset.
 - Never advance an estimated reset. If only utilization is safe and no one-window projection qualifies, keep `W` and show `P` and comparison as unavailable.
 
 ### Uncertainty contract
@@ -102,7 +102,7 @@ Claude freshness means `last observed on this Mac`, not guaranteed current accou
 - Usage on another device may not appear until Claude updates one of the recognized local sources.
 - A long interval without a valid local observation moves data from recent to stale.
 - A current CLI compatibility check found no five-hour or weekly windows in `get_usage`; the experimental decoder stays disabled in V1.
-- An incomplete or old local observation can trigger `/usage` after the 14-minute live-probe guard. A successfully parsed current panel provides confirmed reset windows. If the probe fails and a newer valid local observation exists, that newer usage replaces the old usage without inheriting an unverified reset. Otherwise, an earlier exact, still-current observation and its `capturedAt` are retained. In both cases the new attempt time and error remain visible, and previous data is never relabeled as a fresh observation.
+- An incomplete or old local observation can trigger `/usage` after the 14-minute live-probe guard. A successfully parsed current panel provides confirmed reset windows. A Claude Code cache whose one-way fingerprint matches the current account takes precedence over unowned Desktop history. If a failed probe leaves only a newer unowned Desktop observation, an earlier exact, still-current observation and its `capturedAt` are retained instead of transferring or erasing its reset. A verified observation from another account replaces old-account data immediately. Failed attempts remain visible, and previous data is never relabeled as a fresh observation.
 
 ### Result mapping
 
