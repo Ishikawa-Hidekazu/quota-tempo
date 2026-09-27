@@ -593,6 +593,17 @@ public struct QuotaMenuView: View {
           self.detailRow("target.basis", value: self.copy.text("target.basis.estimated"))
         }
         self.detailRow("source", value: self.copy.source(plan.source))
+        if plan.provider == .claude, plan.source == .claudeDesktopHistory,
+          plan.weeklyResetAt != nil
+        {
+          self.detailRow(
+            "reset.source",
+            value: self.copy.text(
+              plan.weeklyResetIsEstimated
+                ? "reset.source.claude.estimated" : "reset.source.claude.confirmed"
+            )
+          )
+        }
         if plan.provider == .codex, let executableSource = plan.codexExecutableSource {
           self.detailRow(
             "codex.executable.source",
