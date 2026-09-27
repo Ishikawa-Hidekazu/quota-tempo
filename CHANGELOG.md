@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 — fresh Claude fallback observations
 
 - Prefer newer valid Claude Desktop usage after a live `/usage` probe fails instead of retaining an older balance.
 - Do not attach an unverified reset from an older Claude CLI observation to newer Desktop usage.
