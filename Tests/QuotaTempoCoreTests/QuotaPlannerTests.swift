@@ -596,8 +596,10 @@ struct QuotaPlannerTests {
     #expect(MenuCopy(languageCode: "ja").text("check.for.updates") == "アップデートを確認...")
     #expect(MenuCopy(languageCode: "en").status(.resetUnknown) == "Reset time unavailable")
     #expect(MenuCopy(languageCode: "ja").status(.resetUnknown) == "リセット時刻未取得")
-    #expect(MenuCopy(languageCode: "en").text("claude.reset.help").contains("Desktop"))
+    #expect(MenuCopy(languageCode: "en").text("claude.reset.help").contains("Claude Code"))
+    #expect(MenuCopy(languageCode: "en").text("claude.reset.help.desktop").contains("Desktop"))
     #expect(MenuCopy(languageCode: "ja").text("claude.reset.help").contains("リセット時刻"))
+    #expect(MenuCopy(languageCode: "ja").text("claude.reset.help.desktop").contains("Desktop"))
     #expect(
       MenuCopy(languageCode: "en").text("reset.source.claude.confirmed")
         == "Earlier Claude Code observation")

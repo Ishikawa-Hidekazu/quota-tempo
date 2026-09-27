@@ -34,7 +34,8 @@
 "claude.local.boundary" = "このMacで最後に確認した値です。";
 "stale.comparison.confirmed.help" = "W?は最後に確認した残量です。Pは最後に確認したリセットから計算しています。目標差と利用可能量は最新の残量待ちです。";
 "stale.comparison.estimated.help" = "W?は最後に確認した残量です。P≈はリセットを1期間だけ進めた推定から計算しています。目標差と利用可能量は最新の残量待ちです。";
-"claude.reset.help" = "Claude Desktopの履歴にはリセット時刻が含まれません。新しい確定時刻を取得できるまでPは表示できません。";
+"claude.reset.help" = "Claudeの現在のリセット時刻を確認できませんでした。Claude Codeへサインイン済みか確認してから更新してください。";
+"claude.reset.help.desktop" = "Claude Desktopの履歴にはリセット時刻が含まれません。新しい確定時刻を取得できるまでPは表示できません。";
 "source.state.neverObserved" = "未取得";
 "source.state.observationSucceeded" = "取得成功";
 "source.state.accessRestricted" = "provider側で利用制限中";

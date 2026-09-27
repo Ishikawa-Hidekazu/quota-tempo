@@ -634,7 +634,7 @@ public struct QuotaMenuView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
           if plan.status == .resetUnknown {
-            Text(self.copy.text("claude.reset.help"))
+            Text(self.claudeResetHelp(plan))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -663,6 +663,11 @@ public struct QuotaMenuView: View {
     }
     .font(.caption)
     .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func claudeResetHelp(_ plan: PlannedProvider) -> String {
+    self.copy.text(
+      plan.source == .claudeDesktopHistory ? "claude.reset.help.desktop" : "claude.reset.help")
   }
 
   private func percent(_ value: Double?) -> String {
@@ -710,11 +715,15 @@ public struct QuotaMenuView: View {
       "\(self.copy.text("target.now")) \(self.percent(plan.targetNow, estimated: plan.targetIsEstimated))",
       "\(self.copy.text("vs.target")) \(self.points(plan))",
       "\(self.copy.text("captured.at")) \(self.date(plan.capturedAt))",
+      plan.provider == .claude && plan.source == .claudeDesktopHistory
+        && plan.weeklyResetAt != nil
+        ? "\(self.copy.text("reset.source")) \(self.copy.text(plan.weeklyResetIsEstimated ? "reset.source.claude.estimated" : "reset.source.claude.confirmed"))"
+        : "",
       plan.provider == .claude ? self.copy.text("claude.local.boundary") : "",
       plan.freshness == .stale && plan.targetNow != nil
         ? self.staleComparisonHelp(plan) : "",
       plan.provider == .claude && plan.status == .resetUnknown
-        ? self.copy.text("claude.reset.help") : "",
+        ? self.claudeResetHelp(plan) : "",
       plan.errorCode.map { "\(self.copy.text("acquisition.error")) \(self.copy.error($0))" } ?? "",
       plan.targetIsEstimated ? self.copy.text("target.basis.estimated") : "",
       self.copy.status(plan.status),

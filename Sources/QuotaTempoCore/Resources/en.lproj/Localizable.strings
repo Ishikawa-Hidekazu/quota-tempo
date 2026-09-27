@@ -34,7 +34,8 @@
 "claude.local.boundary" = "Last observed on this Mac.";
 "stale.comparison.confirmed.help" = "W? is the last observed balance. P is calculated from the last confirmed reset. Difference and available capacity are waiting for a current balance.";
 "stale.comparison.estimated.help" = "W? is the last observed balance. P≈ is calculated from a one-window reset estimate. Difference and available capacity are waiting for a current balance.";
-"claude.reset.help" = "Claude Desktop history has no reset time. P is unavailable until a new confirmed reset is observed.";
+"claude.reset.help" = "QuotaTempo could not confirm Claude's current reset time. Confirm that Claude Code is signed in, then refresh.";
+"claude.reset.help.desktop" = "Claude Desktop history has no reset time. P is unavailable until a new confirmed reset is observed.";
 "source.state.neverObserved" = "Never observed";
 "source.state.observationSucceeded" = "Observation succeeded";
 "source.state.accessRestricted" = "Provider access restricted";
