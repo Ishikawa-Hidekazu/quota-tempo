@@ -176,17 +176,22 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let cacheRead = Self.captureLocalRead { try self.readCache(now: now) }
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
-    let desktopAccount = try? self.readDesktopAccountFingerprint()
+    let desktopAccountRead = Self.captureDesktopAccountRead {
+      try self.readDesktopAccountFingerprint()
+    }
+    let desktopAccount = desktopAccountRead.fingerprint
     let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
     let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
     let local = Self.localCandidate(
       history: history, cache: cache, currentAccount: accountBeforeRefresh,
       desktopAccountFingerprint: desktopAccount, now: now)
-    let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
+    let localError = Self.preferredLocalError(
+      Self.preferredLocalError(historyRead.error, cacheRead.error), desktopAccountRead.error)
 
     if localError == .unsafePath {
       let failedSource: SnapshotSource =
-        historyRead.error == .unsafePath ? .claudeDesktopHistory : .claudeLocalCache
+        historyRead.error == .unsafePath || desktopAccountRead.error == .unsafePath
+        ? .claudeDesktopHistory : .claudeLocalCache
       return self.fallback(
         local: local,
         previous: effectivePrevious,
@@ -225,13 +230,6 @@ public struct ClaudeAutomaticAdapter: Sendable {
             local: nil, previous: previousAfterSwitch, now: now,
             state: .attemptFailed, error: .sourceUnavailable
           )
-        }
-        if let desktopAccountAfterProbe = try? self.readDesktopAccountFingerprint(),
-          desktopAccountAfterProbe != accountAfterProbe?.principalFingerprint
-        {
-          return self.fallback(
-            local: nil, previous: nil, now: now,
-            state: .attemptFailed, error: .sourceUnavailable)
         }
         let verifiedAccount = accountAfterProbe
         return Self.success(
@@ -377,6 +375,18 @@ public struct ClaudeAutomaticAdapter: Sendable {
     }
   }
 
+  private static func captureDesktopAccountRead(
+    _ operation: () throws -> String
+  ) -> (fingerprint: String?, error: ClaudeAutomaticAdapterError?) {
+    do {
+      return (try operation(), nil)
+    } catch let error as ClaudeAutomaticAdapterError {
+      return (nil, error)
+    } catch {
+      return (nil, .sourceUnavailable)
+    }
+  }
+
   private static func preferredLocalError(
     _ first: ClaudeAutomaticAdapterError?,
     _ second: ClaudeAutomaticAdapterError?
@@ -470,11 +480,18 @@ public struct ClaudeAutomaticAdapter: Sendable {
   ) -> ProviderSnapshot {
     let accountAfterProbe = try? self.readAccountIdentity()
     let accountChanged = accountBeforeProbe != accountAfterProbe
-    let desktopAccountAfterProbe = try? self.readDesktopAccountFingerprint()
+    let desktopAccountRead = Self.captureDesktopAccountRead {
+      try self.readDesktopAccountFingerprint()
+    }
+    if desktopAccountRead.error == .unsafePath {
+      return self.fallback(
+        local: nil, previous: nil, now: now,
+        state: .attemptFailed, error: .unsafePath)
+    }
     let desktopAccountChanged =
       local?.source == .claudeDesktopHistory
       && local?.claudeAccountFingerprint != nil
-      && desktopAccountAfterProbe != accountAfterProbe?.principalFingerprint
+      && desktopAccountRead.fingerprint != accountAfterProbe?.principalFingerprint
     if !accountChanged,
       !desktopAccountChanged,
       error == .authenticationRequired,
@@ -647,7 +664,27 @@ public struct ClaudeAutomaticAdapter: Sendable {
           history,
           fingerprint: currentAccount.accountFingerprint,
           organizationFingerprint: currentAccount.organizationFingerprint)
-        return Self.preferredObservation(local: ownedHistory, previous: cache, now: now)
+        let merged =
+          Self.preferredObservation(local: ownedHistory, previous: cache, now: now)
+          ?? ownedHistory
+        let cacheWeeklyIsCurrent = Self.hasCurrentExactReset(cache, now: now)
+        let cacheFiveHourIsRecent =
+          cache.fiveHour?.resetAt.map({ $0 > now }) == true
+          && now.timeIntervalSince(cacheAt) >= 0
+          && now.timeIntervalSince(cacheAt) <= Self.localCacheMaximumAge
+        let weeklyFromCache = history.weekly == nil && cacheWeeklyIsCurrent
+        let fiveHourFromCache = history.fiveHour == nil && cacheFiveHourIsRecent
+        guard weeklyFromCache || fiveHourFromCache else { return merged }
+        return ProviderSnapshot(
+          provider: .claude,
+          source: .claudeDesktopHistory,
+          capturedAt: weeklyFromCache ? cacheAt : min(historyAt, cacheAt),
+          weekly: weeklyFromCache ? cache.weekly : merged.weekly,
+          fiveHour: fiveHourFromCache ? cache.fiveHour : merged.fiveHour,
+          sourceState: .observationSucceeded,
+          claudeAccountFingerprint: currentAccount.accountFingerprint,
+          claudeOrganizationFingerprint: currentAccount.organizationFingerprint
+        )
       }
       return cache
     }

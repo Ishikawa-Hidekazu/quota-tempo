@@ -74,6 +74,7 @@ Required boundaries:
 - Bound PTY time and output, disable tools, hooks, MCP configuration, Remote Control startup, and auto-update, and terminate the process tree.
 - Reject stale or loading usage panels and reject ambiguous reset times. Prefer verified newer Desktop utilization combined with a same-account, same-window exact cached reset over an older cache balance. Otherwise retain a prior exact, still-current observation rather than transferring its reset to unverified Desktop data. Discard old-account snapshots as soon as a verified account switch is observed.
 - Tolerate independently absent windows and fail closed when utilization and reset metadata cannot be safely reconciled.
+- For verified same-account partial Desktop samples, retain a missing weekly window only while its cached exact reset remains current; retain a missing five-hour window only while its cached exact reset is current and its sample is recent. Use the older capture time when a retained window determines snapshot freshness.
 - Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, acquisition state, and optional SHA-256 Claude ownership fingerprints. Never persist raw account or organization UUIDs.
 
 The previously tested Claude `statusLine` bridge remains rollback-only code and is not activated by current onboarding. Claude model-specific buckets and Extra Usage remain out of scope because no stable third-party contract has been established.

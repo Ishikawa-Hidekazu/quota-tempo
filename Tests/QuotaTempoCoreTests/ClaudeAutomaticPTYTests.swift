@@ -146,6 +146,192 @@ private final class ExecutableRecordingPTYProbe: @unchecked Sendable, ClaudeUsag
 }
 
 struct ClaudeAutomaticPTYTests {
+  @Test("A signed-in CLI result survives a different Desktop account")
+  func cliResultDoesNotRequireDesktopAccountMatch() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let cache = root.appendingPathComponent("claude.json")
+    let config = root.appendingPathComponent("config.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "cli-account", "organizationUuid": "cli-org"]
+    ]).write(to: cache)
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "desktop-account"
+    ]).write(to: config)
+    let session = DateFormatter()
+    session.locale = Locale(identifier: "en_US_POSIX")
+    session.timeZone = TimeZone(identifier: "UTC")
+    session.dateFormat = "h:mma"
+    let weekly = DateFormatter()
+    weekly.locale = Locale(identifier: "en_US_POSIX")
+    weekly.timeZone = TimeZone(identifier: "UTC")
+    weekly.dateFormat = "MMM d 'at' h:mma"
+    let output = Data(
+      """
+      Currentsession
+      32%used
+      Resets\(session.string(from: now.addingTimeInterval(7_200)))(UTC)
+      Currentweek(allmodels)
+      41%used
+      Resets\(weekly.string(from: now.addingTimeInterval(259_200)))(UTC)
+      """.utf8)
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache, desktopConfigURL: config,
+      ptyProbeEnabled: true,
+      ptyProbe: RenderedUsagePTYProbe(output: output),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(
+      snapshot.claudeAccountFingerprint
+        == ownerFingerprint(
+          account: "cli-account", organization: "cli-org"))
+  }
+
+  @Test("A partial Desktop history does not erase a verified current weekly reset")
+  func partialDesktopHistoryPreservesWeeklyReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    let config = root.appendingPathComponent("config.json")
+    let cacheAt = now.addingTimeInterval(-3_600)
+    let reset = now.addingTimeInterval(200_000)
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org", "u": ["fh": 10.0],
+        ]
+      ]
+    ]).write(to: history)
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(cacheAt.timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "seven_day": [
+            "utilization": 69.0,
+            "resets_at": ISO8601DateFormatter().string(from: reset),
+          ]
+        ],
+      ],
+    ]).write(to: cache)
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "account-a"
+    ]).write(to: config)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history, cacheURL: cache, desktopConfigURL: config,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.weekly?.remainingPercent == 31)
+    #expect(abs(snapshot.weekly!.resetAt!.timeIntervalSince(reset)) < 1)
+    #expect(snapshot.fiveHour?.remainingPercent == 90)
+    #expect(abs(snapshot.capturedAt!.timeIntervalSince(cacheAt)) < 1)
+    #expect(snapshot.sourceState == .attemptFailed)
+  }
+
+  @Test("A weekly-only Desktop sample keeps a recent verified five-hour reset")
+  func weeklyOnlyDesktopHistoryPreservesRecentSession() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    let config = root.appendingPathComponent("config.json")
+    let fiveHourReset = now.addingTimeInterval(10_000)
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org", "u": ["sd": 80.0],
+        ]
+      ]
+    ]).write(to: history)
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "five_hour": [
+            "utilization": 40.0,
+            "resets_at": ISO8601DateFormatter().string(from: fiveHourReset),
+          ],
+          "seven_day": [
+            "utilization": 30.0,
+            "resets_at": ISO8601DateFormatter().string(
+              from: now.addingTimeInterval(200_000)),
+          ],
+        ],
+      ],
+    ]).write(to: cache)
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "account-a"
+    ]).write(to: config)
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history, cacheURL: cache, desktopConfigURL: config,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.weekly?.remainingPercent == 20)
+    #expect(snapshot.fiveHour?.remainingPercent == 60)
+    #expect(abs(snapshot.fiveHour!.resetAt!.timeIntervalSince(fiveHourReset)) < 1)
+    #expect(snapshot.sourceState == .observationSucceeded)
+  }
+
+  @Test("A symlinked Desktop account config stops before the live probe")
+  func unsafeDesktopConfigStopsProbe() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let config = root.appendingPathComponent("config.json")
+    let target = root.appendingPathComponent("config-target.json")
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "account-a"
+    ]).write(to: target)
+    try FileManager.default.createSymbolicLink(at: config, withDestinationURL: target)
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org", "u": ["sd": 91.0],
+        ]
+      ]
+    ]).write(to: history)
+    let probe = ExecutableRecordingPTYProbe(output: Data())
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: root.appendingPathComponent("missing-cache.json"),
+      desktopConfigURL: config,
+      ptyProbeEnabled: true,
+      ptyProbe: probe
+    ).refresh(previous: nil, now: now)
+
+    #expect(snapshot.errorCode == .unsafePath)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(probe.executables.isEmpty)
+  }
+
   @Test("Fresh Desktop usage inherits only a same-account, same-window exact reset")
   func verifiedDesktopUsageKeepsCurrentTarget() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
