@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8 - Claude reset recovery
+
+- Recover a still-current exact Claude reset from the current account's recognized cache
+  when an older release already saved a newer unowned Desktop fallback without a reset.
+
 ## 0.1.7 - Claude reset preservation
 
 - Preserve a still-current exact Claude observation after a failed live probe, prefer a
