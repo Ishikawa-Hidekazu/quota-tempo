@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Preserve a still-current exact Claude observation after a failed live probe, prefer a
+  current-account Claude Code cache over unowned Desktop history, and discard old-account
+  snapshots after a verified account switch.
+
 ## 0.1.6 — fresh Claude fallback observations
 
 - Prefer newer valid Claude Desktop usage after a live `/usage` probe fails instead of retaining an older balance.

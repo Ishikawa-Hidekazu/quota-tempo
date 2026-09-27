@@ -213,6 +213,52 @@ struct StorageHardeningTests {
     #expect((try? NormalizedSnapshotCodec.encode(normalized)) != nil)
   }
 
+  @Test("Claude account fingerprints are provider scoped and normalized")
+  func claudeAccountFingerprint() throws {
+    let fingerprint = String(repeating: "a", count: 64)
+    let claude = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeDesktopHistory,
+      capturedAt: self.now,
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: nil
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: fingerprint
+    )
+    let encoded = try NormalizedSnapshotCodec.encode(claude)
+    #expect(try NormalizedSnapshotCodec.decode(encoded) == claude)
+    #expect(String(decoding: encoded, as: UTF8.self).contains(fingerprint))
+
+    for invalid in ["short", String(repeating: "A", count: 64), String(repeating: "g", count: 64)] {
+      let snapshot = ProviderSnapshot(
+        provider: .claude,
+        source: .claudeDesktopHistory,
+        capturedAt: self.now,
+        weekly: claude.weekly,
+        sourceState: .observationSucceeded,
+        claudeAccountFingerprint: invalid
+      )
+      #expect(throws: SnapshotStoreError.invalidRecord) {
+        try NormalizedSnapshotCodec.encode(snapshot)
+      }
+    }
+
+    let codex = ProviderSnapshot(
+      provider: .codex,
+      source: .codexAppServer,
+      capturedAt: self.now,
+      weekly: claude.weekly,
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: fingerprint
+    )
+    #expect(throws: SnapshotStoreError.invalidRecord) {
+      try NormalizedSnapshotCodec.encode(codex)
+    }
+  }
+
   @Test("Exact-path normalized reads enforce the same bounds and provider identity")
   func exactPathReader() throws {
     let root = try self.temporaryDirectory()

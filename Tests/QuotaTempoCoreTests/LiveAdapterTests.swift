@@ -1,7 +1,17 @@
+import CryptoKit
 import Foundation
 import Testing
 
 @testable import QuotaTempoCore
+
+private func accountFingerprint(_ value: String) -> String {
+  SHA256.hash(data: Data("claude-owner-v1:\(value):\(value)".utf8))
+    .map { String(format: "%02x", $0) }.joined()
+}
+
+private func accountFingerprintValue(_ value: String) -> String {
+  SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+}
 
 @Suite("Live adapter boundaries", .serialized)
 struct LiveAdapterTests {
@@ -1432,8 +1442,8 @@ struct LiveAdapterTests {
     #expect(runner.invocationCount == 0)
   }
 
-  @Test("Claude automatic adapter merges newer Desktop utilization with compatible cache reset")
-  func claudeAutomaticMergesLocalSources() throws {
+  @Test("Owned current-account cache outranks newer unowned Desktop history")
+  func claudeAutomaticPrefersOwnedCacheOverUnownedHistory() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1455,12 +1465,13 @@ struct LiveAdapterTests {
       probeDirectory: root.appendingPathComponent("probe")
     ).refresh(previous: nil, now: self.now)
 
-    #expect(snapshot.source == .claudeLocalMerged)
-    #expect(snapshot.capturedAt == self.now.addingTimeInterval(-60))
-    #expect(snapshot.weekly?.remainingPercent == 63)
-    #expect(snapshot.fiveHour?.remainingPercent == 78)
-    #expect(snapshot.weekly?.resetAt != nil)
-    #expect(snapshot.fiveHour?.resetAt != nil)
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.capturedAt == self.now.addingTimeInterval(-600))
+    #expect(snapshot.weekly?.remainingPercent == 60)
+    #expect(snapshot.fiveHour?.remainingPercent == 75)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(snapshot.fiveHour?.resetAt == self.now.addingTimeInterval(10_000))
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("ignored-org"))
     #expect(runner.invocationCount == 0)
   }
 
@@ -1489,7 +1500,9 @@ struct LiveAdapterTests {
         durationSeconds: 18_000,
         resetAt: self.now.addingTimeInterval(5_000)
       ),
-      sourceState: .observationSucceeded
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("ignored-org"),
+      claudeOrganizationFingerprint: accountFingerprintValue("ignored-org")
     )
 
     let snapshot = ClaudeAutomaticAdapter(
@@ -1506,8 +1519,150 @@ struct LiveAdapterTests {
     #expect(snapshot.fiveHour?.resetAt == self.now.addingTimeInterval(10_000))
   }
 
-  @Test("Claude automatic adapter reuses a compatible reset from an older cache")
-  func claudeAutomaticMergesOlderCacheReset() throws {
+  @Test("A complete owned cache replaces a legacy exact observation")
+  func completeCacheReplacesLegacyObservation() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = root.appendingPathComponent("claude.json")
+    try self.cacheJSON(
+      fetchedAt: self.now.addingTimeInterval(-60),
+      fiveHourUsed: 20,
+      weeklyUsed: 35
+    ).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: self.now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 64,
+        durationSeconds: 604_800,
+        resetAt: self.now.addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache
+    ).refresh(previous: previous, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.capturedAt == self.now.addingTimeInterval(-60))
+    #expect(snapshot.weekly?.remainingPercent == 65)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("ignored-org"))
+  }
+
+  @Test("A verified account switch replaces a newer snapshot from the previous account")
+  func verifiedAccountSwitchIgnoresTimestampOrdering() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = root.appendingPathComponent("claude.json")
+    try self.cacheJSON(
+      fetchedAt: self.now.addingTimeInterval(-600),
+      fiveHourUsed: 20,
+      weeklyUsed: 35
+    ).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: self.now.addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 10,
+        durationSeconds: 604_800,
+        resetAt: self.now.addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("previous-account"),
+      claudeOrganizationFingerprint: accountFingerprintValue("previous-organization")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache
+    ).refresh(previous: previous, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.capturedAt == self.now.addingTimeInterval(-600))
+    #expect(snapshot.weekly?.remainingPercent == 65)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("ignored-org"))
+  }
+
+  @Test("A verified account switch prefers owned cache over newer unowned Desktop history")
+  func verifiedAccountSwitchPrefersOwnedCacheOverHistory() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try self.historyJSON(samples: [(self.now.addingTimeInterval(-30), 20, 77)]).write(to: history)
+    try self.cacheJSON(
+      fetchedAt: self.now.addingTimeInterval(-600),
+      fiveHourUsed: 25,
+      weeklyUsed: 40
+    ).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: self.now.addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 10,
+        durationSeconds: 604_800,
+        resetAt: self.now.addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("previous-account"),
+      claudeOrganizationFingerprint: accountFingerprintValue("previous-organization")
+    )
+    let runner = RecordingRunner(result: .failure(.launchFailed))
+
+    let snapshot = ClaudeAutomaticAdapter(
+      runner: runner,
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      cliFallbackEnabled: true,
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: previous, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.capturedAt == self.now.addingTimeInterval(-600))
+    #expect(snapshot.weekly?.remainingPercent == 60)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("ignored-org"))
+    #expect(snapshot.sourceState == .observationSucceeded)
+    #expect(snapshot.errorCode == nil)
+    #expect(runner.invocationCount == 0)
+  }
+
+  @Test("Desktop organization never overrides owned current-account cache")
+  func claudeDesktopOrganizationDoesNotOverrideOwnedCache() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try self.historyJSON(
+      samples: [(self.now.addingTimeInterval(-60), 20, 35)],
+      organization: "IGNORED-ORG"
+    ).write(to: history)
+    try self.cacheJSON(
+      fetchedAt: self.now.addingTimeInterval(-600),
+      fiveHourUsed: 21,
+      weeklyUsed: 36
+    ).write(to: cache)
+    let snapshot = ClaudeAutomaticAdapter(
+      historyURL: history,
+      cacheURL: cache
+    ).refresh(previous: nil, now: self.now)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly?.remainingPercent == 64)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("ignored-org"))
+  }
+
+  @Test("Claude automatic adapter prefers owned cache without merging Desktop history")
+  func claudeAutomaticPrefersOwnedCacheWithoutMergingHistory() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1529,21 +1684,22 @@ struct LiveAdapterTests {
       probeDirectory: root.appendingPathComponent("probe")
     ).refresh(previous: nil, now: self.now)
 
-    #expect(snapshot.source == .claudeLocalMerged)
-    #expect(snapshot.weekly?.remainingPercent == 65)
-    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly?.remainingPercent == 64)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
     #expect(QuotaPlanner.evaluate(snapshot, now: self.now).targetNow != nil)
-    #expect(runner.invocationCount == 0)
+    #expect(runner.invocationCount == 1)
   }
 
-  @Test("Claude projects one weekly reset from the last confirmed window")
-  func claudeAutomaticProjectsOneWeeklyReset() throws {
+  @Test("Claude does not project a reset from unowned Desktop history")
+  func claudeAutomaticDoesNotProjectUnownedWeeklyReset() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
-    let cache = root.appendingPathComponent("missing-cache.json")
+    let cache = root.appendingPathComponent("claude.json")
     let confirmedReset = self.now.addingTimeInterval(-3_600)
     try self.historyJSON(samples: [(self.now.addingTimeInterval(-60), 20, 25)]).write(to: history)
+    try self.accountJSON(account: "ignored-org", organization: "ignored-org").write(to: cache)
     let previous = ProviderSnapshot(
       provider: .claude,
       source: .claudeLocalCache,
@@ -1553,7 +1709,9 @@ struct LiveAdapterTests {
         durationSeconds: 604_800,
         resetAt: confirmedReset
       ),
-      sourceState: .observationSucceeded
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("ignored-org"),
+      claudeOrganizationFingerprint: accountFingerprintValue("ignored-org")
     )
 
     let snapshot = ClaudeAutomaticAdapter(
@@ -1565,10 +1723,10 @@ struct LiveAdapterTests {
     let plan = QuotaPlanner.evaluate(snapshot, now: self.now)
 
     #expect(snapshot.weekly?.remainingPercent == 75)
-    #expect(snapshot.weekly?.resetAt == confirmedReset.addingTimeInterval(604_800))
-    #expect(snapshot.weekly?.isResetEstimated == true)
-    #expect(plan.targetNow != nil)
-    #expect(plan.targetIsEstimated)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.weekly?.isResetEstimated == false)
+    #expect(plan.targetNow == nil)
+    #expect(!plan.targetIsEstimated)
   }
 
   @Test("Claude does not project a weekly reset when remaining did not increase")
@@ -1641,8 +1799,8 @@ struct LiveAdapterTests {
     #expect(QuotaPlanner.evaluate(snapshot, now: self.now).targetNow == nil)
   }
 
-  @Test("Claude automatic adapter does not merge reset from an incompatible window")
-  func claudeAutomaticRejectsIncompatibleResetMerge() throws {
+  @Test("Claude automatic adapter keeps an owned stale cache after a failed probe")
+  func claudeAutomaticKeepsOwnedStaleCacheAfterFailedProbe() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1664,16 +1822,16 @@ struct LiveAdapterTests {
       probeDirectory: root.appendingPathComponent("probe")
     ).refresh(previous: nil, now: self.now)
 
-    #expect(snapshot.source == .claudeDesktopHistory)
-    #expect(snapshot.weekly?.remainingPercent == 65)
-    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly?.remainingPercent == 64)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
     #expect(snapshot.sourceState == .attemptFailed)
     #expect(snapshot.errorCode == .sourceUnavailable)
     #expect(runner.invocationCount == 1)
   }
 
-  @Test("Claude automatic adapter does not make an older missing window look fresh")
-  func claudeAutomaticDoesNotFillMissingWindowFromOlderCache() throws {
+  @Test("Owned complete cache outranks partial unowned Desktop history")
+  func claudeAutomaticPrefersOwnedCompleteCacheOverPartialHistory() throws {
     let root = try self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let history = root.appendingPathComponent("history.json")
@@ -1682,6 +1840,7 @@ struct LiveAdapterTests {
       "samples": [
         [
           "t": Int64(self.now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
+          "org": "ignored-org",
           "u": ["fh": 20],
         ]
       ]
@@ -1702,11 +1861,12 @@ struct LiveAdapterTests {
       probeDirectory: root.appendingPathComponent("probe")
     ).refresh(previous: nil, now: self.now)
 
-    #expect(snapshot.source == .claudeLocalMerged)
-    #expect(snapshot.fiveHour?.remainingPercent == 80)
-    #expect(snapshot.fiveHour?.resetAt != nil)
-    #expect(snapshot.weekly == nil)
-    #expect(runner.invocationCount == 1)
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.fiveHour?.remainingPercent == 79)
+    #expect(snapshot.fiveHour?.resetAt == self.now.addingTimeInterval(10_000))
+    #expect(snapshot.weekly?.remainingPercent == 64)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(300_000))
+    #expect(runner.invocationCount == 0)
   }
 
   @Test("Claude automatic adapter falls back to Desktop history without guessing reset")
@@ -2343,6 +2503,7 @@ struct LiveAdapterTests {
   private func cacheJSON(fetchedAt: Date, fiveHourUsed: Double, weeklyUsed: Double) -> Data {
     let formatter = ISO8601DateFormatter()
     return try! JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "ignored-org", "organizationUuid": "ignored-org"],
       "cachedUsageUtilization": [
         "fetchedAtMs": Int64(fetchedAt.timeIntervalSince1970 * 1_000),
         "utilization": [
@@ -2355,7 +2516,13 @@ struct LiveAdapterTests {
             "resets_at": formatter.string(from: self.now.addingTimeInterval(300_000)),
           ],
         ],
-      ]
+      ],
+    ])
+  }
+
+  private func accountJSON(account: String, organization: String) -> Data {
+    try! JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": account, "organizationUuid": organization]
     ])
   }
 

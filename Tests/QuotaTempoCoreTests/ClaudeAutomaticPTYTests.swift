@@ -1,7 +1,21 @@
+import CryptoKit
 import Foundation
 import Testing
 
 @testable import QuotaTempoCore
+
+private func accountFingerprint(_ value: String) -> String {
+  ownerFingerprint(account: value, organization: value)
+}
+
+private func accountFingerprintValue(_ value: String) -> String {
+  SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+private func ownerFingerprint(account: String, organization: String) -> String {
+  SHA256.hash(data: Data("claude-owner-v1:\(account):\(organization)".utf8))
+    .map { String(format: "%02x", $0) }.joined()
+}
 
 private struct CacheUpdatingPTYProbe: ClaudeUsageProbing {
   let cacheURL: URL
@@ -52,6 +66,31 @@ private struct FailingUsagePTYProbe: ClaudeUsageProbing {
   let error: ClaudeUsagePTYProbeError
 
   func capture(executable: URL, workingDirectory: URL) throws -> Data { throw error }
+}
+
+private struct AccountSwitchingUsagePTYProbe: ClaudeUsageProbing {
+  let cacheURL: URL
+  let output: Data
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-b", "organizationUuid": "shared-org"]
+    ])
+    try data.write(to: cacheURL, options: .atomic)
+    return output
+  }
+}
+
+private struct FailingAccountSwitchingUsagePTYProbe: ClaudeUsageProbing {
+  let cacheURL: URL
+
+  func capture(executable: URL, workingDirectory: URL) throws -> Data {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-b", "organizationUuid": "shared-org"]
+    ])
+    try data.write(to: cacheURL, options: .atomic)
+    throw ClaudeUsagePTYProbeError.authenticationRequired
+  }
 }
 
 private struct AdapterFailingUsagePTYProbe: ClaudeUsageProbing {
@@ -346,8 +385,8 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.sourceState == .attemptTimedOut)
   }
 
-  @Test("A failed probe prefers newer Desktop usage without an unverified reset")
-  func failedProbeKeepsCurrentUsageWithoutUnverifiedReset() throws {
+  @Test("A failed probe combines newer Desktop usage with a still-current exact reset")
+  func failedProbeKeepsCurrentUsageAndVerifiedReset() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -362,6 +401,12 @@ struct ClaudeAutomaticPTYTests {
         ]
       ]
     ]).write(to: history)
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": [
+        "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
+      ]
+    ]).write(to: cache)
     let previous = ProviderSnapshot(
       provider: .claude,
       source: .claudeCLI,
@@ -376,28 +421,332 @@ struct ClaudeAutomaticPTYTests {
         durationSeconds: 18_000,
         resetAt: now.addingTimeInterval(8_000)
       ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("desktop-account")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.capturedAt == previous.capturedAt)
+    #expect(snapshot.weekly?.remainingPercent == 31)
+    #expect(snapshot.weekly?.resetAt == previous.weekly?.resetAt)
+    #expect(snapshot.weekly?.isResetEstimated == false)
+    #expect(snapshot.fiveHour?.remainingPercent == 42)
+    #expect(snapshot.fiveHour?.resetAt == previous.fiveHour?.resetAt)
+    #expect(snapshot.fiveHour?.isResetEstimated == false)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
+  @Test("A failed probe never combines observations from different Claude accounts")
+  func failedProbeRejectsCrossAccountReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 69.0, "sd": 77.0],
+        ]
+      ]
+    ]).write(to: history)
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": [
+        "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
+      ]
+    ]).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 31,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("different-account")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeDesktopHistory)
+    #expect(snapshot.weekly?.remainingPercent == 23)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.claudeAccountFingerprint == nil)
+  }
+
+  @Test("A failed probe does not combine accounts that share a Claude organization")
+  func failedProbeRejectsDifferentPrincipalInSameOrganization() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org",
+          "u": ["fh": 40.0, "sd": 25.0],
+        ]
+      ]
+    ]).write(to: history)
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-b", "organizationUuid": "shared-org"]
+    ]).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: ownerFingerprint(
+        account: "account-a", organization: "shared-org")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.weekly?.remainingPercent == 75)
+    #expect(snapshot.weekly?.resetAt == nil)
+    #expect(snapshot.claudeAccountFingerprint == nil)
+  }
+
+  @Test("A legacy exact observation remains intact until ownership can be verified")
+  func legacyExactObservationIsNotMergedWithNewUsage() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org",
+          "u": ["fh": 40.0, "sd": 25.0],
+        ]
+      ]
+    ]).write(to: history)
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"]
+    ]).write(to: cache)
+    let reset = now.addingTimeInterval(200_000)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-600),
+      weekly: QuotaWindow(remainingPercent: 50, durationSeconds: 604_800, resetAt: reset),
       sourceState: .observationSucceeded
     )
 
     let snapshot = ClaudeAutomaticAdapter(
       cliExecutable: URL(fileURLWithPath: "/mock/claude"),
       historyURL: history,
-      cacheURL: root.appendingPathComponent("missing-cache"),
+      cacheURL: cache,
       ptyProbeEnabled: true,
       ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
     ).refresh(previous: previous, now: now, forceLiveProbe: true)
 
-    #expect(snapshot.source == .claudeDesktopHistory)
-    #expect(
-      abs(
-        (snapshot.capturedAt?.timeIntervalSince1970 ?? 0)
-          - now.addingTimeInterval(-30).timeIntervalSince1970) < 0.001)
-    #expect(snapshot.weekly?.remainingPercent == 23)
-    #expect(snapshot.weekly?.resetAt == nil)
-    #expect(snapshot.fiveHour?.remainingPercent == 31)
-    #expect(snapshot.fiveHour?.resetAt == nil)
+    #expect(snapshot.capturedAt == previous.capturedAt)
+    #expect(snapshot.weekly?.remainingPercent == 50)
+    #expect(snapshot.weekly?.resetAt == reset)
+    #expect(snapshot.claudeAccountFingerprint == nil)
+  }
+
+  @Test("PTY output is not assigned to an account that changed during capture")
+  func ptyAccountSwitchFailsClosed() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"]
+    ]).write(to: cache)
+    let output = Data(
+      "Current session\nCurrent week (all models)\n40% used\nResets 2026-09-29T05:00:00Z".utf8)
+
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: Date().addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: Date().addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("account-a"),
+      claudeOrganizationFingerprint: accountFingerprintValue("shared-org")
+    )
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: AccountSwitchingUsagePTYProbe(cacheURL: cache, output: output)
+    ).refresh(previous: previous, now: Date(), forceLiveProbe: true)
+
+    #expect(snapshot.weekly == nil)
+    #expect(snapshot.claudeAccountFingerprint == nil)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .sourceUnavailable)
+  }
+
+  @Test("A failed PTY probe also discards a snapshot when the account changes")
+  func failedPTYAccountSwitchFailsClosed() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"]
+    ]).write(to: cache)
+    let now = Date()
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("account-a"),
+      claudeOrganizationFingerprint: accountFingerprintValue("shared-org")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingAccountSwitchingUsagePTYProbe(cacheURL: cache)
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.weekly == nil)
+    #expect(snapshot.claudeAccountFingerprint == nil)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .sourceUnavailable)
+  }
+
+  @Test("Account identity remains available when cached usage changes shape")
+  func malformedUsageStillExcludesPreviousAccount() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-b", "organizationUuid": "organization-b"],
+      "cachedUsageUtilization": ["fetchedAtMs": "changed-upstream-shape"],
+    ]).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: Date().addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: Date().addingTimeInterval(100_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("account-a"),
+      claudeOrganizationFingerprint: accountFingerprintValue("organization-a")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: previous, now: Date(), forceLiveProbe: true)
+
+    #expect(snapshot.weekly == nil)
+    #expect(snapshot.claudeAccountFingerprint == nil)
     #expect(snapshot.sourceState == .attemptFailed)
     #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
+  @Test("An unowned complete cache cannot replace an owned exact observation")
+  func unownedCacheCannotReplaceOwnedExactObservation() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let cache = root.appendingPathComponent("claude.json")
+    let formatter = ISO8601DateFormatter()
+    try JSONSerialization.data(withJSONObject: [
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "five_hour": [
+            "utilization": 20.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(10_000)),
+          ],
+          "seven_day": [
+            "utilization": 25.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(300_000)),
+          ],
+        ],
+      ]
+    ]).write(to: cache)
+    let previous = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeCLI,
+      capturedAt: now.addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 50,
+        durationSeconds: 604_800,
+        resetAt: now.addingTimeInterval(200_000)
+      ),
+      sourceState: .observationSucceeded,
+      claudeAccountFingerprint: accountFingerprint("account-a"),
+      claudeOrganizationFingerprint: accountFingerprintValue("organization-a")
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history"),
+      cacheURL: cache,
+      ptyProbeEnabled: true
+    ).refresh(previous: previous, now: now)
+
+    #expect(snapshot.source == previous.source)
+    #expect(snapshot.capturedAt == previous.capturedAt)
+    #expect(snapshot.weekly == previous.weekly)
+    #expect(snapshot.claudeAccountFingerprint == previous.claudeAccountFingerprint)
   }
 
   @Test(
@@ -480,8 +829,8 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.weekly?.resetAt == nil)
   }
 
-  @Test("Desktop history keeps exact cache resets when Claude Code is not installed")
-  func desktopOnlyWithoutCLIMergesCacheReset() throws {
+  @Test("Owned cache outranks unowned Desktop history when Claude Code is not installed")
+  func desktopOnlyWithoutCLIPrefersOwnedCache() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -499,6 +848,9 @@ struct ClaudeAutomaticPTYTests {
       ]
     ]).write(to: history)
     try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": [
+        "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
+      ],
       "cachedUsageUtilization": [
         "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
         "utilization": [
@@ -511,7 +863,7 @@ struct ClaudeAutomaticPTYTests {
             "resets_at": formatter.string(from: now.addingTimeInterval(300_000)),
           ],
         ],
-      ]
+      ],
     ]).write(to: cache)
 
     let snapshot = ClaudeAutomaticAdapter(
@@ -521,11 +873,12 @@ struct ClaudeAutomaticPTYTests {
       ptyProbeEnabled: true
     ).refresh(previous: nil, now: now)
 
-    #expect(snapshot.source == .claudeLocalMerged)
-    #expect(snapshot.weekly?.remainingPercent == 70)
-    #expect(snapshot.weekly?.resetAt != nil)
-    #expect(snapshot.fiveHour?.remainingPercent == 80)
-    #expect(snapshot.fiveHour?.resetAt != nil)
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(snapshot.weekly?.remainingPercent == 65)
+    #expect(abs(snapshot.weekly!.resetAt!.timeIntervalSince(now.addingTimeInterval(300_000))) < 1)
+    #expect(snapshot.fiveHour?.remainingPercent == 75)
+    #expect(abs(snapshot.fiveHour!.resetAt!.timeIntervalSince(now.addingTimeInterval(10_000))) < 1)
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("desktop-account"))
     #expect(snapshot.sourceState == .observationSucceeded)
   }
 
