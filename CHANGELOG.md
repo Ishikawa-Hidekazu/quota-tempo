@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Prefer newer valid Claude Desktop usage after a live `/usage` probe fails instead of retaining an older balance.
+- Do not attach an unverified reset from an older Claude CLI observation to newer Desktop usage.
+- Preserve the previous exact observation when no newer valid local observation exists or local path safety fails.
+
 ## 0.1.5 — resilient Claude local observations
 
 - Keeps a valid Claude Desktop or Claude Code observation available when the optional sibling source is malformed or oversized.
