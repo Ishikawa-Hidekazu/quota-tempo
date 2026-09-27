@@ -600,9 +600,11 @@ struct QuotaPlannerTests {
     #expect(MenuCopy(languageCode: "en").text("claude.reset.help.desktop").contains("Desktop"))
     #expect(MenuCopy(languageCode: "ja").text("claude.reset.help").contains("リセット時刻"))
     #expect(MenuCopy(languageCode: "ja").text("claude.reset.help.desktop").contains("Desktop"))
+    #expect(MenuCopy(languageCode: "en").error(.authenticationRequired).contains("optional"))
+    #expect(MenuCopy(languageCode: "ja").error(.authenticationRequired).contains("任意"))
     #expect(
       MenuCopy(languageCode: "en").text("reset.source.claude.confirmed")
-        == "Earlier Claude Code observation")
+        == "Earlier confirmed observation")
     #expect(
       MenuCopy(languageCode: "ja").text("reset.source.claude.estimated")
         == "以前のリセット時刻から推定")

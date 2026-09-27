@@ -633,7 +633,7 @@ public struct QuotaMenuView: View {
           Text(self.copy.text("claude.local.boundary"))
             .font(.caption)
             .foregroundStyle(.secondary)
-          if plan.status == .resetUnknown {
+          if self.shouldShowClaudeResetHelp(plan) {
             Text(self.claudeResetHelp(plan))
               .font(.caption)
               .foregroundStyle(.secondary)
@@ -668,6 +668,11 @@ public struct QuotaMenuView: View {
   private func claudeResetHelp(_ plan: PlannedProvider) -> String {
     self.copy.text(
       plan.source == .claudeDesktopHistory ? "claude.reset.help.desktop" : "claude.reset.help")
+  }
+
+  private func shouldShowClaudeResetHelp(_ plan: PlannedProvider) -> Bool {
+    plan.provider == .claude && plan.weeklyRemaining != nil && plan.weeklyResetAt == nil
+      && plan.targetNow == nil
   }
 
   private func percent(_ value: Double?) -> String {
@@ -722,7 +727,7 @@ public struct QuotaMenuView: View {
       plan.provider == .claude ? self.copy.text("claude.local.boundary") : "",
       plan.freshness == .stale && plan.targetNow != nil
         ? self.staleComparisonHelp(plan) : "",
-      plan.provider == .claude && plan.status == .resetUnknown
+      self.shouldShowClaudeResetHelp(plan)
         ? self.claudeResetHelp(plan) : "",
       plan.errorCode.map { "\(self.copy.text("acquisition.error")) \(self.copy.error($0))" } ?? "",
       plan.targetIsEstimated ? self.copy.text("target.basis.estimated") : "",
