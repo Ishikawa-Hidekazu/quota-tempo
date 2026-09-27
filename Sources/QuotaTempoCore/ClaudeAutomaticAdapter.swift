@@ -509,6 +509,13 @@ public struct ClaudeAutomaticAdapter: Sendable {
     {
       return local
     }
+    if local.claudeAccountFingerprint != nil,
+      previous.claudeAccountFingerprint == nil,
+      previous.source == .claudeDesktopHistory,
+      Self.hasCurrentExactReset(local, now: now)
+    {
+      return local
+    }
     guard let localCapturedAt = local.capturedAt else { return previous }
     guard let previousCapturedAt = previous.capturedAt else { return local }
     guard localCapturedAt > previousCapturedAt else { return previous }

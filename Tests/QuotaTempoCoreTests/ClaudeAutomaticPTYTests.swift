@@ -445,6 +445,66 @@ struct ClaudeAutomaticPTYTests {
     #expect(snapshot.errorCode == .authenticationRequired)
   }
 
+  @Test("A failed probe recovers an owned exact cache after a legacy unowned snapshot")
+  func failedProbeRecoversOwnedCacheAfterLegacySnapshot() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "desktop-account",
+          "u": ["fh": 18.0, "sd": 82.0],
+        ]
+      ]
+    ]).write(to: history)
+    let cache = root.appendingPathComponent("claude.json")
+    let formatter = ISO8601DateFormatter()
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": [
+        "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
+      ],
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "five_hour": ["utilization": 13.0],
+          "seven_day": [
+            "utilization": 69.0,
+            "resets_at": formatter.string(from: now.addingTimeInterval(200_000)),
+          ],
+        ],
+      ],
+    ]).write(to: cache)
+    let legacy = ProviderSnapshot(
+      provider: .claude,
+      source: .claudeDesktopHistory,
+      capturedAt: now.addingTimeInterval(-30),
+      weekly: QuotaWindow(remainingPercent: 18, durationSeconds: 604_800, resetAt: nil),
+      fiveHour: QuotaWindow(remainingPercent: 82, durationSeconds: 18_000, resetAt: nil),
+      sourceState: .attemptFailed,
+      errorCode: .authenticationRequired
+    )
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history,
+      cacheURL: cache,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    ).refresh(previous: legacy, now: now, forceLiveProbe: true)
+
+    #expect(snapshot.source == .claudeLocalCache)
+    #expect(abs(snapshot.capturedAt!.timeIntervalSince(now.addingTimeInterval(-86_400))) < 1)
+    #expect(snapshot.weekly?.remainingPercent == 31)
+    #expect(abs(snapshot.weekly!.resetAt!.timeIntervalSince(now.addingTimeInterval(200_000))) < 1)
+    #expect(snapshot.claudeAccountFingerprint == accountFingerprint("desktop-account"))
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .authenticationRequired)
+  }
+
   @Test("A failed probe never combines observations from different Claude accounts")
   func failedProbeRejectsCrossAccountReset() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
