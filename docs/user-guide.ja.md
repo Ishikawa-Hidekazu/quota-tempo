@@ -10,6 +10,8 @@
 
 CodexBarは必要ありません。QuotaTempo自身がproviderへログインすることも、token、cookie、API keyの入力を求めることもありません。
 
+Claude Desktopだけにログインしている場合、週間残量は表示できても、次の確定リセット時刻は取得できない場合があります。週間リセット後も`P`と差分を更新するには、公式のClaude Code CLIをインストールして同じアカウントでログインしてください。CLIが未ログインと表示された場合は、ターミナルで`claude auth login`を実行し、公式の認証画面を完了してからQuotaTempoの**更新**を押します。認証情報をQuotaTempoへ入力する必要はありません。CLI側の認証が失効した場合は、再ログインが必要です。
+
 ## 確認してインストールする
 
 1. QuotaTempoのZIPと公開SHA-256を、同じ公式releaseページからダウンロードします。

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9 - Verified Claude Desktop usage
+
+- Keep fresh Claude Desktop weekly usage and a current exact reset together only after matching the Desktop and Claude Code account, organization, and quota window.
+- Preserve a valid weekly reset when a newer Desktop sample contains only five-hour usage, and do not discard a valid Claude Code CLI result when Desktop uses another account.
+- Reject unsafe Desktop account configuration paths before starting the live probe.
+- Clarify in the app and Japanese guide that Claude Code CLI sign-in is separate from Claude Desktop sign-in.
+
 ## 0.1.8 - Claude reset recovery
 
 - Recover a still-current exact Claude reset from the current account's recognized cache

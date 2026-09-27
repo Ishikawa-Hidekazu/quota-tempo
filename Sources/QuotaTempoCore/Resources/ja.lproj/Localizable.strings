@@ -52,7 +52,7 @@
 "error.versionTooOld" = "Codexのバージョンが古いため取得できません。CodexまたはChatGPTを更新してから再度更新してください。";
 "error.protocolIncompatible" = "Codex app-serverに互換性がありません。CodexとQuotaTempoを更新してから再度更新してください。";
 "error.temporaryFailure" = "Codexの利用状況を一時的に取得できません。Codexへログイン済みか確認してから更新してください。";
-"error.authenticationRequired" = "Claude Codeにサインインしていません。公式のClaude Codeでサインインしてから更新してください。";
+"error.authenticationRequired" = "Claude Code CLIは未ログインです。ターミナルで`claude auth login`を実行し、認証後に更新してください。Claude Desktopのログインとは別です。";
 "freshness.live" = "最新";
 "freshness.recent" = "最近";
 "freshness.stale" = "更新待ち";
