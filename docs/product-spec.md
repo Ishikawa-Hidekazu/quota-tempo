@@ -64,7 +64,7 @@ This adapter is implemented in the public-beta app.
 
 ## Claude acquisition
 
-QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local cache avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.
+QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. It reads Desktop's current-account identifier solely to verify that a newer history observation and an exact cached reset belong to the same account and quota window. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local observation avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.
 
 Required boundaries:
 
@@ -72,7 +72,7 @@ Required boundaries:
 - Reject symlink-selected and oversized local sources.
 - Keep the old noninteractive `get_usage` decoder test-only; it is not the `/usage` acquisition path.
 - Bound PTY time and output, disable tools, hooks, MCP configuration, Remote Control startup, and auto-update, and terminate the process tree.
-- Reject stale or loading usage panels and reject ambiguous reset times. Prefer a Claude Code cache whose one-way fingerprint matches the current account over unowned Desktop history. After a failed probe, retain a prior exact, still-current observation rather than transferring its reset to unowned Desktop data. Discard old-account snapshots as soon as a verified account switch is observed.
+- Reject stale or loading usage panels and reject ambiguous reset times. Prefer verified newer Desktop utilization combined with a same-account, same-window exact cached reset over an older cache balance. Otherwise retain a prior exact, still-current observation rather than transferring its reset to unverified Desktop data. Discard old-account snapshots as soon as a verified account switch is observed.
 - Tolerate independently absent windows and fail closed when utilization and reset metadata cannot be safely reconciled.
 - Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, acquisition state, and optional SHA-256 Claude ownership fingerprints. Never persist raw account or organization UUIDs.
 

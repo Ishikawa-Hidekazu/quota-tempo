@@ -108,6 +108,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
   public static let localCacheMaximumAge: TimeInterval = 15 * 60
   public static let historyInputLimit = 8 * 1_024 * 1_024
   public static let cacheInputLimit = 8 * 1_024 * 1_024
+  public static let desktopConfigInputLimit = 1 * 1_024 * 1_024
   private static let minimumCapturedAt = Date(timeIntervalSince1970: 0)
 
   private let reader: any BoundedLocalDataReading
@@ -117,6 +118,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
   private let cliResolver: @Sendable () -> URL?
   private let historyURL: URL
   private let cacheURL: URL
+  private let desktopConfigURL: URL
   private let cliFallbackEnabled: Bool
   private let ptyProbeEnabled: Bool
   private let ptyProbe: any ClaudeUsageProbing
@@ -139,6 +141,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
       .appendingPathComponent("Library/Application Support/Claude/plan-usage-history.json"),
     cacheURL: URL = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".claude.json"),
+    desktopConfigURL: URL? = nil,
     cliFallbackEnabled: Bool = false,
     ptyProbeEnabled: Bool = false,
     ptyProbe: any ClaudeUsageProbing = FoundationClaudeUsagePTYProbe(),
@@ -154,6 +157,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
     self.cliResolver = cliResolver
     self.historyURL = historyURL
     self.cacheURL = cacheURL
+    self.desktopConfigURL =
+      desktopConfigURL
+      ?? historyURL.deletingLastPathComponent().appendingPathComponent("config.json")
     self.cliFallbackEnabled = cliFallbackEnabled
     self.ptyProbeEnabled = ptyProbeEnabled
     self.ptyProbe = ptyProbe
@@ -170,10 +176,12 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let cacheRead = Self.captureLocalRead { try self.readCache(now: now) }
     let history = historyRead.snapshot
     let cache = cacheRead.snapshot
+    let desktopAccount = try? self.readDesktopAccountFingerprint()
     let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
     let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
     let local = Self.localCandidate(
-      history: history, cache: cache, currentAccount: accountBeforeRefresh)
+      history: history, cache: cache, currentAccount: accountBeforeRefresh,
+      desktopAccountFingerprint: desktopAccount, now: now)
     let localError = Self.preferredLocalError(historyRead.error, cacheRead.error)
 
     if localError == .unsafePath {
@@ -217,6 +225,13 @@ public struct ClaudeAutomaticAdapter: Sendable {
             local: nil, previous: previousAfterSwitch, now: now,
             state: .attemptFailed, error: .sourceUnavailable
           )
+        }
+        if let desktopAccountAfterProbe = try? self.readDesktopAccountFingerprint(),
+          desktopAccountAfterProbe != accountAfterProbe?.principalFingerprint
+        {
+          return self.fallback(
+            local: nil, previous: nil, now: now,
+            state: .attemptFailed, error: .sourceUnavailable)
         }
         let verifiedAccount = accountAfterProbe
         return Self.success(
@@ -455,13 +470,29 @@ public struct ClaudeAutomaticAdapter: Sendable {
   ) -> ProviderSnapshot {
     let accountAfterProbe = try? self.readAccountIdentity()
     let accountChanged = accountBeforeProbe != accountAfterProbe
+    let desktopAccountAfterProbe = try? self.readDesktopAccountFingerprint()
+    let desktopAccountChanged =
+      local?.source == .claudeDesktopHistory
+      && local?.claudeAccountFingerprint != nil
+      && desktopAccountAfterProbe != accountAfterProbe?.principalFingerprint
+    if !accountChanged,
+      !desktopAccountChanged,
+      error == .authenticationRequired,
+      let local,
+      local.source == .claudeDesktopHistory,
+      Self.hasFreshVerifiedWeeklyTarget(local, now: now)
+    {
+      return Self.success(local, attemptedAt: now)
+    }
     return self.fallback(
-      local: accountChanged ? nil : local,
-      previous: Self.previousCompatibleWithCurrentAccount(
-        previous, currentAccount: accountAfterProbe),
+      local: accountChanged || desktopAccountChanged ? nil : local,
+      previous: desktopAccountChanged
+        ? nil
+        : Self.previousCompatibleWithCurrentAccount(
+          previous, currentAccount: accountAfterProbe),
       now: now,
       state: state,
-      error: accountChanged ? .sourceUnavailable : error
+      error: accountChanged || desktopAccountChanged ? .sourceUnavailable : error
     )
   }
 
@@ -583,15 +614,41 @@ public struct ClaudeAutomaticAdapter: Sendable {
     return age >= 0 && age <= self.localCacheMaximumAge
   }
 
+  private static func hasFreshVerifiedWeeklyTarget(
+    _ snapshot: ProviderSnapshot, now: Date
+  ) -> Bool {
+    guard snapshot.claudeAccountFingerprint != nil,
+      snapshot.weekly?.resetAt.map({ $0 > now }) == true,
+      let capturedAt = snapshot.capturedAt
+    else { return false }
+    let age = now.timeIntervalSince(capturedAt)
+    return age >= 0 && age <= self.localCacheMaximumAge
+  }
+
   private static func localCandidate(
     history: ProviderSnapshot?,
     cache: ProviderSnapshot?,
-    currentAccount: ClaudeAccountIdentity?
+    currentAccount: ClaudeAccountIdentity?,
+    desktopAccountFingerprint: String?,
+    now: Date
   ) -> ProviderSnapshot? {
     if let cache,
       let currentAccount,
       cache.claudeAccountFingerprint == currentAccount.accountFingerprint
     {
+      if let history,
+        history.claudeOrganizationFingerprint == currentAccount.organizationFingerprint,
+        desktopAccountFingerprint == currentAccount.principalFingerprint,
+        let historyAt = history.capturedAt,
+        let cacheAt = cache.capturedAt,
+        historyAt > cacheAt
+      {
+        let ownedHistory = Self.withAccountFingerprint(
+          history,
+          fingerprint: currentAccount.accountFingerprint,
+          organizationFingerprint: currentAccount.organizationFingerprint)
+        return Self.preferredObservation(local: ownedHistory, previous: cache, now: now)
+      }
       return cache
     }
     return Self.newestUnmerged(history: history, cache: cache)
@@ -768,12 +825,27 @@ public struct ClaudeAutomaticAdapter: Sendable {
       throw ClaudeAutomaticAdapterError.invalidInput
     }
     guard let accountFingerprint = Self.accountFingerprint(root.oauthAccount),
-      let organizationFingerprint = Self.fingerprint(root.oauthAccount?.organizationUUID)
+      let organizationFingerprint = Self.fingerprint(root.oauthAccount?.organizationUUID),
+      let principalFingerprint = Self.fingerprint(root.oauthAccount?.accountUUID)
     else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
     return ClaudeAccountIdentity(
       accountFingerprint: accountFingerprint,
-      organizationFingerprint: organizationFingerprint
+      organizationFingerprint: organizationFingerprint,
+      principalFingerprint: principalFingerprint
     )
+  }
+
+  private func readDesktopAccountFingerprint() throws -> String {
+    let data = try self.reader.read(
+      from: self.desktopConfigURL, limit: Self.desktopConfigInputLimit)
+    let root: DesktopConfigRoot
+    do { root = try JSONDecoder().decode(DesktopConfigRoot.self, from: data) } catch {
+      throw ClaudeAutomaticAdapterError.invalidInput
+    }
+    guard let fingerprint = Self.fingerprint(root.lastKnownAccountUUID) else {
+      throw ClaudeAutomaticAdapterError.sourceUnavailable
+    }
+    return fingerprint
   }
 
   private func readCLI(now: Date) throws -> ProviderSnapshot {
@@ -1033,6 +1105,15 @@ private struct OAuthAccount: Decodable {
 private struct ClaudeAccountIdentity: Equatable {
   let accountFingerprint: String
   let organizationFingerprint: String
+  let principalFingerprint: String
+}
+
+private struct DesktopConfigRoot: Decodable {
+  let lastKnownAccountUUID: String?
+
+  enum CodingKeys: String, CodingKey {
+    case lastKnownAccountUUID = "lastKnownAccountUuid"
+  }
 }
 
 private struct CachedUsage: Decodable {
