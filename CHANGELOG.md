@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.7 - Claude reset preservation
 
 - Preserve a still-current exact Claude observation after a failed live probe, prefer a
   current-account Claude Code cache over unowned Desktop history, and discard old-account
