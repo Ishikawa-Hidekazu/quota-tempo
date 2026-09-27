@@ -395,6 +395,70 @@ struct ClaudeAutomaticPTYTests {
     #expect(automatic.weekly?.remainingPercent == 9)
   }
 
+  @Test("Desktop-only usage cannot confirm the next weekly reset from an expired cache")
+  func desktopOnlyRolloverNeedsNewExactReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let reset = now.addingTimeInterval(120)
+    let afterReset = reset.addingTimeInterval(30)
+    let history = root.appendingPathComponent("history.json")
+    let cache = root.appendingPathComponent("claude.json")
+    let config = root.appendingPathComponent("config.json")
+
+    func writeHistory(at capturedAt: Date, weeklyUtilization: Double) throws {
+      try JSONSerialization.data(withJSONObject: [
+        "samples": [
+          [
+            "t": Int64(capturedAt.timeIntervalSince1970 * 1_000),
+            "org": "shared-org", "u": ["sd": weeklyUtilization],
+          ]
+        ]
+      ]).write(to: history, options: .atomic)
+    }
+
+    try writeHistory(at: now.addingTimeInterval(-30), weeklyUtilization: 91)
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
+      "cachedUsageUtilization": [
+        "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
+        "utilization": [
+          "seven_day": [
+            "utilization": 69.0,
+            "resets_at": ISO8601DateFormatter().string(from: reset),
+          ]
+        ],
+      ],
+    ]).write(to: cache)
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "account-a"
+    ]).write(to: config)
+
+    let adapter = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history, cacheURL: cache, desktopConfigURL: config,
+      ptyProbeEnabled: true,
+      ptyProbe: FailingUsagePTYProbe(error: .authenticationRequired)
+    )
+    let before = adapter.refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(before.weekly?.resetAt == reset)
+    #expect(before.weekly?.isResetEstimated == false)
+
+    try writeHistory(at: afterReset.addingTimeInterval(-5), weeklyUtilization: 5)
+    let freshInstall = adapter.refresh(previous: nil, now: afterReset, forceLiveProbe: true)
+    #expect(freshInstall.weekly?.remainingPercent == 95)
+    #expect(freshInstall.weekly?.resetAt == nil)
+    #expect(QuotaPlanner.evaluate(freshInstall, now: afterReset).targetNow == nil)
+
+    let continued = adapter.refresh(previous: before, now: afterReset, forceLiveProbe: true)
+    #expect(continued.weekly?.remainingPercent == 95)
+    #expect(continued.weekly?.resetAt == nil)
+    #expect(continued.sourceState == .attemptFailed)
+    #expect(continued.errorCode == .authenticationRequired)
+    #expect(QuotaPlanner.evaluate(continued, now: afterReset).targetNow == nil)
+  }
+
   @Test("Desktop reset joins fail closed across account, organization, and quota-window boundaries")
   func desktopResetJoinBoundaries() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
