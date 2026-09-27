@@ -52,7 +52,7 @@
 "error.versionTooOld" = "This Codex version is too old. Update Codex or ChatGPT, then refresh.";
 "error.protocolIncompatible" = "This Codex app-server is not compatible. Update Codex and QuotaTempo, then refresh.";
 "error.temporaryFailure" = "Codex usage is temporarily unavailable. Confirm that Codex is signed in, then refresh.";
-"error.authenticationRequired" = "Claude Code is not signed in. Sign in with the official Claude Code app, then refresh.";
+"error.authenticationRequired" = "Claude Code CLI is signed out. Run `claude auth login` in Terminal, then refresh. Claude Desktop sign-in is separate.";
 "freshness.live" = "Current";
 "freshness.recent" = "Recent";
 "freshness.stale" = "Stale";
