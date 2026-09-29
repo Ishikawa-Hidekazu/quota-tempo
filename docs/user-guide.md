@@ -107,9 +107,9 @@ The copied diagnostic report contains only the QuotaTempo and macOS versions, en
 
 ## Update
 
-Install the first Sparkle-enabled release from the official release page, or use the Homebrew command below. It is the bridge that enables in-app updates for later releases.
+Install the latest public release from the official release page, or use the Homebrew command below. Public releases from 0.1.0 onward include in-app updates.
 
-After installing that bridge release, choose **Check for Updates...** in QuotaTempo whenever you want to check immediately. If you enable automatic checks when macOS asks, Sparkle checks at most once per day and presents an update before installation. QuotaTempo does not force silent installation.
+After installation, choose **Check for Updates...** in QuotaTempo whenever you want to check immediately. If you enable automatic checks when macOS asks, Sparkle checks at most once per day and presents an update before installation. QuotaTempo does not force silent installation.
 
 Homebrew requires explicit trust for a third-party Cask. This one-line command trusts only QuotaTempo's Cask, adds its public repository as the source, and installs the same notarized release:
 
