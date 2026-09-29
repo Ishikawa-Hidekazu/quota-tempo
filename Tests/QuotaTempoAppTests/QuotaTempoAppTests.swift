@@ -275,6 +275,99 @@ struct QuotaTempoAppTests {
     #expect(model.enabledProviders == [.claude])
   }
 
+  @Test("Wake follow-up bypasses only the interval guard")
+  func claudeWakeRefreshModes() {
+    #expect(!ClaudeRefreshMode.regular.bypassesInterval)
+    #expect(!ClaudeRefreshMode.regular.forcesLiveProbe)
+    #expect(!ClaudeRefreshMode.regular.localOnly)
+    #expect(ClaudeRefreshMode.explicit.bypassesInterval)
+    #expect(ClaudeRefreshMode.explicit.forcesLiveProbe)
+    #expect(!ClaudeRefreshMode.explicit.localOnly)
+    #expect(ClaudeRefreshMode.wakeFollowUp.bypassesInterval)
+    #expect(!ClaudeRefreshMode.wakeFollowUp.forcesLiveProbe)
+    #expect(ClaudeRefreshMode.wakeFollowUp.localOnly)
+  }
+
+  @Test("Repeated wakes coalesce and an in-flight refresh defers one follow-up")
+  func claudeWakeFollowUpState() {
+    var state = ClaudeWakeFollowUpState()
+    let first = state.didWake()
+    let latest = state.didWake()
+
+    let staleFired = state.timerFired(generation: first, refreshInFlight: false)
+    let deferred = state.timerFired(generation: latest, refreshInFlight: true)
+    let resumed = state.refreshCompleted()
+    let duplicate = state.refreshCompleted()
+    #expect(!staleFired)
+    #expect(!deferred)
+    #expect(resumed)
+    #expect(!duplicate)
+
+    let next = state.didWake()
+    let fired = state.timerFired(generation: next, refreshInFlight: false)
+    let extra = state.refreshCompleted()
+    #expect(fired)
+    #expect(!extra)
+  }
+
+  @Test("Wake follow-up observes a new Claude local response inside the interval gate")
+  func wakeFollowUpBypassesClaudeInterval() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "QuotaTempoAppWakeTests.\(UUID().uuidString)", isDirectory: true)
+    let suiteName = "QuotaTempoAppWakeTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      defaults.removePersistentDomain(forName: suiteName)
+    }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let history = root.appendingPathComponent("history.json")
+    let now = Date()
+    let store = NormalizedSnapshotStore(directory: root.appendingPathComponent("store"))
+    let preferences = ProviderSelectionPreferences(defaults: defaults)
+    preferences.save(ProviderSelection(enabled: [.claude]))
+    try store.save(
+      ProviderSnapshot(
+        provider: .claude,
+        source: .claudeDesktopHistory,
+        capturedAt: now.addingTimeInterval(-120),
+        weekly: QuotaWindow(remainingPercent: 70, durationSeconds: 604_800, resetAt: nil),
+        lastAttemptAt: now,
+        sourceState: .observationSucceeded
+      ))
+    try Data("{\"samples\":[]}".utf8).write(to: history)
+    let model = LiveQuotaModel(
+      store: store,
+      acquisitionEnabled: true,
+      preferences: preferences,
+      claudeAdapter: ClaudeAutomaticAdapter(
+        historyURL: history, cacheURL: root.appendingPathComponent("missing-cache.json")),
+      wakeFollowUpDelay: .milliseconds(50)
+    )
+    for _ in 0..<100 where model.refreshInFlight {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.refreshInFlight)
+
+    let timestamp = Int(now.timeIntervalSince1970 * 1_000)
+    try Data("{\"samples\":[{\"t\":\(timestamp),\"u\":{\"fh\":20,\"sd\":40}}]}".utf8)
+      .write(to: history)
+    model.systemDidWake()
+    model.systemDidWake()
+    #expect(try store.load(.claude)?.weekly?.remainingPercent == 70)
+
+    for _ in 0..<200 where model.scenario.snapshots.first?.weekly?.remainingPercent != 60 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(try store.load(.claude)?.weekly?.remainingPercent == 60)
+    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 60)
+
+    let lastAttempt = try #require(store.load(.claude)?.lastAttemptAt)
+    model.systemDidWake()
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(try store.load(.claude)?.lastAttemptAt == lastAttempt)
+  }
+
   @Test("Menu open presents current state before reloading disk asynchronously")
   func menuOpenReloadsSnapshotAsynchronously() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(

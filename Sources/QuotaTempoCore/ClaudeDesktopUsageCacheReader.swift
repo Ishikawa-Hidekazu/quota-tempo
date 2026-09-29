@@ -63,6 +63,7 @@ struct FileClaudeDesktopUsageCacheReader: ClaudeDesktopUsageCacheReading {
     }.sorted { $0.1 > $1.1 }
 
     var best: ClaudeDesktopCacheObservation?
+    var bestHasConflict = false
     for (url, modifiedAt) in candidates {
       if let best, modifiedAt.addingTimeInterval(60) < best.capturedAt { break }
       guard !LocalPathSafety.containsSymlink(atOrAbove: url, fileManager: manager),
@@ -81,9 +82,25 @@ struct FileClaudeDesktopUsageCacheReader: ClaudeDesktopUsageCacheReading {
       else { continue }
       if best == nil || observation.capturedAt > best!.capturedAt {
         best = observation
+        bestHasConflict = false
+      } else if let best, observation.capturedAt == best.capturedAt,
+        !Self.sameUsage(observation, best)
+      {
+        bestHasConflict = true
       }
     }
+    if bestHasConflict { throw ClaudeAutomaticAdapterError.conflictingResponse }
     return best
+  }
+
+  private static func sameUsage(
+    _ first: ClaudeDesktopCacheObservation, _ second: ClaudeDesktopCacheObservation
+  ) -> Bool {
+    first.organizationUUID == second.organizationUUID
+      && first.weeklyUtilization == second.weeklyUtilization
+      && first.weeklyResetAt == second.weeklyResetAt
+      && first.fiveHourUtilization == second.fiveHourUtilization
+      && first.fiveHourResetAt == second.fiveHourResetAt
   }
 
   static func parseEntry(_ data: Data) -> ClaudeDesktopCacheObservation? {

@@ -162,6 +162,35 @@ private final class ExecutableRecordingPTYProbe: @unchecked Sendable, ClaudeUsag
 }
 
 struct ClaudeAutomaticPTYTests {
+  @Test("A local-only wake recheck does not start a PTY with a partial Desktop balance")
+  func localOnlyDoesNotProbe() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let history = root.appendingPathComponent("history.json")
+    try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(now.addingTimeInterval(-30).timeIntervalSince1970 * 1_000),
+          "org": "shared-org", "u": ["sd": 30.0],
+        ]
+      ]
+    ]).write(to: history)
+    let probe = ExecutableRecordingPTYProbe(output: Data())
+    let adapter = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: history, cacheURL: root.appendingPathComponent("missing-claude.json"),
+      ptyProbeEnabled: true, ptyProbe: probe)
+
+    let local = adapter.refresh(previous: nil, now: now, localOnly: true)
+    #expect(local.weekly?.remainingPercent == 70)
+    #expect(probe.executables.isEmpty)
+
+    _ = adapter.refresh(previous: nil, now: now)
+    #expect(probe.executables.count == 1)
+  }
+
   @Test("A signed-in CLI result survives a different Desktop account")
   func cliResultDoesNotRequireDesktopAccountMatch() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -7,6 +7,7 @@ public enum ClaudeAutomaticAdapterError: Error, Equatable {
   case unsafePath
   case inputTooLarge
   case invalidInput
+  case conflictingResponse
 }
 
 public protocol BoundedLocalDataReading: Sendable {
@@ -174,12 +175,14 @@ public struct ClaudeAutomaticAdapter: Sendable {
   }
 
   public func refresh(
-    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
+    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false,
+    localOnly: Bool = false
   ) -> ProviderSnapshot {
     let currentPrincipal = try? self.readDesktopAccountFingerprint()
     let previousPrincipal = previous?.claudeDesktopPrincipalFingerprint
     if currentPrincipal == nil, previousPrincipal != nil {
-      let independent = self.refreshUnbound(previous: nil, now: now, forceLiveProbe: true)
+      let independent = self.refreshUnbound(
+        previous: nil, now: now, forceLiveProbe: !localOnly, localOnly: localOnly)
       if independent.claudeAccountFingerprint != nil,
         independent.source == .claudeCLI || independent.source == .claudeLocalCache
       {
@@ -193,7 +196,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     let result = self.refreshUnbound(
       previous: desktopBindingUnverified || previousPrincipal == nil && currentPrincipal != nil
         ? nil : previous,
-      now: now, forceLiveProbe: forceLiveProbe)
+      now: now, forceLiveProbe: forceLiveProbe, localOnly: localOnly)
     if currentPrincipal != nil,
       (try? self.readDesktopAccountFingerprint()) != currentPrincipal
     {
@@ -238,7 +241,8 @@ public struct ClaudeAutomaticAdapter: Sendable {
   }
 
   private func refreshUnbound(
-    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
+    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false,
+    localOnly: Bool = false
   ) -> ProviderSnapshot {
     let accountBeforeRefresh = try? self.readAccountIdentity()
     let historyRead = Self.captureLocalRead { try self.readHistory(now: now) }
@@ -287,6 +291,12 @@ public struct ClaudeAutomaticAdapter: Sendable {
         Self.preferredLocalError(historyRead.error, cacheRead.error), desktopUsageRead.error),
       desktopAccountRead.error)
 
+    if desktopUsageRead.error == .conflictingResponse {
+      return AcquisitionRecords.preservingFailure(
+        previous: nil, provider: .claude, source: .claudeDesktopCache,
+        attemptedAt: now, state: .attemptFailed, error: .invalidResponse)
+    }
+
     if localError == .unsafePath {
       let failedSource: SnapshotSource =
         historyRead.error == .unsafePath || desktopAccountRead.error == .unsafePath
@@ -310,6 +320,20 @@ public struct ClaudeAutomaticAdapter: Sendable {
         ) ?? local,
         attemptedAt: now
       )
+    }
+
+    if localOnly {
+      guard let local else {
+        return effectivePrevious
+          ?? AcquisitionRecords.preservingFailure(
+            previous: nil, provider: .claude, source: .claudeDesktopHistory,
+            attemptedAt: now, state: .attemptFailed,
+            error: localError.map(Self.acquisitionError(for:)) ?? .sourceUnavailable)
+      }
+      return Self.success(
+        Self.preferredObservation(
+          local: local, previous: effectivePrevious, now: now, allowMerge: true) ?? local,
+        attemptedAt: now)
     }
 
     if self.ptyProbeEnabled {
@@ -526,6 +550,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     for candidate in [
       ClaudeAutomaticAdapterError.unsafePath,
       .inputTooLarge,
+      .conflictingResponse,
       .invalidInput,
       .sourceUnavailable,
     ] where errors.contains(candidate) {
@@ -542,6 +567,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     case .unsafePath: .unsafePath
     case .inputTooLarge: .inputTooLarge
     case .invalidInput: .invalidResponse
+    case .conflictingResponse: .invalidResponse
     }
   }
 

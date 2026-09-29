@@ -123,6 +123,83 @@ struct ClaudeDesktopUsageCacheTests {
     #expect(observation.fiveHourUtilization == 33)
   }
 
+  @Test("Conflicting same-second Desktop responses are not selected arbitrarily")
+  func rejectsConflictingResponses() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let first = root.appendingPathComponent("first_0")
+    let second = root.appendingPathComponent("second_0")
+    try entry().write(to: first)
+    try entry().write(to: second)
+    for url in [first, second] {
+      try FileManager.default.setAttributes([.modificationDate: Self.now], ofItemAtPath: url.path)
+    }
+    let reader = FileClaudeDesktopUsageCacheReader(directory: root)
+    #expect(try reader.latest(now: Self.now, organizationFingerprint: nil) != nil)
+
+    try entry(frame: Self.limitsFrame).write(to: second)
+    try FileManager.default.setAttributes([.modificationDate: Self.now], ofItemAtPath: second.path)
+    #expect(throws: ClaudeAutomaticAdapterError.conflictingResponse) {
+      try reader.latest(now: Self.now, organizationFingerprint: nil)
+    }
+  }
+
+  @Test("A later conflicting response clears a previously stored exact reset")
+  func conflictClearsStoredReset() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cacheDirectory = root.appendingPathComponent("Cache/Cache_Data")
+    try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    let historyURL = root.appendingPathComponent("plan-usage-history.json")
+    try history(org: Self.org).write(to: historyURL)
+    let firstURL = cacheDirectory.appendingPathComponent("first_0")
+    try entry().write(to: firstURL)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Self.now], ofItemAtPath: firstURL.path)
+    let adapter = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: historyURL, cacheURL: root.appendingPathComponent("missing-claude.json"),
+      ptyProbeEnabled: true, ptyProbe: SignedOutPTY(),
+      probeDirectory: root.appendingPathComponent("probe"))
+    let first = adapter.refresh(previous: nil, now: Self.now)
+    #expect(first.weekly?.resetAt != nil)
+
+    let conflictingURL = cacheDirectory.appendingPathComponent("conflicting_0")
+    try entry(frame: Self.limitsFrame).write(to: conflictingURL)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Self.now], ofItemAtPath: conflictingURL.path)
+    let rejected = adapter.refresh(previous: first, now: Self.now)
+    #expect(rejected.weekly?.resetAt == nil)
+    #expect(rejected.sourceState == .attemptFailed)
+    #expect(rejected.errorCode == .invalidResponse)
+  }
+
+  @Test("A newer response wins over conflicting older responses regardless of file order")
+  func newerResponseWins() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let olderA = root.appendingPathComponent("older-a_0")
+    let olderB = root.appendingPathComponent("older-b_0")
+    let newer = root.appendingPathComponent("newer_0")
+    let olderDate = "Tue, 29 Sep 2026 01:59:59 GMT"
+    try entry(httpDate: olderDate).write(to: olderA)
+    try entry(frame: Self.limitsFrame, httpDate: olderDate).write(to: olderB)
+    try entry(httpDate: "Tue, 29 Sep 2026 02:00:00 GMT").write(to: newer)
+    for url in [olderA, olderB] {
+      try FileManager.default.setAttributes(
+        [.modificationDate: Self.now.addingTimeInterval(30)], ofItemAtPath: url.path)
+    }
+    try FileManager.default.setAttributes([.modificationDate: Self.now], ofItemAtPath: newer.path)
+
+    let observation = try #require(
+      try FileClaudeDesktopUsageCacheReader(directory: root).latest(
+        now: Self.now, organizationFingerprint: nil))
+    #expect(observation.capturedAt == Self.now)
+    #expect(observation.fiveHourUtilization == 33)
+  }
+
   @Test("Chromium body-before-headers cache layout supplies an exact reset")
   func parsesChromiumLayout() throws {
     let key = "https://claude.ai/api/organizations/\(Self.org)/usage?source=desktop"
