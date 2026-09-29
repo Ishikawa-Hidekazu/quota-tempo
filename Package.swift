@@ -16,8 +16,10 @@ let package = Package(
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6")
   ],
   targets: [
+    .target(name: "CZstd"),
     .target(
       name: "QuotaTempoCore",
+      dependencies: ["CZstd"],
       exclude: ["Resources"]
     ),
     .executableTarget(

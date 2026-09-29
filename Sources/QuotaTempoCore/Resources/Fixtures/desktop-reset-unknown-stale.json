@@ -1,0 +1,17 @@
+{
+  "id": "desktop-reset-unknown-stale",
+  "now": "2026-09-28T00:00:00Z",
+  "snapshots": [
+    {
+      "provider": "claude",
+      "source": "claudeDesktopHistory",
+      "capturedAt": "2026-09-27T23:00:00Z",
+      "sourceState": "attemptFailed",
+      "errorCode": "authenticationRequired",
+      "weekly": {
+        "remainingPercent": 94,
+        "durationSeconds": 604800
+      }
+    }
+  ]
+}

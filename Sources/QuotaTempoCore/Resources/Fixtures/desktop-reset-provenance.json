@@ -1,0 +1,17 @@
+{
+  "id": "desktop-reset-provenance",
+  "now": "2026-09-28T00:00:00Z",
+  "snapshots": [
+    {
+      "provider": "claude",
+      "source": "claudeDesktopHistory",
+      "capturedAt": "2026-09-27T23:55:00Z",
+      "sourceState": "observationSucceeded",
+      "weekly": {
+        "remainingPercent": 6,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-28T19:59:59Z"
+      }
+    }
+  ]
+}

@@ -43,12 +43,15 @@ final class LiveQuotaModel: ObservableObject {
   private let acquisitionGate: ProviderAcquisitionGate
   private let preferences: ProviderSelectionPreferences?
   private let claudeAdapter: ClaudeAutomaticAdapter
+  private let wakeFollowUpDelay: Duration
   private var selection: ProviderSelection
   private var initialDetectionPending: Bool
   private var initialDetectionTracker = InitialProviderDetectionTracker()
   private var initialDetectionSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var codexRefreshInFlight = false
   private var claudeRefreshInFlight = false
+  private var claudeWakeFollowUp = ClaudeWakeFollowUpState()
+  private var claudeWakeFollowUpTask: Task<Void, Never>?
   private var transientSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var scenarioRevision = 0
 
@@ -60,12 +63,14 @@ final class LiveQuotaModel: ObservableObject {
       cliExecutable: nil,
       resolveCLIOnRefresh: true,
       ptyProbeEnabled: true
-    )
+    ),
+    wakeFollowUpDelay: Duration = .seconds(90)
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
     self.preferences = preferences
     self.claudeAdapter = claudeAdapter
+    self.wakeFollowUpDelay = wakeFollowUpDelay
     let storedScenario = self.store.scenario(now: Date())
     if let configured = preferences?.load() {
       self.selection = configured
@@ -81,13 +86,13 @@ final class LiveQuotaModel: ObservableObject {
     self.enabledProviders = self.selection.enabled
     self.scenario = self.selection.filtering(storedScenario)
     self.refreshCodex(trigger: .launch, force: false)
-    self.refreshClaude(trigger: .launch, force: false)
+    self.refreshClaude(trigger: .launch, mode: .regular)
   }
 
   func menuOpened() {
     self.reload()
     self.refreshCodex(trigger: .menuOpen, force: false)
-    self.refreshClaude(trigger: .menuOpen, force: false)
+    self.refreshClaude(trigger: .menuOpen, mode: .regular)
   }
 
   func clockAdvanced() {
@@ -121,18 +126,19 @@ final class LiveQuotaModel: ObservableObject {
   func scheduledRefresh() {
     self.reload()
     self.refreshCodex(trigger: .scheduledRefresh, force: false)
-    self.refreshClaude(trigger: .scheduledRefresh, force: false)
+    self.refreshClaude(trigger: .scheduledRefresh, mode: .regular)
   }
 
   func systemDidWake() {
     self.reload()
     self.refreshCodex(trigger: .systemWake, force: false)
-    self.refreshClaude(trigger: .systemWake, force: false)
+    self.refreshClaude(trigger: .systemWake, mode: .regular)
+    self.scheduleClaudeWakeFollowUp()
   }
 
   func explicitRefresh() {
     self.refreshCodex(trigger: .explicitRefresh, force: true)
-    self.refreshClaude(trigger: .explicitRefresh, force: true)
+    self.refreshClaude(trigger: .explicitRefresh, mode: .explicit)
   }
 
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
@@ -149,7 +155,7 @@ final class LiveQuotaModel: ObservableObject {
     case .codex:
       self.refreshCodex(trigger: .explicitRefresh, force: true)
     case .claude:
-      self.refreshClaude(trigger: .explicitRefresh, force: true)
+      self.refreshClaude(trigger: .explicitRefresh, mode: .explicit)
     }
   }
 
@@ -254,7 +260,26 @@ final class LiveQuotaModel: ObservableObject {
     }
   }
 
-  private func refreshClaude(trigger: ProviderAcquisitionTrigger, force: Bool) {
+  private func scheduleClaudeWakeFollowUp() {
+    guard self.acquisitionGate.enabled else { return }
+    guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
+    self.claudeWakeFollowUpTask?.cancel()
+    let generation = self.claudeWakeFollowUp.didWake()
+    let delay = self.wakeFollowUpDelay
+    self.claudeWakeFollowUpTask = Task { [weak self] in
+      try? await Task.sleep(for: delay)
+      guard !Task.isCancelled else { return }
+      guard let self else { return }
+      self.claudeWakeFollowUpTask = nil
+      if self.claudeWakeFollowUp.timerFired(
+        generation: generation, refreshInFlight: self.claudeRefreshInFlight
+      ) {
+        self.refreshClaude(trigger: .systemWake, mode: .wakeFollowUp)
+      }
+    }
+  }
+
+  private func refreshClaude(trigger: ProviderAcquisitionTrigger, mode: ClaudeRefreshMode) {
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
     guard !self.claudeRefreshInFlight else { return }
@@ -274,7 +299,7 @@ final class LiveQuotaModel: ObservableObject {
           )
           let now = Date()
           guard
-            force
+            mode.bypassesInterval
               || ClaudeAutomaticAdapter.shouldRefresh(
                 lastAttemptAt: previous?.lastAttemptAt,
                 now: now
@@ -283,8 +308,20 @@ final class LiveQuotaModel: ObservableObject {
             continuation.resume(returning: nil)
             return
           }
-          continuation.resume(
-            returning: adapter.refresh(previous: previous, now: now, forceLiveProbe: force))
+          let refreshed = adapter.refresh(
+            previous: previous, now: now, forceLiveProbe: mode.forcesLiveProbe,
+            localOnly: mode.localOnly)
+          if mode.localOnly, refreshed.errorCode != .invalidResponse,
+            refreshed.capturedAt == previous?.capturedAt,
+            refreshed.weekly == previous?.weekly,
+            refreshed.fiveHour == previous?.fiveHour,
+            refreshed.claudeDesktopPrincipalFingerprint
+              == previous?.claudeDesktopPrincipalFingerprint
+          {
+            continuation.resume(returning: nil)
+          } else {
+            continuation.resume(returning: refreshed)
+          }
         }
       }
       if let snapshot {
@@ -294,11 +331,49 @@ final class LiveQuotaModel: ObservableObject {
       }
       self.claudeRefreshInFlight = false
       self.updateRefreshInFlight()
+      if self.claudeWakeFollowUp.refreshCompleted() {
+        self.refreshClaude(trigger: .systemWake, mode: .wakeFollowUp)
+      }
     }
   }
 
   private func updateRefreshInFlight() {
     self.refreshInFlight = self.codexRefreshInFlight || self.claudeRefreshInFlight
+  }
+}
+
+enum ClaudeRefreshMode: Sendable {
+  case regular
+  case explicit
+  case wakeFollowUp
+
+  var bypassesInterval: Bool { self != .regular }
+  var forcesLiveProbe: Bool { self == .explicit }
+  var localOnly: Bool { self == .wakeFollowUp }
+}
+
+struct ClaudeWakeFollowUpState {
+  private var generation = 0
+  private var pendingAfterRefresh = false
+
+  mutating func didWake() -> Int {
+    self.generation &+= 1
+    self.pendingAfterRefresh = false
+    return self.generation
+  }
+
+  mutating func timerFired(generation: Int, refreshInFlight: Bool) -> Bool {
+    guard generation == self.generation else { return false }
+    if refreshInFlight {
+      self.pendingAfterRefresh = true
+      return false
+    }
+    return true
+  }
+
+  mutating func refreshCompleted() -> Bool {
+    defer { self.pendingAfterRefresh = false }
+    return self.pendingAfterRefresh
   }
 }
 

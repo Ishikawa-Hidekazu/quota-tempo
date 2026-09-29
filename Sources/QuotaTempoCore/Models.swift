@@ -17,6 +17,7 @@ public enum SnapshotSource: String, Codable, Sendable {
   case codexAppServer
   case claudeStatusLine
   case claudeDesktopHistory
+  case claudeDesktopCache
   case claudeLocalCache
   case claudeLocalMerged
   case claudeCLI
@@ -90,6 +91,7 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
   public let codexExecutableVersion: String?
   public let claudeAccountFingerprint: String?
   public let claudeOrganizationFingerprint: String?
+  public let claudeDesktopPrincipalFingerprint: String?
 
   public init(
     provider: ProviderID,
@@ -103,7 +105,8 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     codexExecutableSource: CodexExecutableSource? = nil,
     codexExecutableVersion: String? = nil,
     claudeAccountFingerprint: String? = nil,
-    claudeOrganizationFingerprint: String? = nil
+    claudeOrganizationFingerprint: String? = nil,
+    claudeDesktopPrincipalFingerprint: String? = nil
   ) {
     self.provider = provider
     self.source = source
@@ -117,6 +120,7 @@ public struct ProviderSnapshot: Codable, Equatable, Sendable {
     self.codexExecutableVersion = codexExecutableVersion
     self.claudeAccountFingerprint = claudeAccountFingerprint
     self.claudeOrganizationFingerprint = claudeOrganizationFingerprint
+    self.claudeDesktopPrincipalFingerprint = claudeDesktopPrincipalFingerprint
   }
 }
 
