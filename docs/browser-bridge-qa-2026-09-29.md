@@ -146,6 +146,19 @@ process tests, JavaScript syntax checks, and `git diff --check` pass. The earlie
 commit `a8d31dc` also passed all GitHub CI/CodeQL checks. These automated results do
 not replace the pending live 0.1.1 reload, observation, and installed-app QA.
 
+### September 30 first successful live browser observation
+
+After the compatibility update, the owner's popup changed to `Connected`.
+A metadata-only native record check confirmed `status=ok`, `source=claudeBrowser`,
+a fresh capture time, weekly and five-hour windows, provider reset timestamps,
+and no acquisition error. Neither reset is marked estimated. Private percentages,
+timestamps, identifiers, and response bodies are omitted here.
+
+The screenshot showed popup 0.1.1 but `worker unknown`, so this success does not
+establish that the entire updated worker is active. User reload confirmation,
+two automatic refreshes, official-display comparison, installed-app UI, and
+rollover acceptance remain pending. No public app replacement or release occurred.
+
 Remaining release gates:
 
 1. Load the exact prototype extension, register its exact ID, and confirm a live
