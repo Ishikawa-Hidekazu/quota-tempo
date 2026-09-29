@@ -22,6 +22,7 @@ build_dir="$(swift build --package-path "$repo_root" -c release --show-bin-path)
 
 install -m 644 "$repo_root/packaging/Info.plist" "$stage/Contents/Info.plist"
 install -m 644 "$repo_root/THIRD_PARTY_NOTICES.md" "$stage/Contents/Resources/THIRD_PARTY_NOTICES.md"
+install -m 644 "$repo_root/Sources/CZstd/LICENSE" "$stage/Contents/Resources/ZSTD-LICENSE"
 install -m 644 "$repo_root/LICENSE" "$stage/Contents/Resources/LICENSE"
 install -m 644 "$repo_root/PRIVACY.md" "$stage/Contents/Resources/PRIVACY.md"
 install -m 644 "$repo_root/SUPPORT.md" "$stage/Contents/Resources/SUPPORT.md"

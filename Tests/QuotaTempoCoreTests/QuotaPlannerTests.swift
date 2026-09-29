@@ -589,8 +589,12 @@ struct QuotaPlannerTests {
       MenuCopy(languageCode: "en").text("weekly.reset.estimated")
         == "Weekly reset (estimated)")
     #expect(MenuCopy(languageCode: "en").source(.claudeDesktopHistory) == "Claude Desktop history")
+    #expect(
+      MenuCopy(languageCode: "en").source(.claudeDesktopCache) == "Claude Desktop usage cache")
     #expect(MenuCopy(languageCode: "ja").source(.claudeLocalCache) == "Claudeローカルキャッシュ")
-    #expect(MenuCopy(languageCode: "en").source(.claudeLocalMerged) == "Claude local sources")
+    #expect(
+      MenuCopy(languageCode: "en").source(.claudeLocalMerged)
+        == "Claude Desktop history + usage cache")
     #expect(MenuCopy(languageCode: "en").text("refresh") == "Refresh")
     #expect(MenuCopy(languageCode: "en").text("check.for.updates") == "Check for Updates...")
     #expect(MenuCopy(languageCode: "ja").text("check.for.updates") == "アップデートを確認...")

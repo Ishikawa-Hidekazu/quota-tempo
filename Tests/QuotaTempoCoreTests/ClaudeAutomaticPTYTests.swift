@@ -62,6 +62,22 @@ private struct RenderedUsagePTYProbe: ClaudeUsageProbing {
   func capture(executable: URL, workingDirectory: URL) throws -> Data { output }
 }
 
+private final class TransientDesktopConfigReader: BoundedLocalDataReading, @unchecked Sendable {
+  private let lock = NSLock()
+  private var configReads = 0
+
+  func read(from url: URL, limit: Int) throws -> Data {
+    if url.lastPathComponent == "config.json" {
+      lock.lock()
+      configReads += 1
+      let count = configReads
+      lock.unlock()
+      if count > 1 { throw ClaudeAutomaticAdapterError.sourceUnavailable }
+    }
+    return try FileBoundedLocalDataReader().read(from: url, limit: limit)
+  }
+}
+
 private struct FailingUsagePTYProbe: ClaudeUsageProbing {
   let error: ClaudeUsagePTYProbeError
 
@@ -193,6 +209,99 @@ struct ClaudeAutomaticPTYTests {
       snapshot.claudeAccountFingerprint
         == ownerFingerprint(
           account: "cli-account", organization: "cli-org"))
+  }
+
+  @Test("A temporary Desktop config failure does not block a signed-in Claude Code CLI")
+  func missingDesktopConfigStillAllowsCLI() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let cache = root.appendingPathComponent("claude.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "cli-account", "organizationUuid": "cli-org"]
+    ]).write(to: cache)
+    let weekly = DateFormatter()
+    weekly.locale = Locale(identifier: "en_US_POSIX")
+    weekly.timeZone = TimeZone(identifier: "UTC")
+    weekly.dateFormat = "MMM d 'at' h:mma"
+    let session = DateFormatter()
+    session.locale = Locale(identifier: "en_US_POSIX")
+    session.timeZone = TimeZone(identifier: "UTC")
+    session.dateFormat = "h:mma"
+    let output = Data(
+      """
+      Currentsession
+      32%used
+      Resets\(session.string(from: now.addingTimeInterval(7_200)))(UTC)
+      Currentweek(allmodels)
+      41%used
+      Resets\(weekly.string(from: now.addingTimeInterval(259_200)))(UTC)
+      """.utf8)
+    let previous = ProviderSnapshot(
+      provider: .claude, source: .claudeDesktopHistory,
+      capturedAt: now.addingTimeInterval(-60),
+      weekly: QuotaWindow(
+        remainingPercent: 90, durationSeconds: 7 * 24 * 60 * 60,
+        resetAt: now.addingTimeInterval(200_000)),
+      sourceState: .observationSucceeded,
+      claudeDesktopPrincipalFingerprint: accountFingerprintValue("desktop-account"))
+
+    let snapshot = ClaudeAutomaticAdapter(
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache, desktopConfigURL: root.appendingPathComponent("missing-config.json"),
+      ptyProbeEnabled: true, ptyProbe: RenderedUsagePTYProbe(output: output),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: previous, now: now, forceLiveProbe: true)
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(snapshot.claudeAccountFingerprint != nil)
+    #expect(snapshot.claudeDesktopPrincipalFingerprint == nil)
+  }
+
+  @Test("A Desktop config reread failure cannot discard an independently verified CLI result")
+  func configRereadFailureStillAllowsCLI() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let now = Date()
+    let cache = root.appendingPathComponent("claude.json")
+    let config = root.appendingPathComponent("config.json")
+    try JSONSerialization.data(withJSONObject: [
+      "oauthAccount": ["accountUuid": "cli-account", "organizationUuid": "cli-org"]
+    ]).write(to: cache)
+    try JSONSerialization.data(withJSONObject: [
+      "lastKnownAccountUuid": "cli-account"
+    ]).write(to: config)
+    let session = DateFormatter()
+    session.locale = Locale(identifier: "en_US_POSIX")
+    session.timeZone = TimeZone(identifier: "UTC")
+    session.dateFormat = "h:mma"
+    let weekly = DateFormatter()
+    weekly.locale = Locale(identifier: "en_US_POSIX")
+    weekly.timeZone = TimeZone(identifier: "UTC")
+    weekly.dateFormat = "MMM d 'at' h:mma"
+    let output = Data(
+      """
+      Currentsession
+      32%used
+      Resets\(session.string(from: now.addingTimeInterval(7_200)))(UTC)
+      Currentweek(allmodels)
+      41%used
+      Resets\(weekly.string(from: now.addingTimeInterval(259_200)))(UTC)
+      """.utf8)
+    let snapshot = ClaudeAutomaticAdapter(
+      reader: TransientDesktopConfigReader(),
+      cliExecutable: URL(fileURLWithPath: "/mock/claude"),
+      historyURL: root.appendingPathComponent("missing-history.json"),
+      cacheURL: cache, desktopConfigURL: config,
+      ptyProbeEnabled: true, ptyProbe: RenderedUsagePTYProbe(output: output),
+      probeDirectory: root.appendingPathComponent("probe")
+    ).refresh(previous: nil, now: now, forceLiveProbe: true)
+    #expect(snapshot.source == .claudeCLI)
+    #expect(snapshot.weekly?.resetAt != nil)
+    #expect(snapshot.claudeAccountFingerprint != nil)
   }
 
   @Test("A partial Desktop history does not erase a verified current weekly reset")

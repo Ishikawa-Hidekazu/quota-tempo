@@ -14,8 +14,9 @@
 "source.codexAppServer" = "Codex app-server";
 "source.claudeStatusLine" = "Claude Code status line";
 "source.claudeDesktopHistory" = "Claude Desktop履歴";
+"source.claudeDesktopCache" = "Claude Desktop使用量キャッシュ";
 "source.claudeLocalCache" = "Claudeローカルキャッシュ";
-"source.claudeLocalMerged" = "Claudeローカル統合";
+"source.claudeLocalMerged" = "Claude Desktop履歴＋使用量キャッシュ";
 "source.claudeCLI" = "Claude CLI";
 "codex.executable.source" = "Codexの種類";
 "codex.executable.version" = "Codexバージョン";
@@ -30,12 +31,13 @@
 "acquisition.error" = "更新結果";
 "reset.source" = "リセット時刻の取得元";
 "reset.source.claude.confirmed" = "以前の確定観測";
+"reset.source.claude.desktopCache" = "Claude Desktop使用量キャッシュ";
 "reset.source.claude.estimated" = "以前のリセット時刻から推定";
 "claude.local.boundary" = "このMacで最後に確認した値です。";
 "stale.comparison.confirmed.help" = "W?は最後に確認した残量です。Pは最後に確認したリセットから計算しています。目標差と利用可能量は最新の残量待ちです。";
 "stale.comparison.estimated.help" = "W?は最後に確認した残量です。P≈はリセットを1期間だけ進めた推定から計算しています。目標差と利用可能量は最新の残量待ちです。";
 "claude.reset.help" = "Claudeの現在のリセット時刻を確認できませんでした。Claude Codeへサインイン済みか確認してから更新してください。";
-"claude.reset.help.desktop" = "Claude Desktopの履歴にはリセット時刻が含まれません。新しい確定時刻を取得できるまで確定Pは表示できません。";
+"claude.reset.help.desktop" = "Claude Desktop履歴にはリセット時刻がありません。使用量キャッシュかログイン済みClaude Codeから現在の時刻を確認できるまで、確定Pは表示されません。";
 "source.state.neverObserved" = "未取得";
 "source.state.observationSucceeded" = "取得成功";
 "source.state.accessRestricted" = "provider側で利用制限中";

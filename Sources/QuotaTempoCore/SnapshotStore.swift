@@ -222,9 +222,11 @@ public enum NormalizedSnapshotCodec {
       return snapshot.codexExecutableSource == nil && snapshot.codexExecutableVersion == nil
         && self.isValidClaudeFingerprint(snapshot.claudeAccountFingerprint)
         && self.isValidClaudeFingerprint(snapshot.claudeOrganizationFingerprint)
+        && self.isValidClaudeFingerprint(snapshot.claudeDesktopPrincipalFingerprint)
     case .codex:
       guard snapshot.claudeAccountFingerprint == nil,
-        snapshot.claudeOrganizationFingerprint == nil
+        snapshot.claudeOrganizationFingerprint == nil,
+        snapshot.claudeDesktopPrincipalFingerprint == nil
       else { return false }
       guard snapshot.codexExecutableVersion == nil || snapshot.codexExecutableSource != nil else {
         return false
@@ -261,6 +263,7 @@ public enum NormalizedSnapshotCodec {
       return source == .codexAppServer
     case .claude:
       return source == .claudeStatusLine || source == .claudeDesktopHistory
+        || source == .claudeDesktopCache
         || source == .claudeLocalCache || source == .claudeLocalMerged || source == .claudeCLI
     }
   }
@@ -348,7 +351,8 @@ public enum AcquisitionRecords {
       codexExecutableSource: previous?.codexExecutableSource,
       codexExecutableVersion: previous?.codexExecutableVersion,
       claudeAccountFingerprint: previous?.claudeAccountFingerprint,
-      claudeOrganizationFingerprint: previous?.claudeOrganizationFingerprint
+      claudeOrganizationFingerprint: previous?.claudeOrganizationFingerprint,
+      claudeDesktopPrincipalFingerprint: previous?.claudeDesktopPrincipalFingerprint
     )
   }
 }

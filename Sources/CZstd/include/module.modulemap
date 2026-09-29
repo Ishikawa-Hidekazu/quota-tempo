@@ -1,0 +1,5 @@
+module CZstd {
+    header "zstd.h"
+    header "zstd_errors.h"
+    export *
+}
