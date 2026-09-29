@@ -12,6 +12,11 @@ const STATUS = new Set([
   "ok", "signedOut", "accountChanged", "unavailable", "rateLimited",
   "organizationSelectionRequired", "disconnected"
 ]);
+const DIAGNOSTICS = new Set([
+  "accountRequest", "accountShape", "organizationsRequest", "organizationsShape",
+  "usageRequest", "usageShape", "accountRecheckRequest", "accountRecheckShape",
+  "fingerprint", "extensionDispatch", "workerValidation"
+]);
 let queue = Promise.resolve();
 
 function serialize(action) {
@@ -24,6 +29,7 @@ function initialState() {
   return {
     enabled: false, blocked: false, profileID: crypto.randomUUID(), tabID: null,
     pin: null, status: "disconnected", failureCount: 0, nextAt: null,
+    lastFailureStage: null,
     lastObservedAt: null, inFlight: null, recovering: false, pendingDisconnect: false,
     pendingConnect: false, pendingConnectedMessage: null,
     connectionID: null, sequence: null, pendingRevocation: null
@@ -35,6 +41,7 @@ async function state() {
   if (stored && UUID.test(stored.profileID)) {
     const value = {
       recovering: false, pendingDisconnect: false, pendingConnect: false,
+      lastFailureStage: null,
       pendingConnectedMessage: null,
       connectionID: null, sequence: null, pendingRevocation: null, ...stored
     };
@@ -52,6 +59,7 @@ async function save(value) {
 function view(value) {
   return {
     enabled: value.enabled, blocked: value.blocked, status: value.status,
+    lastFailureStage: value.lastFailureStage,
     pinned: value.pin !== null, lastObservedAt: value.lastObservedAt,
     nextAt: value.nextAt, pendingDisconnect: value.pendingDisconnect,
     pendingConnect: value.pendingConnect
@@ -195,6 +203,8 @@ function nextDelay(value, status) {
 async function finishObservation(value, result, observedAt = new Date(Date.now()).toISOString()) {
   const now = Date.now();
   let checked = normalizedResult(result, now);
+  value.lastFailureStage = checked.status === "unavailable"
+    ? (DIAGNOSTICS.has(result?.diagnostic) ? result.diagnostic : "workerValidation") : null;
   if (checked.status === "ok") {
     const candidate = {
       accountFingerprint: checked.accountFingerprint,
@@ -255,7 +265,7 @@ async function startObservation(value) {
     const reply = await chrome.tabs.sendMessage(value.tabID, { type: "observe", requestID }, { frameId: 0 });
     if (reply?.accepted !== true) throw new Error("notAccepted");
   } catch {
-    await finishObservation(value, { status: "unavailable" });
+    await finishObservation(value, { status: "unavailable", diagnostic: "extensionDispatch" });
   }
 }
 

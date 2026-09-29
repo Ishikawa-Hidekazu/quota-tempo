@@ -86,6 +86,24 @@ No native observation file existed at the registration check: explicit Connect
 and real extension-to-host delivery are still unverified. This is setup evidence,
 not acquisition or installed-app acceptance.
 
+### September 30 Connect follow-up
+
+The owner loaded the unpacked extension and clicked Connect. The host persisted a
+valid connection generation and a first observation with `status=unavailable`,
+`source=claudeBrowser`, and no weekly or five-hour window. This proves that the
+extension can deliver a control handshake and a value-free failed observation
+to the native host. It does **not** prove that the live usage endpoint is
+compatible or that W/P can be displayed.
+
+The extension originally collapsed request failures and schema mismatches into
+the same `unavailable` status. A bounded local diagnostic stage was added to its
+popup; it forwards no response body, account identifier, cookie, token, or raw
+error to the native host. A local fallback also hashes an email-only account
+identity when the account API has no UUID; the raw address is never persisted
+or forwarded. The extension tests now pass 24/24 and `git diff
+--check` passes. Live diagnosis requires reloading the unpacked extension and
+one explicit Reconnect on the existing Claude Web tab.
+
 Remaining release gates:
 
 1. Load the exact prototype extension, register its exact ID, and confirm a live

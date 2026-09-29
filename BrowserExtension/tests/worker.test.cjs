@@ -103,6 +103,20 @@ test("Connect ACK precedes usage; account switch revokes and reconnect creates a
   assert.equal(h.stored.pin.accountFingerprint, HASH_B);
 });
 
+test("diagnostics stay in the extension and never reach the native host", async () => {
+  const h = harness();
+  await h.message({ type: "connect" });
+  await h.observe({ status: "unavailable", diagnostic: "accountShape" });
+  assert.equal(h.stored.lastFailureStage, "accountShape");
+  assert.equal(h.native[1].status, "unavailable");
+  assert.equal(Object.hasOwn(h.native[1], "diagnostic"), false);
+  assert.equal((await h.flush()).lastFailureStage, "accountShape");
+  h.listener.alarm({ name: "quotaTempoPoll" });
+  await h.flush();
+  await h.observe(h.result(HASH_A));
+  assert.equal(h.stored.lastFailureStage, null);
+});
+
 test("connected ACK failure sends no observation and retries exact envelope on explicit Connect", async () => {
   const h = harness();
   h.acks.push({ ok: false, error: "unavailable" });

@@ -36,4 +36,4 @@ Run synthetic tests without loading the extension or accessing a real account:
 node --test BrowserExtension/tests/*.test.cjs
 ```
 
-At handoff, the extension's synthetic Node tests pass (20/20). The parent integration run reports 281/281 Swift tests and 5/5 isolated native-host process tests passing. The extension is not installed in Chrome, and no live installed Chrome-to-native end-to-end or real-login test has been performed.
+At the September 30 follow-up, the extension's synthetic Node tests pass (24/24). The parent integration run reports 281/281 Swift tests and 5/5 isolated native-host process tests passing. The unpacked extension was loaded on one Mac and the native host accepted its Connect handshake. The first real acquisition returned `unavailable`; the popup now shows only a bounded failure stage for diagnosis. The account parser also accepts a validated email-only identity from `/api/account`, hashes it locally, and never forwards the address. A successful live quota observation, installed-app display, and automatic refresh remain unverified.

@@ -55,6 +55,32 @@ test("old usage is normalized and account/organization UUIDs are hashed", async 
   }
 });
 
+test("email-only account responses are compared and hashed without forwarding the address", async () => {
+  const email = "Example.User@example.com";
+  const source = fetchSequence(
+    response({ email_address: email }), response([{ uuid: ORG }]),
+    response(oldUsage()), response({ email_address: email })
+  );
+  const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+  const sha = value => createHash("sha256").update(value).digest("hex");
+  const principal = "email:example.user@example.com";
+  assert.equal(result.status, "ok");
+  assert.equal(result.accountFingerprint, sha(`claude-owner-v1:${principal}:${ORG}`));
+  assert.equal(result.principalFingerprint, sha(principal));
+  assert.equal(JSON.stringify(result).includes(email), false);
+  assert.equal(JSON.stringify(result).includes("example.user@example.com"), false);
+});
+
+test("email-only account switch during acquisition fails closed", async () => {
+  const source = fetchSequence(
+    response({ email_address: "a@example.com" }), response([{ uuid: ORG }]),
+    response(oldUsage()), response({ email_address: "b@example.com" })
+  );
+  const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+  assert.equal(result.status, "accountChanged");
+  assert.equal(result.weekly, null);
+});
+
 test("new limits accept only all-model weekly and session; unknown fields are ignored", () => {
   const parsed = protocol.parseUsage({
     future_field: { private: "ignored" },
@@ -119,6 +145,24 @@ test("oversized response is rejected before parsing or forwarding", async () => 
   const result = await protocol.observe({ fetchImpl, now: () => NOW });
   assert.equal(result.status, "unavailable");
   assert.equal(result.accountFingerprint, null);
+  assert.equal(result.diagnostic, "accountRequest");
+});
+
+test("only bounded stage names leave a failed acquisition", async () => {
+  const cases = [
+    { replies: [response({ unexpected: true })], stage: "accountShape" },
+    { replies: [response({ uuid: ACCOUNT_A }), response({ unexpected: true })], stage: "organizationsShape" },
+    { replies: [response({ uuid: ACCOUNT_A }), response([{ uuid: ORG }]), response({}),
+      response({ uuid: ACCOUNT_A })], stage: "usageShape" }
+  ];
+  for (const item of cases) {
+    const source = fetchSequence(...item.replies);
+    const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+    assert.equal(result.status, "unavailable");
+    assert.equal(result.diagnostic, item.stage);
+    assert.equal(result.weekly, null);
+    assert.equal(result.accountFingerprint, null);
+  }
 });
 
 test("ambiguous duplicate buckets fail closed", () => {

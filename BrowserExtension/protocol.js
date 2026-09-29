@@ -33,6 +33,26 @@
     return uuid(direct ?? nested);
   }
 
+  function accountIdentity(data) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      throw new ObservationError("unavailable");
+    }
+    if (data.uuid !== undefined || data.account?.uuid !== undefined) {
+      return accountUUID(data);
+    }
+    const direct = data.email_address;
+    const nested = data.account?.email_address;
+    if (direct !== undefined && nested !== undefined && direct !== nested) {
+      throw new ObservationError("unavailable");
+    }
+    const email = direct ?? nested;
+    if (typeof email !== "string" || email.length > 254
+      || !/^[^\s@]+@[^\s@]+$/.test(email)) {
+      throw new ObservationError("unavailable");
+    }
+    return `email:${email.toLowerCase()}`;
+  }
+
   function soleOrganizationUUID(data) {
     const organizations = Array.isArray(data) ? data : data?.organizations;
     if (!Array.isArray(organizations)) throw new ObservationError("unavailable");
@@ -136,8 +156,10 @@
   async function observe({ fetchImpl = fetch, now = () => Date.now(), timeoutMs = TIMEOUT_MS } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let phase = "accountRequest";
     const empty = status => ({
-      status, accountFingerprint: null, organizationFingerprint: null,
+      status, diagnostic: status === "unavailable" ? phase : null,
+      accountFingerprint: null, organizationFingerprint: null,
       principalFingerprint: null, weekly: null, fiveHour: null
     });
     async function request(path) {
@@ -153,12 +175,23 @@
       return boundedJSON(response);
     }
     try {
-      const before = accountUUID(await request("/api/account"));
-      const organization = soleOrganizationUUID(await request("/api/organizations"));
+      const accountBefore = await request("/api/account");
+      phase = "accountShape";
+      const before = accountIdentity(accountBefore);
+      phase = "organizationsRequest";
+      const organizations = await request("/api/organizations");
+      phase = "organizationsShape";
+      const organization = soleOrganizationUUID(organizations);
+      phase = "usageRequest";
       const usage = await request(`/api/organizations/${organization}/usage`);
-      const after = accountUUID(await request("/api/account"));
+      phase = "accountRecheckRequest";
+      const accountAfter = await request("/api/account");
+      phase = "accountRecheckShape";
+      const after = accountIdentity(accountAfter);
       if (before !== after) return empty("accountChanged");
+      phase = "usageShape";
       const windows = parseUsage(usage, now());
+      phase = "fingerprint";
       return {
         status: "ok",
         accountFingerprint: await sha256(`claude-owner-v1:${before}:${organization}`),

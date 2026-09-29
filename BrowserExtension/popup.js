@@ -29,7 +29,8 @@ function render(value) {
   statusNode.textContent = title;
   detailNode.textContent = value?.pendingDisconnect
     ? "Disconnect is unconfirmed. Connect retries that handshake before creating a new connection."
-    : detail;
+    : value?.status === "unavailable" && value?.lastFailureStage
+      ? `Acquisition stopped at ${value.lastFailureStage}.` : detail;
   connectButton.hidden = value?.enabled === true;
   reconnectButton.hidden = value?.enabled !== true;
   disconnectButton.hidden = value?.enabled !== true && value?.pendingDisconnect !== true;
@@ -60,7 +61,8 @@ disconnectButton.addEventListener("click", () => command("disconnect"));
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.bridgeState) {
     const value = changes.bridgeState.newValue;
-    render({ status: value.status, enabled: value.enabled, pendingDisconnect: value.pendingDisconnect });
+    render({ status: value.status, enabled: value.enabled,
+      pendingDisconnect: value.pendingDisconnect, lastFailureStage: value.lastFailureStage });
   }
 });
 command("state");
