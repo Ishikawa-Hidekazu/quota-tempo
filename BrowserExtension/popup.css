@@ -2,6 +2,7 @@
 body { width: 272px; margin: 0; color: #20272a; background: #f7f8f7; }
 main { padding: 16px; }
 h1 { margin: 0 0 14px; font-size: 17px; font-weight: 650; }
+#version { margin: -7px 0 14px; color: #506166; font-size: 11px; overflow-wrap: anywhere; }
 #status { margin: 0; font-size: 14px; font-weight: 600; }
 #detail { min-height: 34px; margin: 7px 0 15px; color: #506166; font-size: 12px; line-height: 1.4; }
 .actions { display: flex; gap: 8px; }
@@ -12,7 +13,7 @@ button:disabled { opacity: .55; cursor: default; }
 [hidden] { display: none !important; }
 @media (prefers-color-scheme: dark) {
   body { color: #edf2f0; background: #20292a; }
-  #detail { color: #bdcbc8; }
+  #detail, #version { color: #bdcbc8; }
   button { color: #edf2f0; background: #344143; border-color: #8ba09e; }
   button:first-child:not([hidden]) { background: #2e8d7e; border-color: #2e8d7e; color: #fff; }
 }

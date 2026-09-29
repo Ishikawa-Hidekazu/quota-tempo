@@ -165,22 +165,175 @@ test("only bounded stage names leave a failed acquisition", async () => {
   }
 });
 
-test("ambiguous duplicate buckets fail closed", () => {
-  assert.throws(() => protocol.parseUsage({
+test("matching legacy and limits buckets merge after normalization", () => {
+  assert.deepEqual(protocol.parseUsage({
     ...oldUsage(), limits: [{ kind: "weekly_all", utilization: 27, resets_at: WEEKLY }]
-  }, NOW));
+  }, NOW), protocol.parseUsage(oldUsage(), NOW));
+  const usage = {
+    seven_day: { utilization: 27, resets_at: "2026-10-03T00:00:00.123456+00:00" },
+    five_hour: { utilization: 10, resets_at: "2026-09-29T03:00:00.987654+00:00" },
+    limits: [
+      { kind: "weekly_all", percent: 27, resets_at: "2026-10-03T09:00:00.123999999+09:00" },
+      { kind: "session", percent: 10, resets_at: "2026-09-28T20:00:00.987654321-07:00" },
+      { kind: "weekly_scoped", percent: 5, resets_at: WEEKLY }
+    ]
+  };
+  assert.deepEqual(protocol.parseUsage(usage, NOW), {
+    weekly: { remainingPercent: 73, resetAt: "2026-10-03T00:00:00.123Z" },
+    fiveHour: { remainingPercent: 90, resetAt: "2026-09-29T03:00:00.987Z" }
+  });
+});
+
+test("conflicting legacy and limits buckets or duplicate limits fail closed", () => {
+  for (const [kind, percent, reset] of [["weekly_all", 27, WEEKLY], ["session", 10, FIVE_HOUR]]) {
+    for (const mismatch of [
+      { percent: percent + 1, resets_at: reset },
+      { percent, resets_at: new Date(Date.parse(reset) + 1).toISOString() }
+    ]) {
+      assert.throws(() => protocol.parseUsage({ ...oldUsage(), limits: [{ kind, ...mismatch }] }, NOW));
+    }
+    const limit = { kind, percent, resets_at: reset };
+    assert.throws(() => protocol.parseUsage({ ...oldUsage(), limits: [limit, { ...limit }] }, NOW));
+  }
   assert.throws(() => protocol.parseUsage({
     limits: [
-      { kind: "weekly_all", utilization: 27, resets_at: WEEKLY },
-      { kind: "weekly_all", utilization: 27, resets_at: WEEKLY }
+      { kind: "weekly_all", percent: 27, resets_at: WEEKLY },
+      { kind: "weekly_all", percent: 27, resets_at: WEEKLY }
     ]
   }, NOW));
 });
 
+test("each window accepts exactly one utilization key", () => {
+  const keys = ["utilization", "used_percentage", "percent"];
+  for (const key of keys) {
+    const row = { [key]: 27, resets_at: WEEKLY };
+    assert.equal(protocol.parseUsage({ seven_day: row }, NOW).weekly.remainingPercent, 73);
+    assert.equal(protocol.parseUsage({ limits: [{ kind: "weekly_all", ...row }] }, NOW).weekly.remainingPercent, 73);
+    for (const other of keys.filter(candidate => candidate !== key)) {
+      for (const value of [27, null, undefined]) {
+        assert.throws(() => protocol.parseUsage({ seven_day: { ...row, [other]: value } }, NOW));
+      }
+    }
+    for (const value of [null, undefined, "27", NaN, Infinity, -1, 101]) {
+      assert.throws(() => protocol.parseUsage({ seven_day: { [key]: value, resets_at: WEEKLY } }, NOW));
+    }
+  }
+  assert.throws(() => protocol.parseUsage({ seven_day: { resets_at: WEEKLY } }, NOW));
+});
+
+test("numeric offsets and zero to nine fractional digits normalize in both schemas and windows", () => {
+  const formats = [
+    ["2026-10-03T00:00:00", "2026-09-29T03:00:00", "Z"],
+    ["2026-10-03T00:00:00", "2026-09-29T03:00:00", "+00:00"],
+    ["2026-10-03T00:00:00", "2026-09-29T03:00:00", "-00:00"],
+    ["2026-10-03T09:00:00", "2026-09-29T12:00:00", "+09:00"],
+    ["2026-10-03T05:30:00", "2026-09-29T08:30:00", "+05:30"],
+    ["2026-10-02T17:00:00", "2026-09-28T20:00:00", "-07:00"],
+    ["2026-10-02T20:30:00", "2026-09-28T23:30:00", "-03:30"]
+  ];
+  for (let precision = 0; precision <= 9; precision++) {
+    const digits = "123456789".slice(0, precision);
+    const fraction = precision ? `.${digits}` : "";
+    const milliseconds = digits.padEnd(3, "0").slice(0, 3);
+    for (const [weeklyLocal, sessionLocal, zone] of formats) {
+      const weekly = { percent: 27, resets_at: `${weeklyLocal}${fraction}${zone}` };
+      const session = { used_percentage: 10, resets_at: `${sessionLocal}${fraction}${zone}` };
+      for (const usage of [
+        { seven_day: weekly, five_hour: session },
+        { limits: [{ kind: "weekly_all", ...weekly }, { kind: "session", ...session }] }
+      ]) {
+        assert.deepEqual(protocol.parseUsage(usage, NOW), {
+          weekly: { remainingPercent: 73, resetAt: `2026-10-03T00:00:00.${milliseconds}Z` },
+          fiveHour: { remainingPercent: 90, resetAt: `2026-09-29T03:00:00.${milliseconds}Z` }
+        });
+      }
+    }
+  }
+});
+
+test("matching mixed-schema synthetic observations succeed without losing either window", async () => {
+  const weekly = "2026-10-03T00:00:00.123456+00:00";
+  const session = "2026-09-29T03:00:00.987654321+00:00";
+  const source = fetchSequence(
+    response({ uuid: ACCOUNT_A }), response([{ uuid: ORG }]),
+    response({
+      seven_day: { utilization: 27, resets_at: weekly },
+      five_hour: { utilization: 10, resets_at: session },
+      limits: [
+        { kind: "weekly_all", percent: 27, resets_at: weekly },
+        { kind: "session", percent: 10, resets_at: session }
+      ]
+    }), response({ uuid: ACCOUNT_A })
+  );
+  const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.weekly, { remainingPercent: 73, resetAt: "2026-10-03T00:00:00.123Z" });
+  assert.deepEqual(result.fiveHour, { remainingPercent: 90, resetAt: "2026-09-29T03:00:00.987Z" });
+});
+
+test("calendar and clock overflow are rejected even inside the future window", () => {
+  for (const [reset, now] of [
+    ["2026-09-31T00:00:00Z", NOW],
+    ["2026-09-31T09:00:00+09:00", NOW],
+    ["2026-02-29T00:00:00.123456Z", Date.parse("2026-02-27T00:00:00Z")],
+    ["2100-02-29T00:00:00+00:00", Date.parse("2100-02-27T00:00:00Z")],
+    ["2026-13-01T00:00:00Z", Date.parse("2026-12-29T00:00:00Z")],
+    ["2026-00-31T00:00:00Z", Date.parse("2025-12-29T00:00:00Z")],
+    ["2026-10-00T00:00:00Z", NOW],
+    ["2026-09-29T24:00:00Z", NOW],
+    ["2026-09-29T01:60:00Z", NOW],
+    ["2026-09-29T01:00:60Z", NOW]
+  ]) {
+    assert.throws(() => protocol.parseUsage({ seven_day: { percent: 2, resets_at: reset } }, now), reset);
+  }
+  for (const year of [2000, 2028]) {
+    const reset = `${year}-02-29T05:30:00.123456789+05:30`;
+    const result = protocol.parseUsage({ seven_day: { percent: 2, resets_at: reset } },
+      Date.parse(`${year}-02-27T00:00:00Z`));
+    assert.equal(result.weekly.resetAt, `${year}-02-29T00:00:00.123Z`);
+  }
+});
+
+test("malformed offsets, missing zones and excessive precision fail closed", () => {
+  for (const reset of [
+    "2026-10-03T00:00:00+24:00", "2026-10-03T00:00:00-24:00",
+    "2026-10-03T00:00:00+00:60", "2026-10-03T00:00:00-00:60",
+    "2026-10-03T00:00:00+0000", "2026-10-03T00:00:00+0:00",
+    "2026-10-03T00:00:00", "2026-10-03T00:00:00.Z",
+    "2026-10-03T00:00:00.1234567890Z", "2026-10-03T00:00:00Z\n",
+    null, 1790985600000
+  ]) {
+    assert.throws(() => protocol.parseUsage({ seven_day: { percent: 2, resets_at: reset } }, NOW));
+  }
+});
+
+test("offset normalization preserves future-only and maximum window boundaries", () => {
+  for (const [kind, legacy, last, over] of [
+    ["weekly_all", "seven_day", "2026-10-07T09:00:00+09:00", "2026-10-07T09:00:00.001+09:00"],
+    ["session", "five_hour", "2026-09-29T01:00:00-05:00", "2026-09-29T01:00:00.001-05:00"]
+  ]) {
+    for (const schema of ["legacy", "limits"]) {
+      const parse = reset => {
+        const row = { percent: 2, resets_at: reset };
+        const usage = schema === "legacy"
+          ? { seven_day: { percent: 2, resets_at: WEEKLY }, [legacy]: row }
+          : { limits: [...(kind === "session" ? [{ kind: "weekly_all", percent: 2, resets_at: WEEKLY }] : []),
+            { kind, ...row }] };
+        return protocol.parseUsage(usage, NOW);
+      };
+      assert.doesNotThrow(() => parse(last));
+      assert.doesNotThrow(() => parse("2026-09-29T09:00:00.001+09:00"));
+      for (const reset of [over, "2026-09-29T09:00:00+09:00", "2026-09-28T17:00:00-07:00",
+        "2026-09-29T08:59:59.999999999+09:00", "2026-09-29T09:00:00.000999999+09:00"]) {
+        assert.throws(() => parse(reset));
+      }
+    }
+  }
+});
+
 test("invalid, elapsed, too-distant, and nonfinite windows fail closed", () => {
   for (const reset of [
-    "2026-02-30T01:00:00Z", "2026-09-28T23:00:00Z", "2026-10-08T00:00:00Z",
-    "2026-10-03T00:00:00+00:00"
+    "2026-02-30T01:00:00Z", "2026-09-28T23:00:00Z", "2026-10-08T00:00:00Z"
   ]) {
     assert.throws(() => protocol.parseUsage({ seven_day: { utilization: 2, resets_at: reset } }, NOW));
   }

@@ -1,5 +1,8 @@
 "use strict";
 
+const POPUP_VERSION = "0.1.1";
+let workerVersion = null;
+const versionNode = document.getElementById("version");
 const statusNode = document.getElementById("status");
 const detailNode = document.getElementById("detail");
 const connectButton = document.getElementById("connect");
@@ -25,10 +28,16 @@ const labels = {
 };
 
 function render(value) {
+  if (typeof value?.workerVersion === "string" && /^\d+\.\d+\.\d+$/.test(value.workerVersion)) {
+    workerVersion = value.workerVersion;
+  }
+  versionNode.textContent = `Bridge ${POPUP_VERSION} / worker ${workerVersion ?? "unknown"}`;
   const [title, detail] = labels[value?.status] ?? labels.unavailable;
   statusNode.textContent = title;
   detailNode.textContent = value?.pendingDisconnect
     ? "Disconnect is unconfirmed. Connect retries that handshake before creating a new connection."
+    : workerVersion !== POPUP_VERSION
+      ? "Reload QuotaTempo in chrome://extensions, then reopen this popup."
     : value?.status === "unavailable" && value?.lastFailureStage
       ? `Acquisition stopped at ${value.lastFailureStage}.` : detail;
   connectButton.hidden = value?.enabled === true;

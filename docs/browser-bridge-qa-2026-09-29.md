@@ -104,6 +104,48 @@ or forwarded. The extension tests now pass 24/24 and `git diff
 --check` passes. Live diagnosis requires reloading the unpacked extension and
 one explicit Reconnect on the existing Claude Web tab.
 
+### September 30 compatibility and loaded-version follow-up
+
+The popup screenshot still showed the original generic `Unavailable` message.
+Source and staged files matched, but that alone did not establish the running
+service worker's version. Prototype 0.1.1 now identifies both popup and worker
+versions. A stale or unknown worker gets an explicit reload instruction. A lost
+content response now records `responseTimeout` and uses bounded failure backoff
+instead of silently starting another request every minute.
+
+Independent synthetic verification found two parser incompatibilities against
+[CodexBar's pinned public usage fixture](https://github.com/steipete/CodexBar/blob/25bba9b7fd9ce83c33053958f7366e23b2dc8a82/Tests/CodexBarTests/ClaudeWebUsageExtraWindowTests.swift#L281):
+
+- The fixture uses microsecond fractions with explicit UTC offsets. The prototype
+  accepted only `Z` and up to three fractional digits.
+- Legacy windows and equivalent `limits` windows coexist, with `percent` in the
+  latter. The prototype rejected their coexistence and did not recognize `percent`.
+
+These are reproducible compatibility defects, not proof of the current account's
+live failure cause. No authenticated response body was read or retained. The last
+metadata-only host check still contained an unavailable observation and no quota.
+The installed public app has not been replaced, and Desktop-only gates remain open.
+
+Both defects are fixed in 0.1.1. Numeric offsets and up to nine fractional digits
+are normalized to UTC milliseconds after strict calendar validation. Legacy and
+`limits` windows merge only when their normalized values match; conflicts and
+within-`limits` duplicates remain invalid. The parent added a native-process
+regression that failed before the parser fix and passed afterward, including an
+assertion that the stored reset is not estimated.
+
+The independent worker review found that recovery tab events could bypass a timeout
+backoff. Observation entry points now share expiration and retry-deadline checks;
+browser startup restores a pending failure alarm without shortening its deadline.
+Regression tests cover a tab event arriving before the expiration alarm, repeated
+tab events during backoff, and startup during rate-limit backoff.
+Independent read-only re-review confirmed the backoff finding is resolved, with
+17/17 worker/popup tests and no additional finding in that reviewed scope.
+
+Follow-up verification: 37/37 extension tests, 81/81 installer tests, 6/6 native-host
+process tests, JavaScript syntax checks, and `git diff --check` pass. The earlier
+commit `a8d31dc` also passed all GitHub CI/CodeQL checks. These automated results do
+not replace the pending live 0.1.1 reload, observation, and installed-app QA.
+
 Remaining release gates:
 
 1. Load the exact prototype extension, register its exact ID, and confirm a live

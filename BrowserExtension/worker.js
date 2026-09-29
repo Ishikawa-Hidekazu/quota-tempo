@@ -1,6 +1,7 @@
 "use strict";
 
 const HOST = "co.ishikawa.quotatempo";
+const WORKER_VERSION = "0.1.1";
 const ALARM = "quotaTempoPoll";
 const FIVE_MINUTES = 5 * 60 * 1000;
 const MAX_BACKOFF = 60 * 60 * 1000;
@@ -15,7 +16,7 @@ const STATUS = new Set([
 const DIAGNOSTICS = new Set([
   "accountRequest", "accountShape", "organizationsRequest", "organizationsShape",
   "usageRequest", "usageShape", "accountRecheckRequest", "accountRecheckShape",
-  "fingerprint", "extensionDispatch", "workerValidation"
+  "fingerprint", "extensionDispatch", "workerValidation", "responseTimeout"
 ]);
 let queue = Promise.resolve();
 
@@ -58,6 +59,7 @@ async function save(value) {
 
 function view(value) {
   return {
+    workerVersion: WORKER_VERSION,
     enabled: value.enabled, blocked: value.blocked, status: value.status,
     lastFailureStage: value.lastFailureStage,
     pinned: value.pin !== null, lastObservedAt: value.lastObservedAt,
@@ -240,10 +242,24 @@ async function finishObservation(value, result, observedAt = new Date(Date.now()
   await schedule(value, nextDelay(value, checked.status === "ok" && ack !== "ok" ? "unavailable" : checked.status));
 }
 
+async function observationIsDeferred(value) {
+  if (value.inFlight) {
+    if (value.inFlight.expiresAt <= Date.now()) {
+      await finishObservation(value, { status: "unavailable", diagnostic: "responseTimeout" });
+    }
+    return true;
+  }
+  if (value.failureCount > 0 && value.nextAt > Date.now()) {
+    await save(value);
+    await chrome.alarms.create(ALARM, { when: value.nextAt });
+    return true;
+  }
+  return false;
+}
+
 async function startObservation(value) {
   if (!value.enabled || value.blocked || !Number.isInteger(value.tabID)) return;
-  if (value.inFlight && value.inFlight.expiresAt > Date.now()) return;
-  value.inFlight = null;
+  if (await observationIsDeferred(value)) return;
   let tab;
   try { tab = await chrome.tabs.get(value.tabID); } catch { /* Tab no longer exists. */ }
   if (!tab || !claudeURL(tab.url)) {
@@ -280,7 +296,7 @@ async function rebind(value) {
     await stopPolling();
     return;
   }
-  if (value.inFlight && value.inFlight.expiresAt > Date.now()) return;
+  if (await observationIsDeferred(value)) return;
   let tab;
   if (Number.isInteger(value.tabID)) {
     try { tab = await chrome.tabs.get(value.tabID); } catch { /* Restored tab IDs can change. */ }
@@ -364,6 +380,7 @@ async function connect(reconnect) {
   value.tabID = tab.id;
   value.pin = null;
   value.status = "connecting";
+  value.lastFailureStage = null;
   value.failureCount = 0;
   value.nextAt = null;
   value.inFlight = null;
@@ -472,11 +489,6 @@ chrome.alarms.onAlarm.addListener(alarm => {
       return;
     }
     if (!value.enabled || value.blocked) return;
-    if (value.inFlight && value.inFlight.expiresAt <= Date.now()) {
-      value.inFlight = null;
-      value.status = "unavailable";
-      await save(value);
-    }
     if (value.recovering) await rebind(value);
     else await startObservation(value);
   });
@@ -489,7 +501,7 @@ chrome.runtime.onStartup.addListener(() => {
     if (value.pendingConnect) return;
     if (!value.enabled) return;
     value.inFlight = null;
-    value.nextAt = null;
+    if (value.failureCount === 0) value.nextAt = null;
     value.recovering = true;
     if (value.pendingRevocation?.message.status === "accountChanged") {
       await scheduleRevocationRetry(value);

@@ -92,6 +92,26 @@ await test('wrong extension origin cannot create a record', () => fixture(async 
   await assert.rejects(readFile(join(path, 'browser-observation.json')), { code: 'ENOENT' });
 }));
 
+await test('mixed provider schema and microsecond offsets reach the native store as exact resets', () => fixture(async path => {
+  await connect(path);
+  const now = Date.now();
+  const reset = new Date(now + 86400000).toISOString();
+  const providerReset = reset.replace('Z', '123+00:00');
+  const windows = parseUsage({
+    seven_day: { utilization: 27, resets_at: providerReset },
+    five_hour: null,
+    limits: [{ kind: 'weekly_all', percent: 27, resets_at: providerReset,
+      scope: null, is_active: false }]
+  }, now);
+  const message = { ...success(now), ...windows };
+  assert.equal(message.weekly.resetAt, reset);
+  assert.equal((await run(path, frame(message))).ack.ok, true);
+  const record = JSON.parse(await readFile(join(path, 'browser-observation.json')));
+  assert.equal(record.snapshot.weekly.remainingPercent, 73);
+  assert.ok(Math.abs((record.snapshot.weekly.resetAt + 978307200) * 1000 - Date.parse(reset)) < 1);
+  assert.notEqual(record.snapshot.weekly.resetAtIsEstimated, true);
+}));
+
 await test('oversized and truncated native messages are rejected', () => fixture(async path => {
   const size = Buffer.alloc(4); size.writeUInt32LE(20000);
   assert.equal((await run(path, size)).ack.error, 'inputTooLarge');

@@ -7,7 +7,7 @@
   const EIGHT_DAYS_MS = 8 * 24 * 60 * 60 * 1000;
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const UTC_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+  const RESET_ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
 
   class ObservationError extends Error {
     constructor(code) {
@@ -61,32 +61,56 @@
   }
 
   function resetAt(value, nowMs, maximumMs) {
-    if (typeof value !== "string" || !UTC_ISO.test(value)) {
+    const match = typeof value === "string" ? RESET_ISO.exec(value) : null;
+    if (!match || match[0] !== value) {
       throw new ObservationError("unavailable");
     }
-    const parsed = Date.parse(value);
+    const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+    const milliseconds = Number((match[7] ?? "").padEnd(3, "0").slice(0, 3));
+    const offsetHours = Number(match[10] ?? 0);
+    const offsetMinutes = Number(match[11] ?? 0);
+    if (offsetHours > 23 || offsetMinutes > 59) {
+      throw new ObservationError("unavailable");
+    }
+    // Validate local calendar fields before applying the offset; Date setters normalize overflow.
+    const local = new Date(0);
+    local.setUTCFullYear(year, month - 1, day);
+    local.setUTCHours(hour, minute, second, milliseconds);
+    if (local.toISOString().slice(0, 19) !== value.slice(0, 19)) {
+      throw new ObservationError("unavailable");
+    }
+    const offsetMs = (offsetHours * 60 + offsetMinutes) * 60_000 * (match[9] === "-" ? -1 : 1);
+    const parsed = local.getTime() - offsetMs;
     if (!Number.isFinite(parsed) || parsed <= nowMs || parsed > nowMs + maximumMs) {
       throw new ObservationError("unavailable");
     }
-    const normalized = new Date(parsed).toISOString();
-    if (normalized.slice(0, 19) !== value.slice(0, 19)) {
-      throw new ObservationError("unavailable");
-    }
-    return normalized;
+    return new Date(parsed).toISOString();
   }
 
   function windowValue(row, nowMs, maximumMs) {
     if (!row || typeof row !== "object" || Array.isArray(row)) {
       throw new ObservationError("unavailable");
     }
-    const raw = row.utilization ?? row.used_percentage;
-    if (row.utilization !== undefined && row.used_percentage !== undefined) {
+    const keys = ["utilization", "used_percentage", "percent"].filter(key => Object.hasOwn(row, key));
+    if (keys.length !== 1) {
       throw new ObservationError("unavailable");
     }
+    const raw = row[keys[0]];
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100) {
       throw new ObservationError("unavailable");
     }
     return { remainingPercent: 100 - raw, resetAt: resetAt(row.resets_at, nowMs, maximumMs) };
+  }
+
+  function mergedWindow(legacy, limits, nowMs, maximumMs) {
+    if (limits.length > 1) throw new ObservationError("unavailable");
+    const oldWindow = legacy == null ? null : windowValue(legacy, nowMs, maximumMs);
+    const newWindow = limits.length === 0 ? null : windowValue(limits[0], nowMs, maximumMs);
+    if (oldWindow && newWindow
+      && (oldWindow.remainingPercent !== newWindow.remainingPercent || oldWindow.resetAt !== newWindow.resetAt)) {
+      throw new ObservationError("unavailable");
+    }
+    return oldWindow ?? newWindow;
   }
 
   function parseUsage(data, nowMs) {
@@ -97,18 +121,14 @@
       throw new ObservationError("unavailable");
     }
     const buckets = { weekly_all: [], session: [] };
-    if (data.seven_day != null) buckets.weekly_all.push(data.seven_day);
-    if (data.five_hour != null) buckets.session.push(data.five_hour);
     for (const limit of data.limits ?? []) {
       if (limit && Object.hasOwn(buckets, limit.kind)) buckets[limit.kind].push(limit);
     }
-    if (buckets.weekly_all.length !== 1 || buckets.session.length > 1) {
-      throw new ObservationError("unavailable");
-    }
+    const weekly = mergedWindow(data.seven_day, buckets.weekly_all, nowMs, EIGHT_DAYS_MS);
+    if (!weekly) throw new ObservationError("unavailable");
     return {
-      weekly: windowValue(buckets.weekly_all[0], nowMs, EIGHT_DAYS_MS),
-      fiveHour: buckets.session.length === 1
-        ? windowValue(buckets.session[0], nowMs, SIX_HOURS_MS) : null
+      weekly,
+      fiveHour: mergedWindow(data.five_hour, buckets.session, nowMs, SIX_HOURS_MS)
     };
   }
 
