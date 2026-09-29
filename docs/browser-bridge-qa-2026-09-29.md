@@ -30,6 +30,7 @@ provider login, browser session, or conversation.
 | `xcrun swift-format lint --strict --recursive Sources Tests` | PASS |
 | `scripts/test-release-policy.sh` | PASS |
 | `scripts/test-app-bundle.sh --skip-launch` | PASS, app/provider launch checks intentionally skipped |
+| `scripts/test-package-reproducibility.sh` | PASS, two identical packages from a clean checkout; bundled native host signature verified |
 | Shell syntax, ShellCheck, and `git diff --check` | PASS |
 
 The native process test passes an extension-parser fixture through a fragmented
@@ -83,6 +84,9 @@ Remaining release gates:
 4. Verify a real weekly rollover obtains a new provider timestamp, never a projected one.
 5. Perform installed-app UI QA and clean-Mac/second-Mac QA, independent review,
    and normal signing/notarization/release acceptance before deployment.
+6. Resolve the provider-use review for the exact browser integration before
+   distribution. User consent and the absence of cookie extraction do not, by
+   themselves, establish provider approval for undocumented endpoints.
 
 **Decision: not ready for release.** Automated implementation QA has passed, but
 live extension-to-installed-app acquisition has not. Desktop-only reliability is
