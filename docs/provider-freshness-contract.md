@@ -79,6 +79,16 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 
 The UI must show both `Captured` and, after a failed attempt, `Last refresh attempt`. A failed attempt does not make an old snapshot newer.
 
+## Experimental browser observation (unreleased)
+
+`claudeBrowser` is an explicitly connected browser account, not an assertion that the browser and Desktop are signed in to the same account. It owns the complete Claude observation while enabled. No browser reset, balance, or fingerprint is merged with the local adapter. Disconnecting clears that ownership and restarts local acquisition without reusing the browser snapshot as its previous value.
+
+The native envelope is schema-versioned, size-bounded to 16 KiB, and restricted to a registered extension origin. Each message carries one random Chrome-profile installation ID, a connection generation, and a sequence. A value-free `connected` handshake claims a disabled or absent record; subsequent messages must match that profile and generation and increase the sequence. Disabled generations cannot reactivate themselves. The store keeps up to 128 retired-generation tombstones without truncation; further connections require explicit installer removal/re-registration. Value-free duplicate control messages can receive the same ACK without rewriting the record or advancing capture time. A success requires all three ownership fingerprints and a weekly window; resets must be provider-reported, future, and within the allowed duration. Account changes and sign-out clear comparison values. An ownership mismatch in a success message revokes old values but cannot silently rebind. Transient request failures preserve the original capture time and owner; they never make stale values current.
+
+The extension polls every five minutes with failure backoff. The app rereads only the local bridge file on its one-minute display clock and on its existing triggers. These reads do not cause extra CLI probes or browser requests. Disabling Claude disables the app's acquisition/presentation; browser polling is separately controlled by the extension's explicit connection. File corruption fails closed with a browser-source error, rather than silently selecting a possibly different CLI account. Existing live/recent/stale thresholds and elapsed-reset guards apply unchanged.
+
+See `BrowserExtension/README.md` and `PRIVACY.md`. This development contract is not a released guarantee or proof of Desktop-only acquisition.
+
 ## Claude local-observation contract
 
 QuotaTempo reads only recognized aggregate fields from Claude Desktop history and Claude Code's local usage cache before using the bounded, signed-in Claude Code `/usage` PTY path described in `product-spec.md`. It does not install or activate a status-line bridge, call an undocumented endpoint, read credentials, or require manual quota entry.

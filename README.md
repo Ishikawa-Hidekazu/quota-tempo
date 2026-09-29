@@ -199,9 +199,17 @@ Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninsta
 | --- | --- |
 | ![QuotaTempo Japanese fixture showing Codex and Claude weekly comparison](docs/assets/fixture-menu-ja.png) | ![QuotaTempo Japanese fixture showing stale and unavailable states](docs/assets/fixture-menu-ja-degraded.png) |
 
+## Experimental browser bridge (unreleased)
+
+This branch adds an **opt-in Chrome extension and native messaging host**, separate from the released Desktop/CLI path. It aims to obtain a current weekly balance and exact reset without Claude Code login when the user is signed in to Claude on the web. It is not a Desktop-only solution and does not require or use CodexBar.
+
+The extension is disabled until connected by the user. Chrome makes same-origin web requests with its own existing session; QuotaTempo never reads or exports cookie/token values. The extension pins one account and organization, checks the account before and after the request, and forwards only normalized quota metadata. The app uses the browser observation as a whole, labels its source, and never joins its reset to Desktop or CLI values. A connected Claude tab is required; there is no tab creation or foregrounding.
+
+See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). The web routes are not a stable public API. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
+
 ## Safety boundary
 
-QuotaTempo must not read token, cookie, credential, or Keychain contents. Its Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Browser session and direct OAuth access are excluded.
+QuotaTempo must not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.
 
 QuotaTempo does not route prompts, switch accounts, bypass quotas, record sessions, or silently infer unavailable provider data. Its only timing estimate is the visibly marked, non-chainable one-window Claude reset projection described above.
 

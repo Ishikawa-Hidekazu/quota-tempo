@@ -17,6 +17,9 @@
 "source.claudeLocalCache" = "Claudeローカルキャッシュ";
 "source.claudeLocalMerged" = "Claudeローカル統合";
 "source.claudeCLI" = "Claude CLI";
+"source.claudeBrowser" = "Claudeブラウザ連携";
+"claude.browser.boundary" = "連携したブラウザのアカウントです。Claude Desktopとは異なる場合があります。";
+"claude.browser.refresh.error" = "QuotaTempoブラウザ拡張の接続状態とClaudeへのログインを確認してください。";
 "codex.executable.source" = "Codexの種類";
 "codex.executable.version" = "Codexバージョン";
 "codex.executable.source.desktopBundled" = "公式デスクトップアプリ";

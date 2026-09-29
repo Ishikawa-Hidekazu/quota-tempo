@@ -62,6 +62,10 @@ Required boundaries:
 
 This adapter is implemented in the public-beta app.
 
+## Experimental browser acquisition (unreleased)
+
+An explicitly connected Chrome extension may supply `claudeBrowser` observations without Claude Code login. This is a separate web-sign-in route, not Desktop-only acquisition. The browser owns the complete observation while connected; its exact reset never augments another source's balance. The app identifies this as a browser account, which may differ from Desktop. Connection, ownership validation, failure handling, and release gates are defined in `provider-freshness-contract.md`, `PRIVACY.md`, and `../BrowserExtension/README.md`.
+
 ## Claude acquisition
 
 QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. It reads Desktop's current-account identifier solely to verify that a newer history observation and an exact cached reset belong to the same account and quota window. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local observation avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.

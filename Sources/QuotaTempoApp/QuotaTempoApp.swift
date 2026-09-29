@@ -91,6 +91,7 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   func clockAdvanced() {
+    self.refreshClaude(trigger: .scheduledRefresh, force: false, browserOnly: true)
     let now = Date()
     self.scenario = FixtureScenario(
       id: self.scenario.id,
@@ -254,7 +255,9 @@ final class LiveQuotaModel: ObservableObject {
     }
   }
 
-  private func refreshClaude(trigger: ProviderAcquisitionTrigger, force: Bool) {
+  private func refreshClaude(
+    trigger: ProviderAcquisitionTrigger, force: Bool, browserOnly: Bool = false
+  ) {
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
     guard !self.claudeRefreshInFlight else { return }
@@ -273,10 +276,21 @@ final class LiveQuotaModel: ObservableObject {
             overrides: transientSnapshots
           )
           let now = Date()
+          let browser = ClaudeBrowserStore(
+            directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
+          if let observed = browser.selectedSnapshot(now: now) {
+            continuation.resume(returning: observed == previous ? nil : observed)
+            return
+          }
+          let localPrevious = previous?.source == .claudeBrowser ? nil : previous
+          if browserOnly && previous?.source != .claudeBrowser {
+            continuation.resume(returning: nil)
+            return
+          }
           guard
             force
               || ClaudeAutomaticAdapter.shouldRefresh(
-                lastAttemptAt: previous?.lastAttemptAt,
+                lastAttemptAt: localPrevious?.lastAttemptAt,
                 now: now
               )
           else {
@@ -284,7 +298,7 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           continuation.resume(
-            returning: adapter.refresh(previous: previous, now: now, forceLiveProbe: force))
+            returning: adapter.refresh(previous: localPrevious, now: now, forceLiveProbe: force))
         }
       }
       if let snapshot {

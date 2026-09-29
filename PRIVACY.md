@@ -9,6 +9,14 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 
 QuotaTempo does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. It disables tools, hooks, MCP configuration, user setting sources, Remote Control startup, and auto-update for the probe, caps its runtime and output, requests a normal CLI exit, and terminates discovered child processes afterward. The provider-owned CLI still uses its existing sign-in, contacts Anthropic for current usage, and may update its own local usage or session metadata; its own privacy terms and network behavior apply.
 
+## Experimental opt-in browser connection
+
+The development browser bridge is separate from the released local/CLI acquisition path. Installing its Chrome extension and native-host registration does not sign you in. After you explicitly connect a Claude tab, an isolated content script requests account, organization, and aggregate usage metadata from the same `https://claude.ai` origin. Chrome supplies its existing session normally; the extension does not access cookie values, cookie databases, authentication storage, or Keychain. No page text, conversation, prompt, or transcript is inspected.
+
+These web routes are not a stable third-party API. The extension validates the account before and after each usage request, requires an unambiguous organization, and pins the selected account. It sends only normalized percentages, provider-reported reset timestamps, capture time, stable status codes, a random installation identifier, and one-way ownership fingerprints to the local native host. The browser observation is used whole; its reset is never merged with Desktop or CLI observations. The app identifies this source as **Claude browser connection**, which can represent a different account from Claude Desktop.
+
+Polling requires a Claude tab in the connected Chrome profile. It runs no more frequently than every five minutes, backs off after failures, and does not open or foreground a tab. The extension stores connection metadata and ownership fingerprints in `chrome.storage.local`, not Chrome Sync. The native host stores its origin allowlist and normalized connection record in `QuotaTempo/BrowserBridge` under Application Support. A Chrome Native Messaging manifest links the installed extension to the bundled host executable. There is no listening network port, telemetry, or outbound transfer to QuotaTempo servers. Claude's own privacy terms and ordinary network metadata apply to its web requests.
+
 ## Data stored
 
 QuotaTempo writes only a schema version plus normalized provider, percentage, duration, reset, capture-time, freshness, acquisition-state, stable error-code, Codex executable source/version fields, and optional one-way Claude ownership fingerprints under:
@@ -31,6 +39,8 @@ Sparkle checks the official HTTPS appcast at `ishikawa.co` at most once per day 
 ## Removal
 
 Turn off **Launch at login** if enabled, quit QuotaTempo, remove `QuotaTempo.app`, and optionally remove the QuotaTempo Application Support directory and the `co.ishikawa.QuotaTempo` macOS preference to erase its normalized observations, display mode, provider choices, and guide completion. Removing QuotaTempo does not alter Codex or Claude authentication.
+
+For the experimental browser bridge, disconnect in the extension, disable or remove the extension, and use `node scripts/install-browser-bridge.mjs --remove --apply` from the source checkout. This removes only its recognized native-messaging manifest, host configuration, and normalized browser observation. It does not erase local Codex/Claude observations or change either provider's sign-in. `--remove` without `--apply` is a dry run. Stop browser-bridge activity before removal; the script refuses unsafe paths and reports an incomplete rollback or cleanup explicitly.
 
 ## Upstream compatibility
 

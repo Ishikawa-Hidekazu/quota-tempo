@@ -66,10 +66,12 @@ codesign "${sign_args[@]}" --preserve-metadata=entitlements \
 codesign "${sign_args[@]}" "$sparkle/Versions/B/Autoupdate"
 codesign "${sign_args[@]}" "$sparkle/Versions/B/Updater.app"
 codesign "${sign_args[@]}" "$sparkle"
+codesign "${sign_args[@]}" "$app/Contents/MacOS/QuotaTempoBrowserHost"
 codesign "${sign_args[@]}" "$app/Contents/MacOS/QuotaTempo"
 codesign "${sign_args[@]}" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempo"
+codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempoBrowserHost"
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")"

@@ -27,6 +27,7 @@ trap cleanup EXIT
 
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$first/Contents/Info.plist")" = true
 test -x "$first/Contents/MacOS/QuotaTempo"
+test -x "$first/Contents/MacOS/QuotaTempoBrowserHost"
 test -d "$first/Contents/Resources/QuotaTempoCoreResources"
 test ! -e "$first/Contents/Resources/QuotaTempoCoreResources/Fixtures"
 test ! -e "$first/Contents/Helpers"

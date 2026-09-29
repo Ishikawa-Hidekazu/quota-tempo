@@ -611,14 +611,21 @@ public struct QuotaMenuView: View {
           self.detailRow("last.attempt", value: self.date(lastAttemptAt))
         }
         if let errorCode = plan.errorCode {
-          self.detailRow("acquisition.error", value: self.copy.error(errorCode))
+          self.detailRow(
+            "acquisition.error",
+            value: plan.source == .claudeBrowser
+              ? self.copy.text("claude.browser.refresh.error") : self.copy.error(errorCode))
         }
         if plan.freshness == .stale, plan.targetNow != nil {
           Text(self.staleComparisonHelp(plan))
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        if plan.provider == .claude {
+        if plan.source == .claudeBrowser {
+          Text(self.copy.text("claude.browser.boundary"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if plan.provider == .claude {
           Text(self.copy.text("claude.local.boundary"))
             .font(.caption)
             .foregroundStyle(.secondary)

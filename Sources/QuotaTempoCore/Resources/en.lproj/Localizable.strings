@@ -17,6 +17,9 @@
 "source.claudeLocalCache" = "Claude local cache";
 "source.claudeLocalMerged" = "Claude local sources";
 "source.claudeCLI" = "Claude CLI";
+"source.claudeBrowser" = "Claude browser connection";
+"claude.browser.boundary" = "Connected browser account. This may differ from Claude Desktop.";
+"claude.browser.refresh.error" = "Check the QuotaTempo browser extension connection and Claude sign-in.";
 "codex.executable.source" = "Codex installation";
 "codex.executable.version" = "Codex version";
 "codex.executable.source.desktopBundled" = "Official desktop app";

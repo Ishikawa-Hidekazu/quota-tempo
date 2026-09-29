@@ -262,6 +262,7 @@ public enum NormalizedSnapshotCodec {
     case .claude:
       return source == .claudeStatusLine || source == .claudeDesktopHistory
         || source == .claudeLocalCache || source == .claudeLocalMerged || source == .claudeCLI
+        || source == .claudeBrowser
     }
   }
 

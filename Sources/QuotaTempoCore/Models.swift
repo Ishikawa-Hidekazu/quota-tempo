@@ -20,6 +20,7 @@ public enum SnapshotSource: String, Codable, Sendable {
   case claudeLocalCache
   case claudeLocalMerged
   case claudeCLI
+  case claudeBrowser
 }
 
 public enum CodexExecutableSource: String, Codable, Equatable, Sendable {
