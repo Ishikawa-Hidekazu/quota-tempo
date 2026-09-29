@@ -66,11 +66,25 @@ reset schedule. This proves only that the browser has a usable signed-in UI, not
 that the experimental endpoint parser or native delivery works with that account.
 No private quota values, identifiers, page snapshots, or response bodies are included here.
 
-The browser tool refused `chrome://extensions/` under its URL policy. There was no
+On September 29, the browser tool refused `chrome://extensions/` under its URL policy. There was no
 CDP, OS-automation, alternate-browser, or policy workaround. Loading the unpacked
 prototype requires a user action. The extension has not been installed or connected,
 native-host registration has not been applied, and the installed QuotaTempo app has
 not been replaced. Test bundles are local development artifacts, not notarized releases.
+
+### September 30 registration follow-up
+
+The owner supplied the unpacked extension ID. The staged extension still matches
+the reviewed source, and the native host passes signature verification. Installer
+dry run and explicit application succeeded; a metadata-only read-back confirms
+the same single permitted extension origin in both registration files, pointing
+to the local prototype bundle. The installed public app is unchanged.
+
+GitHub CI and CodeQL for commit `7a90c21` all passed. The existing Claude usage
+page remains available through the background Chrome extension connection.
+No native observation file existed at the registration check: explicit Connect
+and real extension-to-host delivery are still unverified. This is setup evidence,
+not acquisition or installed-app acceptance.
 
 Remaining release gates:
 
