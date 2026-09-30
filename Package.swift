@@ -21,6 +21,11 @@ let package = Package(
       name: "QuotaTempoCore",
       exclude: ["Resources"]
     ),
+    // Synthetic-only acquisition candidate; no application product depends on it.
+    .target(
+      name: "QuotaTempoDesktopCandidate",
+      dependencies: ["QuotaTempoCore"]
+    ),
     .executableTarget(
       name: "QuotaTempoApp",
       dependencies: [
@@ -48,6 +53,10 @@ let package = Package(
     .testTarget(
       name: "QuotaTempoAppTests",
       dependencies: ["QuotaTempoApp", "QuotaTempoCore"]
+    ),
+    .testTarget(
+      name: "QuotaTempoDesktopCandidateTests",
+      dependencies: ["QuotaTempoDesktopCandidate", "QuotaTempoCore"]
     ),
   ]
 )

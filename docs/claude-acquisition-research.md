@@ -373,6 +373,105 @@ freshness, expiry, and failure handling can first be prepared with synthetic
 fixtures, without protected-store access. Live Desktop-only acquisition and a
 fresh weekly rollover remain separate release gates.
 
+### Offline candidate implementation, September 30
+
+`Sources/QuotaTempoDesktopCandidate` now contains the first **offline-only**
+implementation of the Desktop candidate. It is a separate SwiftPM target with
+no executable or library product and no application dependency. It cannot obtain
+real usage: there is no credential reader, Keychain access, cookie reader,
+network transport, timer, configuration change, or installed-app integration.
+The current privacy contract and the permission gates above remain unchanged.
+
+The pure decoder accepts bounded usage JSON and emits only normalized weekly
+and optional five-hour windows. It rejects missing weekly resets, invalid values,
+invalid calendar dates, expired resets, oversized input, and unexpected types.
+It neither extrapolates reset dates nor combines observations across sources.
+
+The coordinator prepares request admission and response acceptance separately:
+
+| Boundary | Candidate behavior |
+| --- | --- |
+| Consent | No request permit before opt-in; denial cancels work and clears values. No permission prompt exists in this module. |
+| Identity | Account and organization fingerprints are both required. An independently verified server profile must match the current request context. No fallback to another cached account. |
+| In-flight ownership | A request records an opaque context generation. Changes revoke pending work; duplicate or late replies cannot overwrite newer work. |
+| Credential lifecycle | Expiry and missing scope stop admission. A 401/403 waits for a different Desktop-managed generation rather than refreshing credentials. |
+| Freshness | Success requires a recent server Date, no positive cache age, valid current resets, and receipt before the 30-second deadline. Source time is not advanced by rereads or failures. |
+| Rollover | An elapsed reset is no longer displayable. Only a newly received valid reset restores the plan; no seven-day arithmetic exists. |
+| Recovery | Attempts are at least 60 seconds apart. Transient errors back off to 15 minutes. Retry-After is a minimum and survives account/permission changes, including a cancelled request's late 429. Successful polling waits five minutes, or the upcoming weekly reset if earlier, without shortening a service backoff. |
+
+This is not an identity or transport implementation. A future authorized reader
+must generate a new opaque revision on sign-out, account/organization switching
+(including A-to-B-to-A), or credential replacement, **without exposing credentials
+or credential hashes**. A revision must remain stable between actual changes;
+generating a UUID on every poll would bypass authentication rejection. The future
+transport must bind profile and usage requests
+to that exact credential lease, reread the current context after both requests,
+disable redirects and response caching, bound response bytes while receiving them,
+and cancel overdue I/O. Caller-supplied metadata in synthetic tests does not prove
+any of those live properties. Server clock skew and provider response headers
+also require runtime verification; strict rejection is not an availability claim.
+
+The dependency guard `scripts/test-desktop-candidate-isolation.mjs` checks the
+manifest and rejects direct or transitive inclusion in any shipped product.
+CI runs it alongside the candidate's synthetic tests. Do not remove this guard
+or add a production caller merely because those tests pass.
+
+Validation commands (use an already available, licensed Swift toolchain):
+
+```bash
+swift test --filter DesktopUsage
+node scripts/test-desktop-candidate-isolation.mjs
+xcrun swift-format lint --strict --recursive Sources Tests
+```
+
+Next integration gate: decide provider permission and explicit product opt-in,
+then implement the isolated protected-store/transport boundary and verify actual
+Desktop-only acquisition. Runtime UI, natural rollover, Desktop credential
+renewal, and a second Mac remain unverified. No public release or installed
+preview replacement is part of this offline implementation.
+
+#### Offline QA result
+
+The independent code review found and corrected race/freshness defects before
+closeout: a 429 concurrent with account switching or clock rollback lost its
+service delay; an optional five-hour reset expiring in transit discarded a valid
+weekly observation; display expiry left the state current; and a temporary
+missing identity obscured a still-unresolved authentication refusal. Regression
+tests cover each case, including cancelled replies and actual A-to-B-to-A input
+transitions. These are synthetic implementation findings, not claimed causes of
+the installed product's acquisition failure.
+
+| Check | Result |
+| --- | --- |
+| Full Swift suite | PASS, 362 tests / 12 suites; 61 new candidate tests |
+| Browser extension fixtures | PASS, 216 tests |
+| Browser installer fixtures | PASS, 81 tests; isolated synthetic HOME |
+| Native-host integration fixtures | PASS, 7 tests; no real browser/profile |
+| Strict Swift format | PASS |
+| Product-dependency isolation | PASS, current manifest and four intentional leak fixtures |
+| Release/distribution policy | PASS |
+| Bundle build/verification | PASS; launch/window/provider-trigger checks skipped; temporary artifacts removed |
+| Live Desktop authentication/usage | NOT RUN; permission and product gates remain open |
+
+The selected Xcode could not run because its license had not been accepted.
+No agreement or global toolchain setting was changed. Validation used the
+already installed Command Line Tools (Swift 6.3.2). Its Testing framework needed
+explicit search/runtime paths; this per-command setup passed the full suite:
+
+```bash
+env DEVELOPER_DIR=/Library/Developer/CommandLineTools swift test \
+  -Xswiftc -F/Library/Developer/CommandLineTools/Library/Developer/Frameworks \
+  -Xlinker -F/Library/Developer/CommandLineTools/Library/Developer/Frameworks \
+  -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/Frameworks \
+  -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib
+```
+
+No framework-path workaround is committed to the package or CI. One local
+manifest-check attempt timed out while SwiftPM was holding its build lock;
+running it after the build completed passed. The coordinator is in-memory only;
+production integration would also need a durable nonsecret service-backoff
+deadline so restarting the app cannot evade a rate limit.
+
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift
 [codenotch-caller]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeOAuthProvider.swift
