@@ -1,6 +1,8 @@
 # Desktop quota-reader permission inquiry
 
-Status: prepared, not sent. No provider permission has been received.
+Status: prepared, not sent. No provider permission has been received or inferred.
+The inquiry remains a reference, not an outgoing request. An explicitly authorized
+local diagnostic and public distribution are separate decisions.
 
 Suggested subject: Permission for a local, read-only Claude Desktop quota viewer
 
@@ -31,8 +33,9 @@ viewers' implementations as permission.
    supplies subscription utilization, exact reset timestamps, and account
    ownership to a local application without a separate Claude Code sign-in?
 
-This integration is not shipped. Implementation tests use synthetic stores and
-mock responses; live protected-store acquisition remains gated on this decision.
+This integration is not shipped. Public distribution remains a separate decision.
+The isolated local diagnostic now has a distinct owner-authorized experiment
+mode; it does not set `providerApproved` or enable a shipped application path.
 
 Official inquiry route: the authentication-use section of
 [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)

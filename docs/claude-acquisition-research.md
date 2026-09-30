@@ -348,8 +348,10 @@ alone guarantee a fresh observation. App patching, integrity disablement, debug
 ports, automatic UI navigation, and renewing another client's authentication are
 excluded from this proposal.
 
-Before a protected-store experiment, complete provider-permission and
-product-consent decisions. The prototype must then enforce:
+The original protected-store experiment gate required provider-permission and
+product-consent decisions. The explicit local-experiment decision recorded below
+supersedes the provider-permission prerequisite for that local diagnostic only,
+not public distribution. The prototype must enforce:
 
 1. **No CLI/browser dependency:** test Desktop Chat-only, Code Local, and Cowork
    separately, without a standalone CLI credential or browser bridge.
@@ -561,6 +563,67 @@ executable. Passing these tests cannot change the installed application's displa
 
 [desktop-cache-selection]: https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeDesktopAuthStore%2BTokenCache.swift
 [desktop-usage-client]: https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeUsageClient.swift
+
+### Explicit local Desktop experiment, September 30
+
+The isolated diagnostic now supports explicitly authorized local testing of the
+Desktop-authentication path. `localExperimentAuthorized` is separate from
+`providerApproved`; local consent never asserts provider permission.
+The candidate remains outside every shipped product and is still off by default.
+Public distribution, natural rollover and second-Mac acceptance remain unverified.
+
+A manually linked, locally signed diagnostic performs one bounded acquisition,
+with no browser/CLI fallback, credential renewal, provider-store writes or raw
+response output. Its two explicit consent arguments are required before protected
+reads; the output allowlist contains only state, typed failure codes and normalized
+quota values/timestamps. Normal builds and tests do not execute the live probe.
+
+The first signed noninteractive run stopped at `permissionRequired`, with no
+accepted observation or provider request. A separate metadata-only check found
+the default Keychain unlocked; this is not a CLI/browser login failure. No denial
+was bypassed and no automatic retry or system dialog was initiated.
+
+The same diagnostic also offers a separate `--request-keychain-access` option for
+the owner to launch manually. This permits the ordinary macOS access dialog for
+the same signed helper and retains only the derived key in memory for that one
+run. It does not change Keychain ACLs directly or request a Claude login. Rejection
+stops the run; polling cannot invoke this mode. Interactive acceptance and actual
+Desktop-only usage remain pending until the owner performs that step.
+
+Build locally (no protected reads or provider requests):
+
+```bash
+node scripts/build-desktop-candidate-local-probe.mjs
+node scripts/test-desktop-local-probe.mjs
+```
+
+The builder uses SwiftPM's current output-file maps, not object-file globs, to
+exclude artifacts left by older branches. The initial glob-based link failed
+because it included obsolete cache-reader objects; no live execution occurred.
+Signing is an explicit separate step. Do not rebuild or change the helper identity
+between permission approval and a follow-up noninteractive acceptance check.
+
+The owner can manually run `scripts/desktop-local-test.command` after the exact
+helper is signed and verified. The wrapper does not build, sign, change security
+settings, restart an application, or write results. It verifies the signature and
+invokes the explicit interactive diagnostic. This is not a production installer.
+
+Independent lifecycle review also identified a duplicate-refresh result that
+could clear a future caller's display. The service now returns an explicit
+`unchangedInFlight` disposition; callers must preserve display state while the
+original acquisition completes. Success, HTTP failure, credential-load failure,
+retained observations and consent withdrawal have regression coverage.
+
+Two integration findings remain open: temporary Keychain lock conditions must
+eventually be distinguished from access denial without retrying a denied ACL,
+and a wall-clock rollback can keep the pure coordinator blocked until the earlier
+maximum time is reached. Neither is evidence of a successful real credential
+renewal or background lifecycle. They must be resolved before unattended release.
+
+Validation: 483 Swift tests / 17 suites passed; strict format, release and
+distribution policy, product-dependency isolation, and eight inert diagnostic
+argument cases passed. Independent read-only review found no additional required
+change in the diagnostic. No interactive access request was run by the agent.
 
 #### First offline checkpoint QA result
 

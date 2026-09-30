@@ -19,10 +19,19 @@ enum DesktopCredentialError: Error, Equatable {
 struct DesktopAccessApproval: Sendable {
   var userConsented = false
   var providerApproved = false
+  // Explicit permission for an isolated local experiment is not provider approval.
+  // No shipped product may depend on this candidate or inherit this opt-in.
+  var localExperimentAuthorized = false
+
+  var allowsAccess: Bool {
+    userConsented && (providerApproved || localExperimentAuthorized)
+  }
 
   func requireAccess() throws {
     guard userConsented else { throw DesktopCredentialError.consentRequired }
-    guard providerApproved else { throw DesktopCredentialError.providerApprovalRequired }
+    guard providerApproved || localExperimentAuthorized else {
+      throw DesktopCredentialError.providerApprovalRequired
+    }
   }
 }
 

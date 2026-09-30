@@ -9,6 +9,16 @@ protocol DesktopCredentialReading: Sendable {
 extension DesktopCredentialReader: DesktopCredentialReading {}
 
 struct DesktopUsageCandidateResult: Sendable {
+  enum Disposition: Equatable, Sendable {
+    // Apply the result, including clearing the display when observation is nil.
+    case replaceDisplay
+    // Preserve the display; metadata below is not an acquisition result. The
+    // original refresh caller will receive the result without sharing cancellation.
+    case unchangedInFlight
+  }
+
+  // Callers must check this before applying state, observation, or credentialError.
+  let disposition: Disposition
   let state: DesktopUsageState
   let observation: DesktopUsageObservation?
   let credentialError: DesktopCredentialError?
@@ -46,8 +56,7 @@ actor DesktopUsageCandidateService {
     task?.cancel()
     task = nil
     refreshID = nil
-    coordinator.setPermission(
-      approval.userConsented && approval.providerApproved ? .allowed : .denied)
+    coordinator.setPermission(approval.allowsAccess ? .allowed : .denied)
     await reader.setApproval(approval)
   }
 
@@ -56,7 +65,7 @@ actor DesktopUsageCandidateService {
     do { try approval.requireAccess() } catch {
       return result(error: error as? DesktopCredentialError)
     }
-    guard refreshID == nil else { return result() }
+    guard refreshID == nil else { return result(disposition: .unchangedInFlight) }
     let id = UUID()
     let revision = approvalRevision
     refreshID = id
@@ -112,10 +121,12 @@ actor DesktopUsageCandidateService {
   }
 
   private func result(
+    disposition: DesktopUsageCandidateResult.Disposition = .replaceDisplay,
     error: DesktopCredentialError? = nil, observation: DesktopUsageObservation? = nil
   ) -> DesktopUsageCandidateResult {
     DesktopUsageCandidateResult(
-      state: coordinator.state, observation: observation, credentialError: error,
+      disposition: disposition, state: coordinator.state, observation: observation,
+      credentialError: error,
       nextAllowedAt: coordinator.nextAllowedAt)
   }
 }

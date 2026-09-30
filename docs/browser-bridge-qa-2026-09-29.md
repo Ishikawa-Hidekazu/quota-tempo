@@ -399,3 +399,9 @@ alternative browser-control action was used. The owner was asked to open one
 Claude usage tab and leave it open. Recovery remains unverified until a new
 native observation arrives. No extension, native host, or installed app was
 replaced. Browser tab-dependent recovery is not Desktop-only acquisition.
+
+The owner subsequently opened the official Usage page. A fresh native observation
+reached the app, and a later observation advanced again without a manual refresh.
+The displayed weekly utilization matched the normalized app record at the first
+checkpoint. This verifies recovery with the tab available, not operation after
+tab closure or a Desktop-only source. No browser settings or login were changed.

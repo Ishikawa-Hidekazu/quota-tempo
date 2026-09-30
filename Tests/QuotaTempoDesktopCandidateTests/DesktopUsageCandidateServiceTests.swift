@@ -6,6 +6,23 @@ import Testing
 private let serviceNow = Date(timeIntervalSince1970: 1_900_000_000)
 private func serviceClock() -> Date { serviceNow }
 
+private final class SyntheticServiceClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var instant = serviceNow
+
+  func now() -> Date {
+    lock.lock()
+    defer { lock.unlock() }
+    return instant
+  }
+
+  func advance(by interval: TimeInterval) {
+    lock.lock()
+    defer { lock.unlock() }
+    instant = instant.addingTimeInterval(interval)
+  }
+}
+
 private actor SyntheticDesktopReader: DesktopCredentialReading {
   let lease: DesktopCredentialLease
   var stillCurrent = true
@@ -70,16 +87,35 @@ private actor SyntheticFetchGate {
   }
 }
 
-private func successfulReply(_ request: DesktopUsageRequest) -> DesktopUsageReply {
-  let reset = ISO8601DateFormatter().string(from: serviceNow.addingTimeInterval(604_700))
+private func successfulReply(_ request: DesktopUsageRequest, utilization: Int = 25)
+  -> DesktopUsageReply
+{
+  let reset = ISO8601DateFormatter().string(from: request.startedAt.addingTimeInterval(604_700))
   return .response(
-    status: 200, profileOwner: request.context.owner, serverDate: serviceNow,
+    status: 200, profileOwner: request.context.owner, serverDate: request.startedAt,
     cacheAge: 0, retryAfter: nil,
-    body: Data("{\"seven_day\":{\"utilization\":25,\"resets_at\":\"\(reset)\"}}".utf8))
+    body: Data("{\"seven_day\":{\"utilization\":\(utilization),\"resets_at\":\"\(reset)\"}}".utf8))
 }
 
 @Suite("Desktop candidate service")
 struct DesktopUsageCandidateServiceTests {
+  @Test func explicitLocalExperimentDoesNotImplyProviderApproval() async throws {
+    let reader = try SyntheticDesktopReader()
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+      await counter.increment()
+      return successfulReply(request)
+    }
+    let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
+    #expect(!approval.providerApproved)
+    await service.setApproval(approval)
+    #expect(await service.refresh().state == .current)
+    #expect(await counter.count == 1)
+    await service.setApproval(DesktopAccessApproval(localExperimentAuthorized: true))
+    #expect(await service.refresh().credentialError == .consentRequired)
+    #expect(await counter.count == 1)
+  }
+
   @Test func preCancelledCallerDoesNotReadCredentialsOrStartHTTP() async throws {
     let reader = try SyntheticDesktopReader()
     let counter = SyntheticFetchCounter()
@@ -281,7 +317,8 @@ struct DesktopUsageCandidateServiceTests {
     }
   }
 
-  @Test func duplicateRefreshDoesNotCreateAnotherRequest() async throws {
+  @Test(arguments: [true, false])
+  func duplicateRefreshReportsUnchangedInFlight(succeeds: Bool) async throws {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
@@ -289,16 +326,104 @@ struct DesktopUsageCandidateServiceTests {
       request, _ in
       await counter.increment()
       await gate.pause()
-      return successfulReply(request)
+      return succeeds ? successfulReply(request) : .networkFailure
     }
     await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     let pending = Task { await service.refresh() }
     await gate.waitForEntry()
     let overlapping = await service.refresh()
+    #expect(overlapping.disposition == .unchangedInFlight)
+    #expect(overlapping.state == .requesting)
     #expect(overlapping.observation == nil)
+    #expect(overlapping.credentialError == nil)
     #expect(await counter.count == 1)
+    #expect(await reader.loads == 1)
+    #expect(await reader.contextReads == 0)
     await gate.release()
-    #expect(await pending.value.state == .current)
+    let completed = await pending.value
+    #expect(completed.disposition == .replaceDisplay)
+    #expect(completed.state == (succeeds ? .current : .temporaryFailure))
+    #expect((completed.observation != nil) == succeeds)
+    #expect(await counter.count == 1)
+  }
+
+  @Test(arguments: [true, false])
+  func overlapPreservesPriorObservationUntilAcquisitionCompletes(succeeds: Bool) async throws {
+    let reader = try SyntheticDesktopReader()
+    let gate = SyntheticFetchGate()
+    let counter = SyntheticFetchCounter()
+    let clock = SyntheticServiceClock()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() },
+      fetch: { request, _ in
+        await counter.increment()
+        if request.startedAt == serviceNow { return successfulReply(request) }
+        await gate.pause()
+        return succeeds ? successfulReply(request, utilization: 40) : .networkFailure
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    let first = await service.refresh()
+    #expect(first.disposition == .replaceDisplay)
+    let initialObservation = try #require(first.observation)
+    var displayed: DesktopUsageObservation? = initialObservation
+    clock.advance(by: 300)
+
+    let pending = Task { await service.refresh() }
+    await gate.waitForEntry()
+    let overlapping = await service.refresh()
+    #expect(overlapping.disposition == .unchangedInFlight)
+    #expect(overlapping.observation == nil)
+    switch overlapping.disposition {
+    case .replaceDisplay: displayed = overlapping.observation
+    case .unchangedInFlight: break
+    }
+    #expect(displayed == initialObservation)
+    #expect(await counter.count == 2)
+    #expect(await reader.loads == 2)
+    #expect(await reader.contextReads == 1)
+
+    await gate.release()
+    let completed = await pending.value
+    #expect(completed.disposition == .replaceDisplay)
+    #expect(completed.state == (succeeds ? .current : .temporaryFailure))
+    switch completed.disposition {
+    case .replaceDisplay: displayed = completed.observation
+    case .unchangedInFlight: break
+    }
+    #expect(displayed?.values.weekly.remainingPercent == (succeeds ? 60 : 75))
+    #expect(displayed?.capturedAt == (succeeds ? clock.now() : serviceNow))
+    let cached = await service.refresh()
+    #expect(cached.disposition == .replaceDisplay)
+    #expect(cached.observation == displayed)
+    #expect(await counter.count == 2)
+  }
+
+  @Test(arguments: [DesktopCredentialError.permissionRequired, .expired])
+  func overlapDuringCredentialFailureDoesNotHideTerminalError(error: DesktopCredentialError)
+    async throws
+  {
+    let gate = SyntheticFetchGate()
+    let reader = try SyntheticDesktopReader(loadGate: gate)
+    await reader.fail(error)
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+      await counter.increment()
+      return .networkFailure
+    }
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    let pending = Task { await service.refresh() }
+    await gate.waitForEntry()
+    let overlapping = await service.refresh()
+    #expect(overlapping.disposition == .unchangedInFlight)
+    #expect(overlapping.observation == nil)
+    #expect(overlapping.credentialError == nil)
+    await gate.release()
+    let completed = await pending.value
+    #expect(completed.disposition == .replaceDisplay)
+    #expect(completed.credentialError == error)
+    #expect(completed.observation == nil)
+    #expect(await reader.loads == 1)
+    #expect(await counter.count == 0)
   }
 
   @Test func revocationCancelsFetchAndRejectsItsResult() async throws {
@@ -313,9 +438,16 @@ struct DesktopUsageCandidateServiceTests {
     await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     let pending = Task { await service.refresh() }
     await gate.waitForEntry()
+    #expect(await service.refresh().disposition == .unchangedInFlight)
     await service.setApproval(DesktopAccessApproval())
+    let denied = await service.refresh()
+    #expect(denied.disposition == .replaceDisplay)
+    #expect(denied.state == .permissionDenied)
+    #expect(denied.credentialError == .consentRequired)
+    #expect(denied.observation == nil)
     await gate.release()
     let result = await pending.value
+    #expect(result.disposition == .replaceDisplay)
     #expect(result.observation == nil)
     #expect(result.state == .permissionDenied)
   }
