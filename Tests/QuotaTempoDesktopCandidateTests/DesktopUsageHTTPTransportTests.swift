@@ -10,6 +10,42 @@ struct DesktopUsageHTTPTransportTests {
   private let organization = "22222222-2222-4222-8222-222222222222"
   private let other = "33333333-3333-4333-8333-333333333333"
 
+  @Test(
+    "Transport diagnostics expose fixed stages, not response values",
+    arguments: ["success", "profile", "metadata", "usage", "foreign", "network"])
+  func boundedDiagnostics(_ scenario: String) async throws {
+    let fixture = try fixture()
+    let recorder = DiagnosticRecorder()
+    let transport = DesktopUsageHTTPTransport(
+      testProtocol: StubProtocol.self, now: { now }, diagnostic: { recorder.append($0) })
+    let expected: [DesktopUsageHTTPTransport.Diagnostic]
+    switch scenario {
+    case "profile":
+      StubProtocol.state.install([response(body: Data("private-synthetic-body".utf8))])
+      expected = [.profileReceived, .profilePayloadInvalid]
+    case "metadata":
+      StubProtocol.state.install([response(body: profileBody(), headers: ["Age": "60"])])
+      expected = [.profileReceived, .profileMetadataInvalid]
+    case "usage":
+      StubProtocol.state.install([profile(), response(body: Data("private-synthetic-body".utf8))])
+      expected = [.profileReceived, .usageReceived, .usagePayloadInvalid]
+    case "foreign":
+      StubProtocol.state.install([profile(account: other)])
+      expected = [.profileReceived, .profileIdentityMismatch]
+    case "network":
+      StubProtocol.state.install([.failure(.notConnectedToInternet)])
+      expected = [.exchangeFailed]
+    default:
+      StubProtocol.state.install([profile(), response(body: usageBody())])
+      expected = [.profileReceived, .usageReceived, .usageAccepted]
+    }
+    _ = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    #expect(recorder.events == expected)
+    let output = recorder.events.map(\.rawValue).joined()
+    #expect(!output.contains(account))
+    #expect(!output.contains("private-synthetic"))
+  }
+
   @Test("Profile and usage use the same synthetic lease and only the fixed GET endpoints")
   func successfulAcquisition() async throws {
     let fixture = try fixture()
@@ -524,6 +560,21 @@ struct DesktopUsageHTTPTransportTests {
   }
 
   private enum FixtureError: Error { case unexpectedReply }
+}
+
+private final class DiagnosticRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [DesktopUsageHTTPTransport.Diagnostic] = []
+  func append(_ value: DesktopUsageHTTPTransport.Diagnostic) {
+    lock.lock()
+    defer { lock.unlock() }
+    values.append(value)
+  }
+  var events: [DesktopUsageHTTPTransport.Diagnostic] {
+    lock.lock()
+    defer { lock.unlock() }
+    return values
+  }
 }
 
 private enum StubAction: Sendable {

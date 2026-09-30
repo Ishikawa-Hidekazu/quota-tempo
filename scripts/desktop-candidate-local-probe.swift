@@ -37,20 +37,26 @@ struct DesktopCandidateLocalProbe {
     }
     // This branch is for the owner to launch manually, never a timer/retry path.
     // The system dialog authorizes this same signed helper; it is not a login.
-    let service: DesktopUsageCandidateService
+    let reader: DesktopCredentialReader
     if interactive {
       do {
         let material = try InteractiveKeyMaterial()
-        service = DesktopUsageCandidateService(
-          reader: DesktopCredentialReader(keyReader: { material.key() }))
+        reader = DesktopCredentialReader(keyReader: { material.key() })
       } catch {
         watchdog.cancel()
         print("{\"status\":\"keychain_access_not_granted\"}")
         return
       }
     } else {
-      service = DesktopUsageCandidateService()
+      reader = DesktopCredentialReader()
     }
+    let diagnostics = TransportDiagnostics()
+    let service = DesktopUsageCandidateService(
+      reader: reader,
+      fetch: { request, lease in
+        await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
+          .fetch(request: request, lease: lease)
+      })
     await service.setApproval(
       DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true))
     let result = await service.refresh()
@@ -60,8 +66,12 @@ struct DesktopCandidateLocalProbe {
       "desktopOnly": true,
       "providerPermissionConfirmed": false,
       "observationAccepted": result.observation != nil,
+      "transportStages": diagnostics.stages(),
     ]
-    if let error = result.credentialError { fields["credentialError"] = errorCode(error) }
+    if let error = result.credentialError {
+      fields["credentialError"] = errorCode(error)
+      if let stage = await reader.lastFailureStage { fields["credentialStage"] = stage.rawValue }
+    }
     let formatter = ISO8601DateFormatter()
     if let next = result.nextAllowedAt { fields["nextAllowedAt"] = formatter.string(from: next) }
     if let observation = result.observation {
@@ -97,6 +107,21 @@ struct DesktopCandidateLocalProbe {
     case .missingScope: "missingScope"
     case .changedDuringRead: "changedDuringRead"
     }
+  }
+}
+
+private final class TransportDiagnostics: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [DesktopUsageHTTPTransport.Diagnostic] = []
+  func append(_ value: DesktopUsageHTTPTransport.Diagnostic) {
+    lock.lock()
+    defer { lock.unlock() }
+    if values.count < 16 { values.append(value) }
+  }
+  func stages() -> [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    return values.map(\.rawValue)
   }
 }
 

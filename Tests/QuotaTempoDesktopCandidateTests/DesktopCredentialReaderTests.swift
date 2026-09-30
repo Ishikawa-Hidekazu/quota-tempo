@@ -139,8 +139,10 @@ struct DesktopCredentialReaderTests {
       _ = try await reader.load(now: readerNow)
       Issue.record("Deleted V2 accepted")
     } catch { #expect(error as? DesktopCredentialError == .invalidStore) }
+    #expect(await reader.lastFailureStage == .configuration)
     try fixture.write()
     let restored = try await reader.load(now: readerNow)
+    #expect(await reader.lastFailureStage == nil)
     // A temporarily deleted identical credential cannot bypass a 401 rejection.
     #expect(restored.context.generation == first.context.generation)
     #expect(restored !== first)
@@ -188,6 +190,7 @@ struct DesktopCredentialReaderTests {
       } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
     }
     #expect(count.count == 1)
+    #expect(await reader.lastFailureStage == .keychain)
     await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     _ = try? await reader.load(now: readerNow)
     #expect(count.count == 2)

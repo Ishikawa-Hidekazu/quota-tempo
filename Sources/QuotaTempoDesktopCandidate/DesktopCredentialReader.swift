@@ -39,6 +39,18 @@ struct DesktopSelectedCredential: Sendable, CustomStringConvertible, CustomDebug
 }
 
 enum DesktopCredentialSelector {
+  private struct Rank: Comparable {
+    let productionFullScope: Int
+    let fullScope: Int
+    let scopeCount: Int
+    let expiresAt: Date
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+      (lhs.productionFullScope, lhs.fullScope, lhs.scopeCount, lhs.expiresAt)
+        < (rhs.productionFullScope, rhs.fullScope, rhs.scopeCount, rhs.expiresAt)
+    }
+  }
+
   private struct Entry: Decodable {
     let token: String
     let expiresAt: Double
@@ -70,7 +82,7 @@ enum DesktopCredentialSelector {
     else {
       throw DesktopCredentialError.invalidStore
     }
-    var candidates: [(credential: DesktopSelectedCredential, preferred: Bool)] = []
+    var candidates: [(credential: DesktopSelectedCredential, rank: Rank)] = []
     var sawExpired = false
     for key in cache.container.allKeys {
       guard let identity = parseKey(key.stringValue), identity.account == account,
@@ -92,19 +104,24 @@ enum DesktopCredentialSelector {
       else {
         throw DesktopCredentialError.invalidStore
       }
+      let fullScope = identity.scopes.contains("user:inference")
       candidates.append(
         (
           DesktopSelectedCredential(owner: owner, expiresAt: expiry, token: token),
-          identity.client == "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-            && identity.scopes.contains("user:inference")
+          Rank(
+            productionFullScope: identity.client == "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+              && fullScope ? 1 : 0,
+            fullScope: fullScope ? 1 : 0, scopeCount: identity.scopes.count, expiresAt: expiry)
         ))
     }
-    let preferred = candidates.filter(\.preferred)
-    let eligible = preferred.isEmpty ? candidates : preferred
-    guard let first = eligible.first?.credential else {
+    guard let best = candidates.map(\.rank).max() else {
       throw sawExpired ? DesktopCredentialError.expired : .identityUnavailable
     }
-    // Never pick one of conflicting credentials by dictionary order or longest TTL.
+    // Rank only after exact account/org/audience/scope admission. Prefer Desktop's
+    // production full-scope login, then full scopes, scope richness, and finally
+    // expiry. Never resolve an equal-ranked conflict by dictionary iteration.
+    let eligible = candidates.filter { $0.rank == best }
+    let first = eligible[0].credential
     guard
       eligible.allSatisfy({
         $0.credential.token == first.token && $0.credential.expiresAt == first.expiresAt
@@ -140,6 +157,11 @@ enum DesktopCredentialSelector {
 }
 
 actor DesktopCredentialReader {
+  enum FailureStage: String, Sendable {
+    case configuration, keychain, organization, decryption, selection, revalidation
+  }
+
+  private(set) var lastFailureStage: FailureStage?
   private let directory: URL
   private let keyReader: @Sendable () throws -> Data
   private var approval = DesktopAccessApproval()
@@ -164,12 +186,15 @@ actor DesktopCredentialReader {
     self.approval = approval
     permissionRefused = false
     lastCredential = nil
+    lastFailureStage = nil
     invalidate()
   }
 
   func load(now: Date) throws -> DesktopCredentialLease {
     try approval.requireAccess()
     guard !permissionRefused else { throw DesktopCredentialError.permissionRequired }
+    var stage = FailureStage.configuration
+    lastFailureStage = nil
     do {
       let url = directory.appendingPathComponent("config.json")
       let file = try DesktopProtectedFile.read(url, maximumBytes: 4 * 1_048_576)
@@ -178,15 +203,20 @@ actor DesktopCredentialReader {
         let encrypted = Data(base64Encoded: config.cache)
       else { throw DesktopCredentialError.invalidStore }
       _ = try DesktopIdentity.canonicalUUID(config.account)
+      stage = .keychain
       var key = try keyReader()
       defer { key.resetBytes(in: key.startIndex..<key.endIndex) }
+      stage = .organization
       let organization = try DesktopOrganizationReader.read(directory: directory) {
         try DesktopSafeStorage.decrypt($0, key: key)
       }
+      stage = .decryption
       var plaintext = try DesktopSafeStorage.decrypt(encrypted, key: key)
       defer { plaintext.resetBytes(in: plaintext.startIndex..<plaintext.endIndex) }
+      stage = .selection
       let selected = try DesktopCredentialSelector.select(
         plaintext, account: config.account, organization: organization.organization, now: now)
+      stage = .revalidation
       guard try DesktopProtectedFile.stamp(url, maximumBytes: 4 * 1_048_576) == file.stamp else {
         throw DesktopCredentialError.changedDuringRead
       }
@@ -208,6 +238,7 @@ actor DesktopCredentialReader {
       previousOrganization = organization
       return lease
     } catch {
+      lastFailureStage = stage
       invalidate()
       if let error = error as? DesktopCredentialError {
         if error == .permissionRequired { permissionRefused = true }

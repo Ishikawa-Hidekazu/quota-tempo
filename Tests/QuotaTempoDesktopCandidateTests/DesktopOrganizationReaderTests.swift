@@ -421,7 +421,88 @@ struct DesktopOrganizationReaderTests {
     #expect(!FileManager.default.fileExists(atPath: fixture.database.path + "-shm"))
   }
 
-  @Test("Rollback journals are refused without recovery", arguments: [0, 512])
+  @Test("Committed TRUNCATE journals are read without source changes", arguments: [false, true])
+  func emptyTruncateJournal(_ networkStore: Bool) throws {
+    let fixture = try Fixture(createDatabase: !networkStore)
+    defer { fixture.cleanup() }
+    let connection = networkStore ? try fixture.makeNetworkDatabase() : nil
+    let database =
+      networkStore
+      ? fixture.directory.appendingPathComponent("Network/Cookies") : fixture.database
+    if let connection {
+      try #require(
+        sqlite3_exec(connection, "PRAGMA journal_mode=TRUNCATE", nil, nil, nil) == SQLITE_OK)
+    } else {
+      try fixture.execute("PRAGMA journal_mode=TRUNCATE")
+    }
+    try fixture.insert(value: self.first, connection: connection)
+    let paths = ["", "-wal", "-shm", "-journal"].map {
+      URL(fileURLWithPath: database.path + $0)
+    }
+    let bytes = paths.map { try? Data(contentsOf: $0) }
+    let stamps = paths.map { try? DesktopProtectedFile.stamp($0, maximumBytes: 1_000_000) }
+    try #require(stamps[3]?.size == 0)
+    let names = try FileManager.default.contentsOfDirectory(
+      atPath: database.deletingLastPathComponent().path)
+    let result = try self.read(fixture)
+    #expect(result.organization == self.first)
+    #expect(result.stamps[networkStore ? 7 : 3] == stamps[3])
+    #expect(paths.map { try? Data(contentsOf: $0) } == bytes)
+    #expect(paths.map { try? DesktopProtectedFile.stamp($0, maximumBytes: 1_000_000) } == stamps)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: database.deletingLastPathComponent().path)
+        == names)
+  }
+
+  @Test(
+    "Journal changes during decryption invalidate the read",
+    arguments: ["grow", "remove", "replace", "commit", "truncate", "throw"])
+  func concurrentEmptyJournal(_ mutation: String) throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    try fixture.execute("PRAGMA journal_mode=TRUNCATE")
+    try fixture.insert(value: "", encrypted: Self.cipher())
+    let journal = URL(fileURLWithPath: fixture.database.path + "-journal")
+    try #require(try DesktopProtectedFile.stamp(journal, maximumBytes: 1_000_000).size == 0)
+    #expect(throws: DesktopCredentialError.changedDuringRead) {
+      try DesktopOrganizationReader.read(directory: fixture.directory) { _ in
+        switch mutation {
+        case "grow": try Data([0x61]).write(to: journal)
+        case "remove": try FileManager.default.removeItem(at: journal)
+        case "replace": try Data().write(to: journal, options: .atomic)
+        case "truncate":
+          let handle = try FileHandle(forWritingTo: journal)
+          defer { try? handle.close() }
+          try handle.write(contentsOf: Data([0x61]))
+          try handle.truncate(atOffset: 0)
+        case "throw":
+          try Data([0x61]).write(to: journal)
+          throw DesktopCredentialError.invalidStore
+        default:
+          try fixture.execute("UPDATE cookies SET value='\(self.second)'")
+          #expect(try DesktopProtectedFile.stamp(journal, maximumBytes: 1_000_000).size == 0)
+        }
+        return Data(SHA256.hash(data: Data(".claude.ai".utf8))) + Data(self.first.utf8)
+      }
+    }
+  }
+
+  @Test("An empty journal appearing during decryption invalidates the read")
+  func newlyCreatedEmptyJournal() throws {
+    let fixture = try Fixture()
+    defer { fixture.cleanup() }
+    try fixture.insert(value: "", encrypted: Self.cipher())
+    let journal = URL(fileURLWithPath: fixture.database.path + "-journal")
+    try #require(!FileManager.default.fileExists(atPath: journal.path))
+    #expect(throws: DesktopCredentialError.changedDuringRead) {
+      try DesktopOrganizationReader.read(directory: fixture.directory) { _ in
+        try Data().write(to: journal)
+        return Data(SHA256.hash(data: Data(".claude.ai".utf8))) + Data(self.first.utf8)
+      }
+    }
+  }
+
+  @Test("Nonempty rollback journals are refused without recovery", arguments: [1, 512, 513])
   func refusesJournal(_ count: Int) throws {
     let fixture = try Fixture()
     defer { fixture.cleanup() }
@@ -435,7 +516,8 @@ struct DesktopOrganizationReaderTests {
     #expect(try Data(contentsOf: fixture.database) == main)
   }
 
-  @Test("Orphan WAL or SHM cannot fall back to another store", arguments: ["-wal", "-shm"])
+  @Test(
+    "Orphan sidecars cannot fall back to another store", arguments: ["-wal", "-shm", "-journal"])
   func refusesOrphanSidecar(_ suffix: String) throws {
     let fixture = try Fixture(createDatabase: false)
     defer { fixture.cleanup() }

@@ -1,18 +1,30 @@
 import Foundation
 
 struct DesktopUsageHTTPTransport: Sendable {
+  enum Diagnostic: String, Sendable {
+    case profileReceived, profileMetadataInvalid, profilePayloadInvalid, profileIdentityInvalid
+    case profileIdentityMismatch, usageReceived, usageMetadataInvalid, usagePayloadInvalid
+    case usageResetInvalid, usageAccepted, exchangeFailed
+  }
+
   private let testProtocol: URLProtocol.Type?
   private let now: @Sendable () -> Date
+  private let diagnostic: @Sendable (Diagnostic) -> Void
 
-  init() {
+  init(diagnostic: @escaping @Sendable (Diagnostic) -> Void = { _ in }) {
     testProtocol = nil
     now = Date.init
+    self.diagnostic = diagnostic
   }
 
   // This changes only the in-memory protocol implementation, never either URL.
-  init(testProtocol: URLProtocol.Type, now: @escaping @Sendable () -> Date = Date.init) {
+  init(
+    testProtocol: URLProtocol.Type, now: @escaping @Sendable () -> Date = Date.init,
+    diagnostic: @escaping @Sendable (Diagnostic) -> Void = { _ in }
+  ) {
     self.testProtocol = testProtocol
     self.now = now
+    self.diagnostic = diagnostic
   }
 
   func fetch(request: DesktopUsageRequest, lease: DesktopCredentialLease) async -> DesktopUsageReply
@@ -35,15 +47,31 @@ struct DesktopUsageHTTPTransport: Sendable {
     // its current Desktop context before submitting the result to the coordinator.
     let profileResult = await send(
       .profile, lease: lease, request: request, deadline: deadline)
-    guard case .received(let profile) = profileResult else { return profileResult.failureReply }
+    guard case .received(let profile) = profileResult else {
+      diagnostic(.exchangeFailed)
+      return profileResult.failureReply
+    }
+    diagnostic(.profileReceived)
     guard profile.status == 200 else { return profile.reply(owner: nil) }
-    guard profile.isFresh(since: request.startedAt),
-      String(data: profile.body, encoding: .utf8) != nil,
-      let decoded = try? JSONDecoder().decode(Profile.self, from: profile.body),
+    guard profile.isFresh(since: request.startedAt) else {
+      diagnostic(.profileMetadataInvalid)
+      return Self.invalidResponse
+    }
+    guard String(data: profile.body, encoding: .utf8) != nil,
+      let decoded = try? JSONDecoder().decode(Profile.self, from: profile.body)
+    else {
+      diagnostic(.profilePayloadInvalid)
+      return Self.invalidResponse
+    }
+    guard
       let owner = try? DesktopIdentity.owner(
         account: decoded.account.uuid, organization: decoded.organization.uuid)
-    else { return Self.invalidResponse }
+    else {
+      diagnostic(.profileIdentityInvalid)
+      return Self.invalidResponse
+    }
     guard owner == request.context.owner else {
+      diagnostic(.profileIdentityMismatch)
       return .response(
         status: 200, profileOwner: owner, serverDate: profile.serverDate,
         cacheAge: profile.cacheAge, retryAfter: nil, body: Data())
@@ -51,7 +79,11 @@ struct DesktopUsageHTTPTransport: Sendable {
 
     let usageResult = await send(
       .usage, lease: lease, request: request, deadline: deadline)
-    guard case .received(let usage) = usageResult else { return usageResult.failureReply }
+    guard case .received(let usage) = usageResult else {
+      diagnostic(.exchangeFailed)
+      return usageResult.failureReply
+    }
+    diagnostic(.usageReceived)
     guard usage.status == 200 else { return usage.reply(owner: owner) }
     guard !Task.isCancelled else { return .networkFailure }
     let completedAt = now()
@@ -61,10 +93,20 @@ struct DesktopUsageHTTPTransport: Sendable {
     guard completedAt < request.deadline, ContinuousClock.now < deadline,
       completedAt < request.context.expiresAt
     else { return .timeout }
-    guard usage.isFresh(since: request.startedAt), let serverDate = usage.serverDate,
-      let values = try? DesktopUsagePayloadDecoder.decode(usage.body, observedAt: serverDate),
-      let reset = values.weekly.resetAt, reset > completedAt
-    else { return Self.invalidResponse }
+    guard usage.isFresh(since: request.startedAt), let serverDate = usage.serverDate else {
+      diagnostic(.usageMetadataInvalid)
+      return Self.invalidResponse
+    }
+    guard let values = try? DesktopUsagePayloadDecoder.decode(usage.body, observedAt: serverDate)
+    else {
+      diagnostic(.usagePayloadInvalid)
+      return Self.invalidResponse
+    }
+    guard let reset = values.weekly.resetAt, reset > completedAt else {
+      diagnostic(.usageResetInvalid)
+      return Self.invalidResponse
+    }
+    diagnostic(.usageAccepted)
     return usage.reply(owner: owner)
   }
 

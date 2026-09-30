@@ -166,14 +166,57 @@ struct DesktopCredentialTests {
     }
   }
 
-  @Test func conflictingEligibleTokensAreNotRankedByExpiry() throws {
+  @Test func equallyRankedConflictingTokensAreRejected() throws {
     #expect(throws: DesktopCredentialError.ambiguousIdentity) {
       try selection([
         cacheKey(): entry(),
         cacheKey(scopes: "user:inference user:profile"): entry(
-          token: "different", expiry: 1_900_099_999),
+          token: "different"),
       ])
     }
+  }
+
+  @Test func matchingOwnerCredentialsRankScopesBeforeExpiry() throws {
+    let selected = try selection([
+      cacheKey(): entry(token: "older-tier", expiry: 1_900_099_999),
+      cacheKey(scopes: "user:profile user:inference user:sessions:claude_code"):
+        entry(token: "full-login"),
+      cacheKey(client: testAccount, scopes: "user:profile user:inference user:a user:b"):
+        entry(token: "other-client", expiry: 1_900_099_999),
+      cacheKey(account: testOrganization, scopes: "user:profile user:inference user:a user:b"):
+        entry(token: "other-account", expiry: 1_900_099_999),
+      cacheKey(organization: testAccount, scopes: "user:profile user:inference user:a user:b"):
+        entry(token: "other-organization", expiry: 1_900_099_999),
+    ])
+    #expect(try selected.lease(generation: UUID()).matches(token: Data("full-login".utf8)))
+  }
+
+  @Test func expiryBreaksTiesOnlyWithinSameScopeTier() throws {
+    let selected = try selection([
+      cacheKey(): entry(),
+      cacheKey(scopes: "user:inference user:profile"):
+        entry(token: "renewed-login", expiry: 1_900_002_000),
+      cacheKey(scopes: "user:profile"): entry(token: "leftover", expiry: 1_900_099_999),
+    ])
+    #expect(try selected.lease(generation: UUID()).matches(token: Data("renewed-login".utf8)))
+  }
+
+  @Test func scopeOrderAndDuplicatesDoNotChangeRank() throws {
+    #expect(throws: DesktopCredentialError.ambiguousIdentity) {
+      try selection([
+        cacheKey(): entry(),
+        cacheKey(scopes: "user:inference user:profile user:profile"): entry(token: "different"),
+      ])
+    }
+  }
+
+  @Test func fullScopeWinsWhenProductionFullScopeIsAbsent() throws {
+    let selected = try selection([
+      cacheKey(scopes: "user:profile user:a user:b"): entry(
+        token: "leftover", expiry: 1_900_099_999),
+      cacheKey(client: testAccount): entry(token: "full-login"),
+    ])
+    #expect(try selected.lease(generation: UUID()).matches(token: Data("full-login".utf8)))
   }
 
   @Test func productionFullScopeWinsOverLeftoverProfileOnlyToken() throws {

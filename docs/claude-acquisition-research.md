@@ -453,8 +453,9 @@ shipped SwiftPM product:
   cache entries for the exact API audience and profile scope are eligible.
   An ambiguous candidate is rejected, and a present invalid/deleted V2 cache
   cannot revive V1. A production-client/full-scope entry outranks old
-  profile-only leftovers; conflicting equally eligible tokens are not ranked
-  by dictionary order or longest expiry.
+  profile-only leftovers. The initial checkpoint rejected multiple eligible
+  credentials; the October 1 correction below adds same-owner ranking while
+  retaining rejection of equal-ranked conflicts.
 - A lease whose descriptions and reflection are redacted. Its header setter
   accepts only fixed HTTPS GET profile/usage URLs. Credentials exist in process
   memory only; memory erasure of all Foundation/URLSession copies is **not**
@@ -501,16 +502,22 @@ commit; file contents, metadata, and directory entries were unchanged after the
 reader closed. The writer could still commit during the probe. These results
 apply to the tested system SQLite, not every macOS release.
 
-The reader rejects rollback journals, orphan sidecars, unsafe paths, and source
+The reader rejects nonempty rollback journals, orphan sidecars, unsafe paths, and source
 changes observed across the query. The query is limited to the current
 organization cookie, validates its host, path, UUID, and lifetime, and rejects
 conflicting organizations. It does not load session cookies for HTTP requests.
 Before/after metadata checks are not an atomic snapshot and do not guarantee
 protection against a hostile same-user process swapping and restoring paths.
-Actual Desktop compatibility remains unverified.
+An unchanged zero-byte journal is allowed: SQLite TRUNCATE mode leaves that
+file after a committed transaction. Its presence and complete stamp still
+participate in the before/after checks; it is never deleted or recovered.
+The initial implementation rejected this normal state and was corrected after
+the owner-run diagnostic. See the October 1 live result below.
 
 References: [SQLite WAL without shared memory](https://www.sqlite.org/wal.html#use_of_wal_without_shared_memory)
-and [SQLite URI parameters](https://www.sqlite.org/uri.html).
+and [SQLite URI parameters](https://www.sqlite.org/uri.html). The empty-journal
+behavior is documented in [SQLite locking and hot journals](https://www.sqlite.org/lockingv3.html)
+and [PRAGMA journal_mode](https://www.sqlite.org/pragma.html#pragma_journal_mode).
 
 #### Independent review corrections
 
@@ -587,8 +594,9 @@ The same diagnostic also offers a separate `--request-keychain-access` option fo
 the owner to launch manually. This permits the ordinary macOS access dialog for
 the same signed helper and retains only the derived key in memory for that one
 run. It does not change Keychain ACLs directly or request a Claude login. Rejection
-stops the run; polling cannot invoke this mode. Interactive acceptance and actual
-Desktop-only usage remain pending until the owner performs that step.
+stops the run; polling cannot invoke this mode. At this checkpoint, interactive
+acceptance and actual Desktop-only usage were still pending. The subsequent
+owner-run and prompt-free follow-up are recorded below.
 
 Build locally (no protected reads or provider requests):
 
@@ -600,8 +608,10 @@ node scripts/test-desktop-local-probe.mjs
 The builder uses SwiftPM's current output-file maps, not object-file globs, to
 exclude artifacts left by older branches. The initial glob-based link failed
 because it included obsolete cache-reader objects; no live execution occurred.
-Signing is an explicit separate step. Do not rebuild or change the helper identity
-between permission approval and a follow-up noninteractive acceptance check.
+Signing is an explicit separate step. Retain the same path, signing certificate
+and designated identifier across diagnostic corrections. After a rebuild,
+verify the signature and check access noninteractively; never assume a previous
+permission still applies or automatically invoke the interactive fallback.
 
 The owner can manually run `scripts/desktop-local-test.command` after the exact
 helper is signed and verified. The wrapper does not build, sign, change security
@@ -624,6 +634,60 @@ Validation: 483 Swift tests / 17 suites passed; strict format, release and
 distribution policy, product-dependency isolation, and eight inert diagnostic
 argument cases passed. Independent read-only review found no additional required
 change in the diagnostic. No interactive access request was run by the agent.
+
+### Owner-run diagnostic correction and first Desktop-only success, October 1
+
+The owner-run helper returned `identityUnavailable` / `unavailable` after native
+Keychain access. A metadata-only check identified a zero-byte rollback journal.
+The reader rejected any journal, including SQLite's normal committed TRUNCATE
+state. Synthetic SQLite fixtures reproduced the failure before the fix. Both
+database locations now accept unchanged empty journals, while nonempty/orphan
+journals, unsafe paths and concurrent mutations still fail closed. No provider
+file was changed, removed, copied or recovered.
+
+The next prompt-free run reached `selection` / `ambiguousIdentity`: organization
+selection had succeeded, but multiple unexpired cache entries matched the same
+account, organization, audience and required scope. The selector now ranks those
+already-admitted entries by production-client/full-scope login, full scope, scope
+count and finally expiry, following the pinned [OpenUsage reference][desktop-cache-selection].
+Equal-ranked conflicting values are still rejected. Foreign-account and
+foreign-organization entries never enter ranking, a V2 deletion cannot revive
+V1, and a server-side profile match is still required before requesting usage.
+There is no retry through lower-ranked credentials after an authentication refusal.
+
+The helper now emits only fixed credential-stage and transport-stage enums in
+addition to its existing normalized output. It never emits cache keys, account
+identifiers, credential hashes, response bodies or headers. One network run
+before these stages were added returned `invalidResponse`; its specific rejection
+reason was not captured and must not be described as diagnosed or resolved.
+
+At **2026-09-30 21:46:32 UTC (October 1 06:46:32 JST)**, the same signed helper
+completed a prompt-free **Desktop-only** acquisition:
+
+- The server profile matched the selected local account and organization.
+- Valid weekly and five-hour remaining percentages, each with a future reset,
+  were accepted. Account usage values are omitted from this public record.
+- Accepted observation: `current`; weekly reset was **not estimated**.
+- No browser/CLI fallback, extra login, secret output, provider-store write or
+  credential renewal was used. Provider permission is still not claimed.
+
+At **2026-09-30 21:51:52 UTC**, a second prompt-free invocation, after the
+reported five-minute minimum, also returned `current`. Its server observation
+time advanced, the five-hour balance changed, and the exact weekly reset was
+confirmed again. Both invocations used only Desktop authentication. These are
+two separately launched diagnostics, not an installed automatic-polling test.
+
+This proves repeatable live Desktop-only acquisition on this Mac, not automatic product support.
+The installed app and preview have not been replaced. The candidate remains
+outside shipped products. Natural weekly rollover, sustained background refresh,
+credential renewal, second-Mac acceptance and release gates remain open.
+
+Validation after the corrections: **491 Swift tests / 17 suites passed**, including
+the real-SQLite synthetic journal regressions, same-owner ranking and fixed-stage
+diagnostics. Strict formatting, whitespace, distribution/release policies,
+product isolation and eight inert helper argument cases passed. Independent
+source-only review found no required correction; the reviewer did not run the
+live probe. Existing legacy-Keychain API deprecation warnings remain.
 
 #### First offline checkpoint QA result
 

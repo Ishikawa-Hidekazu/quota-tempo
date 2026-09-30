@@ -40,11 +40,15 @@ enum DesktopOrganizationReader {
 
     for index in databases.indices {
       let offset = index * 4
-      // Never attempt rollback recovery, including for an apparently empty journal.
-      guard before[offset + 3] == nil else { throw DesktopCredentialError.unavailable }
+      // TRUNCATE mode keeps an empty journal after commit. It needs no recovery;
+      // retain its stamp to reject any change during the read. Never recover a
+      // nonempty journal, even when its header might otherwise look inactive.
+      guard before[offset + 3] == nil || before[offset + 3]?.size == 0 else {
+        throw DesktopCredentialError.unavailable
+      }
       guard
         before[offset] != nil
-          || (before[offset + 1] == nil && before[offset + 2] == nil)
+          || before[(offset + 1)...(offset + 3)].allSatisfy({ $0 == nil })
       else { throw DesktopCredentialError.unavailable }
     }
 
