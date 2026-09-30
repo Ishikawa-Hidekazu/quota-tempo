@@ -357,6 +357,26 @@ struct ClaudeBrowserBridgeTests {
     }
   }
 
+  @Test("An explicit renewed handshake can recover a lost ACK without rewriting host history")
+  func renewedHandshakeAfterLostACK() throws {
+    let original = try ClaudeBrowserMessage.decode(self.data(self.envelope(status: "connected")))
+    let accepted = try ClaudeBrowserRecord.applying(original, to: nil, now: self.now)
+    let later = self.now.addingTimeInterval(301)
+    #expect(throws: ClaudeBrowserBridgeError.invalidMessage) {
+      try ClaudeBrowserRecord.applying(original, to: accepted, now: later)
+    }
+    var renewedObject = self.envelope(status: "connected")
+    renewedObject["observedAt"] = self.iso(later)
+    let renewed = try ClaudeBrowserMessage.decode(self.data(renewedObject))
+    let replayed = try ClaudeBrowserRecord.applying(renewed, to: accepted, now: later)
+    #expect(replayed == accepted)
+    #expect(replayed.lastMessageAt == self.now)
+    let firstAccepted = try ClaudeBrowserRecord.applying(renewed, to: nil, now: later)
+    #expect(firstAccepted.lastMessageAt == later)
+    #expect(firstAccepted.snapshot.weekly == nil)
+    #expect(firstAccepted.snapshot.capturedAt == nil)
+  }
+
   @Test("ACK idempotency does not accept quota replay or changed control identity/status")
   func acknowledgementReplayBoundaries() throws {
     let root = try self.temporaryDirectory()

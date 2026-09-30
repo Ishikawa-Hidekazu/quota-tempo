@@ -304,3 +304,82 @@ by a local preview are verified, but uninterrupted reset-boundary behavior and
 installed release UI acceptance are not. Desktop-only reliability is
 still a separate unresolved requirement; the browser route must not be advertised
 as resolving it. Do not merge/release Draft PR #42 on the strength of these results.
+
+### September 30 pre-publicity hardening (0.1.4 candidate)
+
+This round preserves the running 0.1.3 extension and the prior local preview.
+It does not replace the installed app, extension staging directory, native-host
+registration, or any provider sign-in. The changes below are a development
+candidate, not live acceptance of version 0.1.4.
+
+Independent review and synthetic reproductions found and corrected:
+
+- Sign-out and organization-selection invalidations could lose delivery after a
+  native-host ACK failure. They now use the same persisted finite retry protocol
+  as account changes. Sign-out can resume ordinary backoff after delivery;
+  ambiguous organizations remain blocked. Exhausting four retries still requires
+  explicit recovery, rather than retrying indefinitely or silently reconnecting.
+- Before/after identity checks could prove a different owner but discard that
+  fact when usage validation failed. Rechecked hashes now trigger revocation
+  independently of quota validity; invalid usage cannot establish a new pin.
+- A pending connection handshake could become too old for an explicit retry.
+  Explicit retry renews only its timestamp, not its profile, generation or
+  sequence. Native duplicate acknowledgement still leaves the original record
+  unchanged. Quota observations are not replayed or made fresh this way.
+- A cache observation could be attributed to the surrounding, newer login record
+  without checking its own `accountUuid`. Mismatches are now excluded and legacy
+  unstamped caches cannot establish a verified Desktop reset join.
+- Minute-only local imports could inherit another verified account's failure or
+  clear a live failure using an estimated reset. Reproductions failed before the
+  fix and pass afterward; only a fresh owned exact reset clears a same-account
+  live failure. Capture time and the live-attempt clock remain separate.
+- A live refresh arriving during a minute-only read could be discarded. A single
+  coalesced pending request now survives that collision, with manual force taking
+  priority and all acquisition/selection/source gates rechecked when drained.
+  Deterministic paused-reader tests cover success, failure, throttling, source
+  changes, and provider disabling without launching a real provider process.
+
+The app imports changed allowlisted local metadata on its minute clock when the
+browser route does not own the observation. It does not launch or resolve a CLI,
+make a provider request, or advance source capture time. This reduces app-side
+latency after Desktop writes data; it cannot cause Desktop to write a missing
+reset timestamp. Synthetic tests cover missing local files and preservation of
+prior live failures, not just the successful-import case.
+
+A narrow read-only check of the still-running 0.1.3 path found successful recent
+browser and app records, the same owner and weekly percentage, and a future
+non-estimated reset. Capture/reset timestamp differences were below one second,
+consistent with the app codec's ISO-8601 precision. This was a single checkpoint,
+not an additional multi-cycle or rollover acceptance test.
+
+The expanded [research record](claude-acquisition-research.md) pins five competitor
+implementations and the official status-line, telemetry, and SDK contracts.
+The metadata-only local check still found recent Desktop percentages but an
+expired reset-bearing cache. No new strict Desktop-only exact-reset source was
+established, and no upstream request was sent.
+
+Current candidate verification:
+
+| Check | Result |
+| --- | --- |
+| `swift test` | PASS, 301 tests / 10 suites |
+| Extension Node tests | PASS, 216/216 |
+| Installer Node tests | PASS, 81/81 |
+| Native-host process integration | PASS, 7/7 |
+| Strict Swift formatting | PASS for all changed Swift files |
+| Release policy | PASS |
+| App-bundle assembly | PASS, ad-hoc signatures/resources/determinism/temporary cleanup |
+| Provider-trigger and application-window checks | SKIP, no live app/UI replacement or launch in this round |
+
+Independent review reproduced the ownership/diagnostic issues above; the parent
+also reviewed the extension changes and the model's bounded queue. Local/clock
+tests were adjusted to the intentional new import contract. This changes neither
+the existing exact-reset requirement nor the real-device release gates.
+Follow-up regressions also cover an owner-unconfirmed Desktop sample after a
+known account switch and a first observation replacing nonfailure waiting states;
+neither may inherit an unrelated old status. These failed before their fixes.
+
+**Decision remains not ready for release.** The live gates above, including exact
+candidate acceptance, real rollover, restart/recovery, second-Mac and normal
+release verification, remain open. No unsupported claim was promoted to a
+Desktop-only guarantee.

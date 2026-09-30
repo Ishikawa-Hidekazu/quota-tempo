@@ -1,6 +1,6 @@
 # Claude acquisition research
 
-Research date: 2026-09-29. This is a source-based feasibility assessment, not a
+Research dates: 2026-09-29 and 2026-09-30. This is a source-based feasibility assessment, not a
 runtime compatibility guarantee or a change to the [freshness contract](provider-freshness-contract.md).
 
 ## Requirement and status
@@ -110,6 +110,60 @@ not manipulate the app. Do not generate model traffic merely to populate quota.
 Until ownership and refresh are both demonstrated, retain the current uncertainty
 labels and release gates rather than converting competitor heuristics into exact
 `P` or reset claims.
+
+## September 30 follow-up
+
+An independent source review examined five additional/current release implementations.
+No competitor binary was executed during this round, and no credentials or raw
+provider responses were inspected.
+
+| Project | Pinned source | Finding |
+| --- | --- | --- |
+| CodexBar v0.69.0 | [ClaudeUsageFetcher.swift](https://github.com/steipete/CodexBar/blob/48ded68da6932a4fe5de9037d06c4ac48bd36e90/Sources/CodexBarCore/Providers/Claude/ClaudeUsageFetcher.swift#L576-L589) | OAuth, web-cookie, and CLI routes; not a nonsecret Desktop export. |
+| OpenUsage v0.7.12 | [ClaudeDesktopAuthStore.swift](https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeDesktopAuthStore.swift#L129-L170) | Reads Desktop credential/cookie stores; cannot be adopted within this product's no-secret boundary. |
+| BetterClaude v0.14.1 | [Quota.swift](https://github.com/mandipadk/BetterClaude/blob/141fecb6cb80178ac4a57cd13e15f36bf82a28aa/Sources/CoworkKit/Quota/Quota.swift#L153-L172) | Reads `cachedUsageUtilization.accountUuid` and its source timestamp. Also projects elapsed weekly timing; that projection is not a new exact reset. |
+| Claudius v3.0.3 | [DesktopUsageReader.swift](https://github.com/nsluke/Claudius/blob/e89a943c37fdd7162394bd82f36db77f71d05939/Claudius/DesktopUsageReader.swift#L50-L125) | Desktop history percentages, no account binding or exact reset. |
+| Mikyas v0.2.0 | [desktop_usage.rs](https://github.com/MarawanEldeib/mikyas/blob/faaa9210ff2284574ea79cee65afc7bb500c5de5/crates/core/src/sources/desktop_usage.rs#L94-L126) | Filters history by organization, but does not supply an account-bound reset. |
+
+The official [OpenTelemetry attributes](https://code.claude.com/docs/en/monitoring-usage#standard-attributes)
+include `user.account_uuid`, `organization.id`, and `session.id`. Desktop Code
+[documents telemetry export](https://code.claude.com/docs/en/desktop#admin-console-controls),
+but the examined telemetry schema does not provide weekly reset/utilization.
+Identity from one event cannot retroactively bind an org-only cache response.
+
+The official SDK's [rate-limit event type](https://github.com/anthropics/claude-agent-sdk-python/blob/f2204bb956bab02907aaf3cb88eb9dead28eaa35/src/claude_agent_sdk/types.py#L1390-L1435)
+can carry reset/utilization and a session ID, but not an account UUID or source
+observation timestamp. Its [standard transport](https://github.com/anthropics/claude-agent-sdk-python/blob/f2204bb956bab02907aaf3cb88eb9dead28eaa35/src/claude_agent_sdk/_internal/transport/subprocess_cli.py#L570-L574)
+starts a subprocess; it does not establish a read-only subscription to an existing
+Desktop session. Repeated events are also not fresh observations: the official
+[changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/49ac9709f4e2fe001b160eac839e160f0ba36d59/CHANGELOG.md#L195-L203)
+describes repeated 429 notifications for the same window.
+
+The current [status-line contract][statusline] supports periodic callbacks and
+callbacks at reset boundaries, but these rerender the supplied data; they are not
+evidence of a new server fetch. It omits expired windows and documents no
+account-owner field. Enabling a callback alone cannot satisfy the Desktop-only
+requirement. The existing retired status-line bridge remains inactive.
+
+A bounded metadata-only local check found recent Desktop utilization alongside
+an older structured CLI cache whose weekly and five-hour reset timestamps had
+both elapsed. The checked Desktop sample contained neither an account stamp nor
+recognized reset fields. The cache's account stamp matched the current account,
+but no recognized organization stamp was present. This explains why more frequent
+reads can update `W` but cannot produce a new exact `P` from these files.
+No local source contents or account identifiers are included here.
+
+Development now checks the cache observation's own `accountUuid` before attaching
+current-account ownership. A mismatch is excluded; legacy unstamped cache data
+cannot supply a verified Desktop reset. The app also reads eligible local changes
+on its minute clock without resolving or launching a CLI, advancing capture time,
+or postponing the live-probe schedule. These are integrity and latency improvements,
+not a new Desktop-only reset source.
+
+The remaining upstream request is concrete: expose an opt-in, nonsecret local
+quota record or subscription containing account and organization identity,
+`utilization`, `resets_at`, and the source observation time, updated after ordinary
+Desktop activity and rollover. No upstream request was sent in this round.
 
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift

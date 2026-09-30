@@ -169,7 +169,63 @@ public struct ClaudeAutomaticAdapter: Sendable {
   public func refresh(
     previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
   ) -> ProviderSnapshot {
+    self.refresh(
+      previous: previous, now: now, forceLiveProbe: forceLiveProbe, localOnly: false,
+      accountBeforeRefresh: try? self.readAccountIdentity())
+  }
+
+  public func observeLocalChanges(previous: ProviderSnapshot?, now: Date) -> ProviderSnapshot? {
+    let previous = previous?.source == .claudeBrowser ? nil : previous
     let accountBeforeRefresh = try? self.readAccountIdentity()
+    let diagnosticPrevious = Self.previousCompatibleWithCurrentAccount(
+      previous, currentAccount: accountBeforeRefresh)
+    let observed = self.refresh(
+      previous: previous, now: now, forceLiveProbe: false, localOnly: true,
+      accountBeforeRefresh: accountBeforeRefresh)
+    if let previous,
+      observed.source == previous.source, observed.capturedAt == previous.capturedAt,
+      observed.weekly == previous.weekly, observed.fiveHour == previous.fiveHour,
+      observed.claudeAccountFingerprint == previous.claudeAccountFingerprint,
+      observed.claudeOrganizationFingerprint == previous.claudeOrganizationFingerprint
+    {
+      return nil
+    }
+    let accountChanged =
+      observed.claudeAccountFingerprint != nil && previous?.claudeAccountFingerprint != nil
+      && observed.claudeAccountFingerprint != previous?.claudeAccountFingerprint
+    let organizationChanged =
+      observed.claudeOrganizationFingerprint != nil
+      && previous?.claudeOrganizationFingerprint != nil
+      && observed.claudeOrganizationFingerprint != previous?.claudeOrganizationFingerprint
+    let hasFreshExactTarget =
+      Self.hasFreshVerifiedWeeklyTarget(observed, now: now)
+      && Self.hasCurrentExactReset(observed, now: now)
+    let priorAttemptFailed =
+      diagnosticPrevious?.sourceState == .attemptFailed
+      || diagnosticPrevious?.sourceState == .attemptTimedOut
+      || diagnosticPrevious?.sourceState == .accessRestricted
+    let incompleteAfterFailure =
+      observed.sourceState == .observationSucceeded
+      && priorAttemptFailed
+      && !accountChanged && !organizationChanged && !hasFreshExactTarget
+    // Reading a file is not a new live attempt and must not postpone the PTY guard.
+    let snapshot = ProviderSnapshot(
+      provider: observed.provider, source: observed.source, capturedAt: observed.capturedAt,
+      weekly: observed.weekly, fiveHour: observed.fiveHour,
+      lastAttemptAt: previous?.lastAttemptAt,
+      sourceState: incompleteAfterFailure
+        ? diagnosticPrevious?.sourceState ?? observed.sourceState : observed.sourceState,
+      errorCode: incompleteAfterFailure
+        ? diagnosticPrevious?.errorCode ?? observed.errorCode : observed.errorCode,
+      claudeAccountFingerprint: observed.claudeAccountFingerprint,
+      claudeOrganizationFingerprint: observed.claudeOrganizationFingerprint)
+    return snapshot == previous ? nil : snapshot
+  }
+
+  private func refresh(
+    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool, localOnly: Bool,
+    accountBeforeRefresh: ClaudeAccountIdentity?
+  ) -> ProviderSnapshot {
     let effectivePrevious = Self.previousCompatibleWithCurrentAccount(
       previous, currentAccount: accountBeforeRefresh)
     let historyRead = Self.captureLocalRead { try self.readHistory(now: now) }
@@ -180,8 +236,10 @@ public struct ClaudeAutomaticAdapter: Sendable {
       try self.readDesktopAccountFingerprint()
     }
     let desktopAccount = desktopAccountRead.fingerprint
-    let cliExecutable = self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable
-    let livePTYAvailable = self.ptyProbeEnabled && cliExecutable != nil
+    let cliExecutable =
+      localOnly
+      ? nil : (self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable)
+    let livePTYAvailable = !localOnly && self.ptyProbeEnabled && cliExecutable != nil
     let local = Self.localCandidate(
       history: history, cache: cache, currentAccount: accountBeforeRefresh,
       desktopAccountFingerprint: desktopAccount, now: now)
@@ -212,7 +270,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
       )
     }
 
-    if self.ptyProbeEnabled {
+    if self.ptyProbeEnabled && !localOnly {
       if cliExecutable == nil, let local {
         let retained =
           Self.preferredObservation(
@@ -293,7 +351,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
       }
     }
 
-    guard self.cliFallbackEnabled else {
+    guard self.cliFallbackEnabled && !localOnly else {
       if let retained = Self.preferredObservation(
         local: local, previous: effectivePrevious, now: now)
       {
@@ -826,6 +884,13 @@ public struct ClaudeAutomaticAdapter: Sendable {
     guard let cache = root.cachedUsageUtilization else {
       throw ClaudeAutomaticAdapterError.sourceUnavailable
     }
+    // The login record can change while an older account's usage is still cached.
+    let cachedPrincipal = Self.fingerprint(cache.accountUUID)
+    let currentPrincipal = Self.fingerprint(root.oauthAccount?.accountUUID)
+    if let cachedPrincipal, let currentPrincipal, cachedPrincipal != currentPrincipal {
+      throw ClaudeAutomaticAdapterError.sourceUnavailable
+    }
+    let ownerMatches = cachedPrincipal != nil && cachedPrincipal == currentPrincipal
     let capturedAt = Date(timeIntervalSince1970: Double(cache.fetchedAtMilliseconds) / 1_000)
     guard capturedAt >= Self.minimumCapturedAt, capturedAt <= now.addingTimeInterval(1) else {
       throw ClaudeAutomaticAdapterError.invalidInput
@@ -850,8 +915,9 @@ public struct ClaudeAutomaticAdapter: Sendable {
       weekly: weekly,
       fiveHour: fiveHour,
       sourceState: .observationSucceeded,
-      claudeAccountFingerprint: Self.accountFingerprint(root.oauthAccount),
-      claudeOrganizationFingerprint: Self.fingerprint(root.oauthAccount?.organizationUUID)
+      claudeAccountFingerprint: ownerMatches ? Self.accountFingerprint(root.oauthAccount) : nil,
+      claudeOrganizationFingerprint: ownerMatches
+        ? Self.fingerprint(root.oauthAccount?.organizationUUID) : nil
     )
   }
 
@@ -1154,10 +1220,12 @@ private struct DesktopConfigRoot: Decodable {
 }
 
 private struct CachedUsage: Decodable {
+  let accountUUID: String?
   let fetchedAtMilliseconds: Int64
   let utilization: UsageLimits
 
   enum CodingKeys: String, CodingKey {
+    case accountUUID = "accountUuid"
     case fetchedAtMilliseconds = "fetchedAtMs"
     case utilization
   }

@@ -83,6 +83,12 @@ Required boundaries:
 
 The previously tested Claude `statusLine` bridge remains rollback-only code and is not activated by current onboarding. Claude model-specific buckets and Extra Usage remain out of scope because no stable third-party contract has been established.
 
+Unreleased improvements: require the cached observation's own account stamp before
+joining its reset to Desktop history. The minute clock can import local file
+changes without a CLI or provider request, retaining their source time and the
+separate live-attempt guard. See the local-observation contract for legacy cache
+and failure handling. This does not add a Desktop-only reset acquisition path.
+
 ## Calculation contract
 
 Given current time `now`, reset time `resetAt`, window duration `duration`, and `remaining` in the range 0 through 100:

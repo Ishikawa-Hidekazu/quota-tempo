@@ -182,24 +182,245 @@ struct ClaudeBrowserAppTests {
     #expect(fixture.io.processCount == 0)
   }
 
-  @Test("Without a browser record, minute ticks never acquire a due local Claude source")
-  func minuteClockDoesNotAcquireLocalProvider() async throws {
+  @Test("Minute ticks import Desktop history without CLI calls or postponing the live refresh")
+  func minuteClockImportsLocalObservation() async throws {
     let fixture = try BrowserAppFixture()
     defer { fixture.cleanup() }
     try fixture.store.save(fixture.localSnapshot(remaining: 41))
-    let model = fixture.model()
+    let model = fixture.model(liveProbes: true)
     try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 41 }
     let due = fixture.localSnapshot(
       remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600))
     try fixture.store.save(due)
+    let capturedAt = fixture.now.addingTimeInterval(-10)
+    try fixture.setHistory(remaining: 37, capturedAt: capturedAt)
     model.clockAdvanced()
     try await self.waitFor(model) {
-      model.scenario.snapshots.first?.lastAttemptAt == due.lastAttemptAt
+      model.scenario.snapshots.first?.weekly?.remainingPercent == 37
     }
-    #expect(try fixture.store.load(.claude) == due)
-    #expect(fixture.io.readCount == 0)
+    let imported = try #require(try fixture.store.load(.claude))
+    #expect(imported.capturedAt == capturedAt)
+    #expect(imported.lastAttemptAt == due.lastAttemptAt)
+    #expect(imported.weekly?.resetAt == nil)
+    #expect(fixture.io.readCount > 0)
     #expect(fixture.io.processCount == 0)
+    #expect(fixture.io.probeCount == 0)
     #expect(fixture.io.resolverCount == 0)
+    model.clockAdvanced()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.capturedAt == capturedAt }
+    #expect(try fixture.store.load(.claude) == imported)
+    model.scheduledRefresh()
+    try await self.waitFor(model) { fixture.io.resolverCount == 1 }
+    #expect(fixture.io.readPaths.allSatisfy { $0.hasPrefix(fixture.root.path + "/") })
+  }
+
+  @Test("New balance without a reset does not erase a prior live authentication failure")
+  func minuteClockPreservesLiveFailure() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let failed = ProviderSnapshot(
+      provider: .claude, source: .claudeDesktopHistory,
+      capturedAt: fixture.now.addingTimeInterval(-60),
+      weekly: QuotaWindow(remainingPercent: 41, durationSeconds: 604_800, resetAt: nil),
+      lastAttemptAt: fixture.now, sourceState: .attemptFailed, errorCode: .authenticationRequired)
+    try fixture.store.save(failed)
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 41 }
+    try fixture.setHistory(remaining: 36, capturedAt: fixture.now.addingTimeInterval(-10))
+    model.clockAdvanced()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 36 }
+    let updated = try #require(try fixture.store.load(.claude))
+    #expect(updated.lastAttemptAt == failed.lastAttemptAt)
+    #expect(updated.sourceState == .attemptFailed)
+    #expect(updated.errorCode == .authenticationRequired)
+    #expect(updated.weekly?.resetAt == nil)
+    #expect(fixture.io.processCount == 0)
+    #expect(fixture.io.probeCount == 0)
+    #expect(fixture.io.resolverCount == 0)
+  }
+
+  @Test(
+    "Live requests behind a local read coalesce, and force cannot be downgraded",
+    arguments: [false, true], [false, true])
+  func localReadCoalescesLiveRefreshes(force: Bool, hasLocalChange: Bool) async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    let previous = fixture.localSnapshot(
+      remaining: 41, attemptedAt: fixture.now.addingTimeInterval(force ? -60 : -3_600))
+    try fixture.store.save(previous)
+    let capturedAt = fixture.now.addingTimeInterval(-10)
+    if hasLocalChange {
+      try fixture.setHistory(remaining: 37, capturedAt: capturedAt)
+    }
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+
+    model.scheduledRefresh()
+    model.menuOpened()
+    model.systemDidWake()
+    if force {
+      model.explicitRefresh()
+      model.explicitRefresh()
+    }
+    model.scheduledRefresh()
+    model.clockAdvanced()
+    #expect(fixture.io.resolverCount == 0)
+    read.release()
+
+    try await self.waitFor(model) { fixture.io.resolverCount == 1 }
+    let result = try #require(try fixture.store.load(.claude))
+    #expect(result.weekly?.remainingPercent == (hasLocalChange ? 37 : 41))
+    #expect(result.capturedAt == (hasLocalChange ? capturedAt : previous.capturedAt))
+    #expect(result.sourceState == (hasLocalChange ? .observationSucceeded : .attemptFailed))
+    #expect(try #require(result.lastAttemptAt) > #require(previous.lastAttemptAt))
+    #expect(fixture.historyReadCount == 2)
+    fixture.expectIsolated()
+  }
+
+  @Test("Draining a scheduled request still respects the live attempt interval")
+  func pendingScheduledRefreshRespectsThrottle() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let previous = fixture.localSnapshot(remaining: 41)
+    try fixture.store.save(previous)
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+    model.scheduledRefresh()
+    read.release()
+
+    try await self.waitFor(model) { true }
+    #expect(try fixture.store.load(.claude)?.lastAttemptAt == previous.lastAttemptAt)
+    #expect(fixture.historyReadCount == 1)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Minute ticks and ordinary live triggers do not queue behind an active live attempt")
+  func liveRefreshDropsMinuteTicks() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.store.save(
+      fixture.localSnapshot(remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600)))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.scheduledRefresh()
+    try await read.waitUntilEntered()
+    for _ in 0..<3 {
+      model.clockAdvanced()
+      model.scheduledRefresh()
+      model.menuOpened()
+      model.systemDidWake()
+    }
+    read.release()
+
+    try await self.waitFor(model) { fixture.io.resolverCount == 1 }
+    #expect(fixture.historyReadCount == 1)
+    #expect(try fixture.store.load(.claude)?.sourceState == .attemptFailed)
+    fixture.expectIsolated()
+  }
+
+  @Test("Manual force upgrades an active ordinary live attempt only once, even after failure")
+  func manualForceUpgradesActiveLiveRefresh() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.store.save(
+      fixture.localSnapshot(remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600)))
+    let first = fixture.pauseNextHistoryRead()
+    defer { first.release() }
+    model.scheduledRefresh()
+    try await first.waitUntilEntered()
+    model.explicitRefresh()
+    model.explicitRefresh()
+    model.scheduledRefresh()
+    let forced = fixture.pauseNextHistoryRead()
+    defer { forced.release() }
+    first.release()
+    try await forced.waitUntilEntered()
+    #expect(model.refreshInFlight)
+    #expect(fixture.io.resolverCount == 1)
+    for _ in 0..<3 {
+      model.explicitRefresh()
+      model.scheduledRefresh()
+      model.clockAdvanced()
+    }
+    forced.release()
+
+    try await self.waitFor(model) { fixture.io.resolverCount == 2 }
+    #expect(fixture.historyReadCount == 2)
+    #expect(try fixture.store.load(.claude)?.sourceState == .attemptFailed)
+    fixture.expectIsolated()
+  }
+
+  @Test("A pending live request is discarded when Claude is disabled before drain")
+  func pendingRefreshRechecksProviderSelection() async throws {
+    let fixture = try BrowserAppFixture(enabled: [.claude, .codex])
+    defer { fixture.cleanup() }
+    // Keep the non-injected Codex adapter behind its recent-attempt guard.
+    let codex = ProviderSnapshot(
+      provider: .codex, source: .codexAppServer, capturedAt: fixture.now,
+      weekly: QuotaWindow(
+        remainingPercent: 90, durationSeconds: 604_800,
+        resetAt: fixture.now.addingTimeInterval(259_200)),
+      lastAttemptAt: fixture.now, sourceState: .observationSucceeded)
+    try fixture.store.save(codex)
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.store.save(
+      fixture.localSnapshot(remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600)))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+    model.scheduledRefresh()
+    model.setProviderEnabled(.claude, enabled: false)
+    read.release()
+
+    try await self.waitFor(model) { model.scenario.snapshots.map(\.provider) == [.codex] }
+    #expect(model.enabledProviders == [.codex])
+    #expect(try fixture.store.load(.codex) == codex)
+    #expect(fixture.historyReadCount == 1)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("A browser connection arriving before drain remains exclusive over a forced request")
+  func pendingRefreshRechecksBrowserSource() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+    model.explicitRefresh()
+    try fixture.ingest(remaining: 63, offset: -1)
+    read.release()
+
+    try await self.waitFor(model) { model.scenario.snapshots.first?.source == .claudeBrowser }
+    #expect(try fixture.store.load(.claude)?.weekly?.remainingPercent == 63)
+    #expect(fixture.historyReadCount == 1)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
   }
 
   @Test("Disabled Claude is not ingested by minute ticks even when browser data is available")
@@ -297,18 +518,47 @@ private struct BrowserAppFixture {
     self.defaults.removePersistentDomain(forName: self.suiteName)
   }
 
-  func model(acquisitionEnabled: Bool = true) -> LiveQuotaModel {
+  func model(acquisitionEnabled: Bool = true, liveProbes: Bool = false) -> LiveQuotaModel {
     let io = self.io
     return LiveQuotaModel(
       store: self.store, acquisitionEnabled: acquisitionEnabled, preferences: self.preferences,
       claudeAdapter: ClaudeAutomaticAdapter(
-        reader: io, runner: io, cliExecutable: nil, resolveCLIOnRefresh: false,
+        reader: io, runner: io, cliExecutable: nil, resolveCLIOnRefresh: liveProbes,
         cliResolver: { io.resolve() },
         historyURL: self.root.appendingPathComponent("synthetic-history.json"),
         cacheURL: self.root.appendingPathComponent("synthetic-cache.json"),
         desktopConfigURL: self.root.appendingPathComponent("synthetic-config.json"),
-        cliFallbackEnabled: false, ptyProbeEnabled: false, ptyProbe: io,
+        cliFallbackEnabled: liveProbes, ptyProbeEnabled: liveProbes, ptyProbe: io,
         probeDirectory: self.root.appendingPathComponent("synthetic-probe")))
+  }
+
+  func setHistory(remaining: Double, capturedAt: Date) throws {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "samples": [
+        [
+          "t": Int64(capturedAt.timeIntervalSince1970 * 1_000),
+          "org": "synthetic-org", "u": ["sd": 100 - remaining],
+        ]
+      ]
+    ])
+    self.io.setData(data, for: self.root.appendingPathComponent("synthetic-history.json"))
+  }
+
+  var historyReadCount: Int {
+    self.io.readPaths.filter {
+      $0 == self.root.appendingPathComponent("synthetic-history.json").path
+    }
+    .count
+  }
+
+  func pauseNextHistoryRead() -> BrowserAppReadBarrier {
+    self.io.pauseNextRead(from: self.root.appendingPathComponent("synthetic-history.json"))
+  }
+
+  func expectIsolated() {
+    #expect(self.io.readPaths.allSatisfy { $0.hasPrefix(self.root.path + "/") })
+    #expect(self.io.processCount == 0)
+    #expect(self.io.probeCount == 0)
   }
 
   func localSnapshot(remaining: Double, attemptedAt: Date? = nil) -> ProviderSnapshot {
@@ -363,6 +613,8 @@ private final class BrowserAppIsolationStub: BoundedLocalDataReading, BoundedPro
   private var processes = 0
   private var probes = 0
   private var resolutions = 0
+  private var data: [URL: Data] = [:]
+  private var readBarriers: [URL: BrowserAppReadBarrier] = [:]
 
   var readPaths: [String] { self.lock.withLock { self.paths } }
   var readCount: Int { self.lock.withLock { self.paths.count } }
@@ -371,8 +623,25 @@ private final class BrowserAppIsolationStub: BoundedLocalDataReading, BoundedPro
   var resolverCount: Int { self.lock.withLock { self.resolutions } }
 
   func read(from url: URL, limit: Int) throws -> Data {
-    self.lock.withLock { self.paths.append(url.path) }
-    throw ClaudeAutomaticAdapterError.sourceUnavailable
+    let barrier = self.lock.withLock {
+      self.paths.append(url.path)
+      return self.readBarriers.removeValue(forKey: url)
+    }
+    barrier?.pause()
+    return try self.lock.withLock {
+      guard let value = self.data[url] else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
+      return value
+    }
+  }
+
+  func pauseNextRead(from url: URL) -> BrowserAppReadBarrier {
+    let barrier = BrowserAppReadBarrier()
+    self.lock.withLock { self.readBarriers[url] = barrier }
+    return barrier
+  }
+
+  func setData(_ value: Data, for url: URL) {
+    self.lock.withLock { self.data[url] = value }
   }
 
   func run(executable: URL, arguments: [String], stdin: Data, currentDirectory: URL?) throws
@@ -390,5 +659,29 @@ private final class BrowserAppIsolationStub: BoundedLocalDataReading, BoundedPro
   func resolve() -> URL? {
     self.lock.withLock { self.resolutions += 1 }
     return nil
+  }
+}
+
+private final class BrowserAppReadBarrier: @unchecked Sendable {
+  private let lock = NSLock()
+  private let signal = DispatchSemaphore(value: 0)
+  private var entered = false
+
+  func pause() {
+    self.lock.withLock { self.entered = true }
+    #expect(self.signal.wait(timeout: .now() + 5) == .success, "Synthetic read was not released")
+  }
+
+  func release() {
+    self.signal.signal()
+  }
+
+  @MainActor
+  func waitUntilEntered() async throws {
+    for _ in 0..<300 {
+      if self.lock.withLock({ self.entered }) { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(self.lock.withLock { self.entered }, "Synthetic read did not start")
   }
 }

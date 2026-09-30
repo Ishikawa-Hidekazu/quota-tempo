@@ -217,6 +217,7 @@ struct ClaudeAutomaticPTYTests {
     try JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "account-a",
         "fetchedAtMs": Int64(cacheAt.timeIntervalSince1970 * 1_000),
         "utilization": [
           "seven_day": [
@@ -265,6 +266,7 @@ struct ClaudeAutomaticPTYTests {
     try JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "account-a",
         "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
         "utilization": [
           "five_hour": [
@@ -353,6 +355,7 @@ struct ClaudeAutomaticPTYTests {
     try JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "account-a",
         "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
         "utilization": [
           "seven_day": [
@@ -422,6 +425,7 @@ struct ClaudeAutomaticPTYTests {
       try JSONSerialization.data(withJSONObject: [
         "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
         "cachedUsageUtilization": [
+          "accountUuid": "account-a",
           "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
           "utilization": [
             "seven_day": [
@@ -469,6 +473,7 @@ struct ClaudeAutomaticPTYTests {
     try JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "account-a", "organizationUuid": "shared-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "account-a",
         "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
         "utilization": [
           "seven_day": [
@@ -837,6 +842,7 @@ struct ClaudeAutomaticPTYTests {
         "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
       ],
       "cachedUsageUtilization": [
+        "accountUuid": "desktop-account",
         "fetchedAtMs": Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970 * 1_000),
         "utilization": [
           "five_hour": ["utilization": 13.0],
@@ -1281,6 +1287,7 @@ struct ClaudeAutomaticPTYTests {
         "accountUuid": "desktop-account", "organizationUuid": "desktop-account",
       ],
       "cachedUsageUtilization": [
+        "accountUuid": "desktop-account",
         "fetchedAtMs": Int64(now.addingTimeInterval(-60).timeIntervalSince1970 * 1_000),
         "utilization": [
           "five_hour": [

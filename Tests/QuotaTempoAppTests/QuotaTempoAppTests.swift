@@ -204,8 +204,8 @@ struct QuotaTempoAppTests {
     #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 90)
   }
 
-  @Test("Minute clock does not acquire Claude; scheduled refresh does")
-  func clockDoesNotAcquireClaude() async throws {
+  @Test("Minute clock imports local Claude changes without postponing scheduled acquisition")
+  func clockImportsLocalClaudeChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)", isDirectory: true)
     let suiteName = "QuotaTempoAppClaudeClockTests.\(UUID().uuidString)"
@@ -258,16 +258,27 @@ struct QuotaTempoAppTests {
       .write(to: history)
 
     model.clockAdvanced()
-    try await Task.sleep(for: .milliseconds(100))
-    #expect(try store.load(.claude)?.weekly?.remainingPercent == 70)
-    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 70)
-    #expect(
-      MenuBarTitleFormatter.renderIdentity(scenario: model.scenario, mode: .compact) == before)
-
-    model.scheduledRefresh()
-    for _ in 0..<200 where model.scenario.snapshots.first?.weekly?.remainingPercent != 60 {
+    for _ in 0..<200 {
+      if !model.refreshInFlight && model.scenario.snapshots.first?.weekly?.remainingPercent == 60 {
+        break
+      }
       try await Task.sleep(for: .milliseconds(10))
     }
+    #expect(try store.load(.claude)?.weekly?.remainingPercent == 60)
+    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 60)
+    #expect(
+      abs(
+        try #require(try store.load(.claude)?.lastAttemptAt).timeIntervalSince(
+          eligibleSnapshot.lastAttemptAt!)) < 1)
+    #expect(
+      MenuBarTitleFormatter.renderIdentity(scenario: model.scenario, mode: .compact) != before)
+
+    model.scheduledRefresh()
+    for _ in 0..<200 where model.refreshInFlight {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!model.refreshInFlight)
+    #expect(try #require(try store.load(.claude)?.lastAttemptAt) > eligibleSnapshot.lastAttemptAt!)
     #expect(try store.load(.claude)?.weekly?.remainingPercent == 60)
     #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 60)
     #expect(

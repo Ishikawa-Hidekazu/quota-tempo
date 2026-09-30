@@ -10,7 +10,7 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_ORG = "c".repeat(64);
 
-function harness() {
+function harness({ nativeHandler } = {}) {
   let stored;
   let activeAlarm;
   let now;
@@ -45,7 +45,8 @@ function harness() {
         const message = structuredClone(envelope);
         await checkpoint("native.beforeSend", message);
         native.push(message);
-        const ack = acks.length ? acks.shift() : { ok: true };
+        const ack = acks.length ? acks.shift()
+          : nativeHandler ? await nativeHandler(message, WorkerDate.now()) : { ok: true };
         await checkpoint("native.afterSend", message);
         await checkpoint("native.afterAck", message);
         return structuredClone(ack);
@@ -881,6 +882,328 @@ test("Connect ACK precedes usage; account switch revokes and reconnect creates a
   assert.equal(h.stored.pin.accountFingerprint, HASH_B);
 });
 
+test("failed signout and organization invalidations retry before any observation and recover by status", async t => {
+  for (const status of ["signedOut", "organizationSelectionRequired"]) {
+    for (const recovering of [false, true]) {
+      await t.test(`${status}: recovering=${recovering}`, async () => {
+        const h = await revokingHarness(recovering);
+        const original = h.stored;
+        h.acks.push({ ok: false, error: "bridgeBusy" });
+        await h.observe({ status });
+        const pending = h.stored.pendingRevocation;
+        assert.ok(pending);
+        assert.equal(pending.message.status, status);
+        for (const key of ["weekly", "fiveHour", "accountFingerprint", "organizationFingerprint", "principalFingerprint"]) {
+          assert.equal(pending.message[key], null);
+        }
+        h.reload(); h.listener.startup(); await h.flush();
+        const deadline = h.stored.nextAt;
+        h.fireAlarm();
+        h.listener.updated(7, { status: "complete" }, h.tabs[0]);
+        await h.flush();
+        assert.equal(h.native.length, 3);
+        assert.equal(h.requests.length, 2);
+        assert.equal(h.stored.nextAt, deadline);
+        h.advanceTo(deadline); h.fireAlarm(); await h.flush();
+        assert.deepEqual(h.native.at(-1), pending.message);
+        assert.equal(h.stored.pendingRevocation, null);
+        assert.equal(h.stored.status, status);
+        assert.deepEqual(h.stored.pin, original.pin);
+        assert.equal(h.stored.connectionID, original.connectionID);
+        assert.equal(h.requests.length, 2);
+        if (status === "signedOut") {
+          assert.equal(h.stored.blocked, false);
+          assert.equal(h.stored.failureCount, 1);
+          assert.equal(h.stored.nextAt, deadline + 300_000);
+          h.fireAlarm(); await h.flush();
+          assert.equal(h.requests.length, 2);
+          h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+          await h.observe(h.result(HASH_B));
+          assert.equal(h.native.at(-1).status, "accountChanged");
+          assert.deepEqual(h.stored.pin, original.pin);
+        } else {
+          assert.equal(h.stored.blocked, true);
+          assert.equal(h.alarm, undefined);
+          h.listener.startup();
+          h.listener.updated(7, { status: "complete" }, h.tabs[0]);
+          await h.flush();
+          assert.equal(h.requests.length, 2);
+        }
+      });
+    }
+  }
+});
+
+test("new invalidations survive initial-send and ACK-completion worker eviction", { timeout: 10_000 }, async t => {
+  for (const status of ["signedOut", "organizationSelectionRequired"]) {
+    for (const retry of [false, true]) {
+      for (const point of ["native.beforeSend", "native.afterSend", "native.afterAck", "storage.beforeSet", "storage.afterSet",
+        status === "signedOut" ? "alarms.beforeCreate" : "alarms.beforeClear"]) {
+        await t.test(`${status}: retry=${retry}: ${point}`, async () => {
+          const h = await revokingHarness();
+          const original = h.stored;
+          if (retry) {
+            h.acks.push({ ok: false, error: "bridgeBusy" });
+            await h.observe({ status });
+            assert.ok(h.stored.pendingRevocation);
+          }
+          const stopped = h.pauseNext(point, value => !point.startsWith("storage.")
+            || value.pendingRevocation === null && value.status === status);
+          if (retry) { h.advanceTo(h.stored.nextAt); h.fireAlarm(); }
+          else void h.observe({ status });
+          await stopped;
+          const saved = h.stored;
+          assert.equal(saved.inFlight, null);
+          h.reload(); await h.flush();
+          assert.deepEqual(h.stored, saved);
+          if (saved.pendingRevocation) {
+            const envelope = saved.pendingRevocation.message;
+            h.advanceTo(saved.nextAt); h.fireAlarm(); await h.flush();
+            assert.deepEqual(h.native.at(-1), envelope);
+          }
+          assert.equal(h.stored.pendingRevocation, null);
+          assert.equal(h.stored.status, status);
+          assert.equal(h.stored.blocked, status === "organizationSelectionRequired");
+          assert.deepEqual(h.stored.pin, original.pin);
+          assert.equal(h.stored.connectionID, original.connectionID);
+          assert.equal(h.requests.length, 2);
+          assert.equal(h.stored.failureCount, status === "signedOut" ? 1 : 0);
+        });
+      }
+    }
+  }
+});
+
+test("new invalidations exhaust four retries even across ACK-wait eviction and lost tabs", { timeout: 10_000 }, async t => {
+  for (const status of ["signedOut", "organizationSelectionRequired"]) {
+    await t.test(status, async () => {
+      const h = await revokingHarness();
+      const original = h.stored;
+      h.acks.push({ ok: false, error: "bridgeBusy" });
+      await h.observe({ status });
+      assert.ok(h.stored.pendingRevocation);
+      const envelope = h.stored.pendingRevocation.message;
+      h.tabs.splice(0); h.listener.removed(7); await h.flush();
+      for (let retry = 1; retry <= 4; retry++) {
+        h.advanceTo(h.stored.nextAt);
+        const stopped = h.pauseNext("native.afterSend");
+        h.fireAlarm(); await stopped;
+        assert.deepEqual(h.native.at(-1), envelope);
+        assert.equal(h.stored.pendingRevocation.retryCount, retry);
+        h.reload(); h.listener.startup(); await h.flush();
+      }
+      h.tabs.push({ id: 8, url: URL_ON_TAB, active: true });
+      h.listener.updated(8, { status: "complete" }, h.tabs[0]);
+      h.fireAlarm(); await h.flush();
+      assert.equal(h.native.length, 7);
+      assert.equal(h.requests.length, 2);
+      assert.equal(h.alarm, undefined);
+      assert.equal(h.stored.nextAt, null);
+      assert.equal(h.stored.status, "nativeUnavailable");
+      assert.deepEqual(h.stored.pin, original.pin);
+      await h.message({ type: "reconnect" });
+      assert.equal(h.native[7].status, "disconnected");
+      assert.equal(h.native[7].connectionID, original.connectionID);
+      assert.equal(h.native[8].status, "connected");
+      assert.notEqual(h.native[8].connectionID, original.connectionID);
+      await h.observe(h.result(HASH_B), 8);
+      assert.equal(h.stored.pin.accountFingerprint, HASH_B);
+    });
+  }
+});
+
+test("signout transport recovery resumes the same pinned account after a lost tab", async () => {
+  let unavailable = true;
+  const h = harness({ nativeHandler: async message => {
+    if (message.status === "signedOut" && unavailable) {
+      unavailable = false;
+      throw new Error("synthetic transport failure");
+    }
+    return { ok: true };
+  } });
+  await h.message({ type: "connect" });
+  await h.observe(h.result(HASH_A));
+  const original = h.stored;
+  h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+  const request = h.stored.inFlight;
+  await h.observe({ status: "signedOut" });
+  assert.equal(h.stored.status, "nativeUnavailable");
+  assert.ok(h.stored.pendingRevocation);
+  assert.equal((await h.message({ type: "observation", requestID: request.requestID,
+    observedAt: new Date(request.expiresAt - 60_000).toISOString(), result: h.result(HASH_B)
+  }, h.content(7))).accepted, false);
+  h.tabs.splice(0); h.listener.removed(7); await h.flush();
+  h.reload(); h.listener.startup(); await h.flush();
+  h.tabs.push({ id: 8, url: URL_ON_TAB, active: true });
+  h.listener.updated(8, { status: "complete" }, h.tabs[0]); await h.flush();
+  assert.equal(h.requests.length, 2);
+  h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+  assert.equal(h.stored.status, "signedOut");
+  assert.equal(h.requests.length, 2);
+  h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+  assert.equal(h.stored.inFlight.tabID, 8);
+  await h.observe(h.result(HASH_A), 8);
+  assert.equal(h.stored.status, "ok");
+  assert.equal(h.stored.recovering, false);
+  assert.equal(h.stored.failureCount, 0);
+  assert.deepEqual(h.stored.pin, original.pin);
+  assert.equal(h.stored.connectionID, original.connectionID);
+});
+
+test("rejected invalidations keep exact retry delays and stop after four automatic retries", async t => {
+  for (const status of ["signedOut", "organizationSelectionRequired"]) {
+    await t.test(status, async () => {
+      const h = await revokingHarness();
+      const observed = h.stored.inFlight.expiresAt - 60_000;
+      h.acks.push(...Array.from({ length: 5 }, () => ({ ok: false, error: "bridgeBusy" })));
+      await h.observe({ status });
+      const envelope = h.stored.pendingRevocation.message;
+      let previousAttempt = observed;
+      for (const delay of [15_000, 30_000, 60_000, 120_000]) {
+        assert.equal(h.stored.nextAt, previousAttempt + delay);
+        previousAttempt = h.stored.nextAt;
+        h.advanceTo(previousAttempt); h.fireAlarm(); await h.flush();
+        assert.deepEqual(h.native.at(-1), envelope);
+      }
+      h.reload(); h.listener.startup(); h.fireAlarm(); await h.flush();
+      assert.equal(h.native.length, 7);
+      assert.equal(h.stored.pendingRevocation.retryCount, 4);
+      assert.equal(h.alarm, undefined);
+      assert.equal(h.requests.length, 2);
+    });
+  }
+});
+
+test("confirmed ownership changes revoke even when usage parsing or delivery validation fails", async t => {
+  const { observe } = require("../protocol.js");
+  const account = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const org = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  for (const mode of ["parserFailure", "deliveryExpiry", "invalidOptionalWindow"]) {
+    await t.test(mode, async () => {
+      const h = await revokingHarness();
+      const original = h.stored;
+      let result;
+      if (mode === "parserFailure") {
+        const now = original.inFlight.expiresAt - 60_000;
+        const replies = [{ uuid: account }, [{ uuid: org }],
+          { seven_day: { utilization: 27, resets_at: new Date(now).toISOString() } }, { uuid: account }];
+        result = await observe({ now: () => now,
+          fetchImpl: async () => new Response(JSON.stringify(replies.shift())) });
+        assert.equal(result.status, "unavailable");
+      } else {
+        result = h.result(HASH_B);
+        if (mode === "deliveryExpiry") result.weekly.resetAt = new Date(original.inFlight.expiresAt - 60_000).toISOString();
+        else result.fiveHour = { remainingPercent: 101, resetAt: result.weekly.resetAt };
+      }
+      await h.observe(result);
+      assert.equal(h.native.at(-1).status, "accountChanged");
+      assert.equal(h.native.at(-1).accountFingerprint, null);
+      assert.equal(h.native.at(-1).weekly, null);
+      assert.deepEqual(h.stored.pin, original.pin);
+      assert.equal(h.stored.blocked, true);
+    });
+  }
+});
+
+test("failed usage never pins an account and incomplete ownership cannot revoke an existing pin", async () => {
+  const h = harness();
+  await h.message({ type: "connect" });
+  await h.observe({ ...h.result(HASH_B), status: "unavailable", weekly: null });
+  assert.equal(h.stored.pin, null);
+  assert.equal(h.native.at(-1).accountFingerprint, null);
+  h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+  await h.observe(h.result(HASH_A));
+  const pin = h.stored.pin;
+  for (const result of [
+    { ...h.result(HASH_A), status: "unavailable", weekly: null },
+    { ...h.result(HASH_B), status: "unavailable", principalFingerprint: null },
+    { ...h.result(HASH_B), status: "unavailable", organizationFingerprint: "invalid" },
+    { ...h.result(HASH_B), status: "notRecognized" }
+  ]) {
+    h.advanceTo(h.stored.nextAt); h.fireAlarm(); await h.flush();
+    await h.observe(result);
+    assert.equal(h.native.at(-1).status, "unavailable");
+    assert.equal(h.native.at(-1).accountFingerprint, null);
+    assert.deepEqual(h.stored.pin, pin);
+    assert.equal(h.stored.blocked, false);
+  }
+});
+
+test("explicit aged Connect and Disconnect retries renew only the handshake time before sending", async t => {
+  for (const accepted of [false, true]) {
+    for (const command of ["connect", "disconnect"]) {
+      await t.test(`accepted=${accepted}: ${command}`, async () => {
+        let attempts = 0;
+        let hostHandshake = null;
+        let h;
+        h = harness({ nativeHandler: async (message, now) => {
+          if (message.status !== "connected") return { ok: true };
+          assert.deepEqual(h.stored.pendingConnectedMessage, message);
+          if (now - Date.parse(message.observedAt) > 300_000) return { ok: false, error: "invalidMessage" };
+          if (++attempts === 1) {
+            if (accepted) hostHandshake = structuredClone(message);
+            throw new Error("synthetic lost ACK or unavailable host");
+          }
+          hostHandshake ??= structuredClone(message);
+          return { ok: true };
+        } });
+        const start = Date.parse("2026-09-30T00:00:00.000Z");
+        h.advanceTo(start);
+        await h.message({ type: "connect" });
+        const original = h.stored.pendingConnectedMessage;
+        assert.ok(original);
+        h.advanceTo(start + 301_000);
+        h.reload(); h.listener.startup(); h.fireAlarm(); await h.flush();
+        assert.deepEqual(h.stored.pendingConnectedMessage, original);
+        assert.equal(h.native.length, 1);
+        await h.message({ type: command });
+        assert.deepEqual(h.native[1], { ...original, observedAt: new Date(start + 301_000).toISOString() });
+        assert.equal(h.stored.pendingConnect, false);
+        assert.equal(h.stored.pin, null);
+        assert.equal(h.stored.enabled, command === "connect");
+        assert.equal(h.requests.length, command === "connect" ? 1 : 0);
+        assert.equal(hostHandshake.observedAt, accepted ? original.observedAt : h.native[1].observedAt);
+        if (command === "disconnect") assert.equal(h.native[2].status, "disconnected");
+      });
+    }
+  }
+});
+
+test("explicit handshake freshness is durable across worker eviction without automatic resend", { timeout: 10_000 }, async t => {
+  for (const command of ["connect", "disconnect"]) {
+    for (const point of ["storage.beforeSet", "storage.afterSet", "native.beforeSend", "native.afterSend", "native.afterAck"]) {
+      await t.test(`${command}: ${point}`, async () => {
+        const h = harness();
+        const start = Date.parse("2026-09-30T00:00:00.000Z");
+        h.advanceTo(start);
+        h.acks.push({ ok: false, error: "bridgeBusy" });
+        await h.message({ type: "connect" });
+        const original = h.stored.pendingConnectedMessage;
+        const retryAt = start + 301_000;
+        h.advanceTo(retryAt);
+        const stopped = h.pauseNext(point, value => point.startsWith("storage.")
+          ? value.pendingConnect && value.pendingConnectedMessage.observedAt === new Date(retryAt).toISOString()
+          : value.status === "connected");
+        void h.message({ type: command });
+        await stopped;
+        const saved = h.stored;
+        assert.deepEqual(saved.pendingConnectedMessage, { ...original,
+          observedAt: point === "storage.beforeSet" ? original.observedAt : new Date(retryAt).toISOString() });
+        const count = h.native.length;
+        h.reload(); h.listener.startup(); h.fireAlarm(); await h.flush();
+        assert.deepEqual(h.stored, saved);
+        assert.equal(h.native.length, count);
+        assert.equal(h.requests.length, 0);
+        h.advanceTo(retryAt + 301_000);
+        await h.message({ type: command });
+        assert.deepEqual(h.native[count], { ...original, observedAt: new Date(retryAt + 301_000).toISOString() });
+        assert.equal(h.stored.pendingConnect, false);
+        assert.equal(h.stored.enabled, command === "connect");
+      });
+    }
+  }
+});
+
 test("diagnostics stay in the extension and never reach the native host", async () => {
   const h = harness();
   assert.equal((await h.flush()).workerVersion, require("../manifest.json").version);
@@ -897,15 +1220,17 @@ test("diagnostics stay in the extension and never reach the native host", async 
   assert.equal(h.stored.lastFailureStage, null);
 });
 
-test("connected ACK failure sends no observation and retries exact envelope on explicit Connect", async () => {
+test("connected ACK failure sends no observation and only renews time on explicit Connect", async () => {
   const h = harness();
+  h.advanceTo(Date.parse("2026-09-30T00:00:00.000Z"));
   h.acks.push({ ok: false, error: "unavailable" });
   await h.message({ type: "connect" });
   assert.equal(h.stored.enabled, false);
   assert.equal(h.stored.pendingConnect, true);
   assert.equal(h.stored.inFlight, null);
+  h.advanceTo(Date.parse("2026-09-30T00:00:05.000Z"));
   await h.message({ type: "connect" });
-  assert.deepEqual(h.native[1], h.native[0]);
+  assert.deepEqual(h.native[1], { ...h.native[0], observedAt: "2026-09-30T00:00:05.000Z" });
   assert.equal(h.stored.enabled, true);
   assert.equal(h.stored.inFlight !== null, true);
 });

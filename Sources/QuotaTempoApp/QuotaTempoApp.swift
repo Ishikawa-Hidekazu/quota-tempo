@@ -30,6 +30,12 @@ final class QuotaTempoUpdater {
 
 @MainActor
 final class LiveQuotaModel: ObservableObject {
+  private struct ClaudeRefreshRequest {
+    let trigger: ProviderAcquisitionTrigger
+    let force: Bool
+    let localOnly: Bool
+  }
+
   private static let providerQueue = DispatchQueue(
     label: "com.ishikawa.quotatempo.provider-refresh",
     qos: .utility,
@@ -48,7 +54,8 @@ final class LiveQuotaModel: ObservableObject {
   private var initialDetectionTracker = InitialProviderDetectionTracker()
   private var initialDetectionSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var codexRefreshInFlight = false
-  private var claudeRefreshInFlight = false
+  private var activeClaudeRefresh: ClaudeRefreshRequest?
+  private var pendingClaudeRefresh: ClaudeRefreshRequest?
   private var transientSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var scenarioRevision = 0
 
@@ -91,7 +98,7 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   func clockAdvanced() {
-    self.refreshClaude(trigger: .scheduledRefresh, force: false, browserOnly: true)
+    self.refreshClaude(trigger: .scheduledRefresh, force: false, localOnly: true)
     let now = Date()
     self.scenario = FixtureScenario(
       id: self.scenario.id,
@@ -256,13 +263,22 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   private func refreshClaude(
-    trigger: ProviderAcquisitionTrigger, force: Bool, browserOnly: Bool = false
+    trigger: ProviderAcquisitionTrigger, force: Bool, localOnly: Bool = false
   ) {
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
-    guard !self.claudeRefreshInFlight else { return }
+    let request = ClaudeRefreshRequest(trigger: trigger, force: force, localOnly: localOnly)
+    if let active = self.activeClaudeRefresh {
+      // Local reads cannot satisfy a live request. An active live request only
+      // needs a follow-up when a manual request upgrades it to force.
+      guard !localOnly, active.localOnly || (force && !active.force) else { return }
+      if self.pendingClaudeRefresh?.force != true {
+        self.pendingClaudeRefresh = request
+      }
+      return
+    }
 
-    self.claudeRefreshInFlight = true
+    self.activeClaudeRefresh = request
     self.updateRefreshInFlight()
     let store = self.store
     let adapter = self.claudeAdapter
@@ -283,8 +299,9 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           let localPrevious = previous?.source == .claudeBrowser ? nil : previous
-          if browserOnly && previous?.source != .claudeBrowser {
-            continuation.resume(returning: nil)
+          if localOnly {
+            continuation.resume(
+              returning: adapter.observeLocalChanges(previous: localPrevious, now: now))
             return
           }
           guard
@@ -306,13 +323,19 @@ final class LiveQuotaModel: ObservableObject {
       } else {
         self.finishInitialDetectionAttempt(.claude)
       }
-      self.claudeRefreshInFlight = false
+      self.activeClaudeRefresh = nil
+      let pending = self.pendingClaudeRefresh
+      self.pendingClaudeRefresh = nil
+      if let pending {
+        // Re-enter the gate and current selection, consuming the request once.
+        self.refreshClaude(trigger: pending.trigger, force: pending.force)
+      }
       self.updateRefreshInFlight()
     }
   }
 
   private func updateRefreshInFlight() {
-    self.refreshInFlight = self.codexRefreshInFlight || self.claudeRefreshInFlight
+    self.refreshInFlight = self.codexRefreshInFlight || self.activeClaudeRefresh != nil
   }
 }
 

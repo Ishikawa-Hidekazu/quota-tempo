@@ -1,12 +1,13 @@
 "use strict";
 
 const HOST = "co.ishikawa.quotatempo";
-const WORKER_VERSION = "0.1.3";
+const WORKER_VERSION = "0.1.4";
 const ALARM = "quotaTempoPoll";
 const FIVE_MINUTES = 5 * 60 * 1000;
 const MAX_BACKOFF = 60 * 60 * 1000;
 const INFLIGHT_EXPIRY = 60 * 1000;
 const REVOCATION_DELAYS = [15_000, 30_000, 60_000, 120_000];
+const REVOCATIONS = new Set(["accountChanged", "signedOut", "organizationSelectionRequired"]);
 const HASH = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUS = new Set([
@@ -155,7 +156,7 @@ async function retryRevocation(value, explicit = false) {
     // A terminated worker still consumes this attempt, even if its ACK is lost.
     pending.retryCount += 1;
     value.inFlight = null;
-    value.blocked = value.blocked || !value.recovering;
+    value.blocked = value.blocked || revocationBlocks(value, pending.message.status);
     value.nextAt = pending.retryCount < REVOCATION_DELAYS.length
       ? Date.now() + REVOCATION_DELAYS[pending.retryCount] : null;
     if (pending.retryCount >= REVOCATION_DELAYS.length) value.status = "nativeUnavailable";
@@ -208,7 +209,7 @@ function pollingDeadline(value) {
   if (!value.enabled || value.pendingConnect || value.pendingDisconnect
     || value.status === "disconnected") return null;
   if (value.pendingRevocation) {
-    if (value.pendingRevocation.message.status !== "accountChanged"
+    if (!REVOCATIONS.has(value.pendingRevocation.message.status)
       || value.pendingRevocation.retryCount >= REVOCATION_DELAYS.length) return null;
   } else if (value.blocked) return null;
   const deadline = value.pendingRevocation ? value.nextAt
@@ -222,9 +223,19 @@ function nextDelay(value, status) {
   return Math.min(MAX_BACKOFF, base * 2 ** Math.min(value.failureCount - 1, 4));
 }
 
+function revocationBlocks(value, status) {
+  return status === "organizationSelectionRequired" || status === "accountChanged" && !value.recovering;
+}
+
 async function finishObservation(value, result, observedAt = new Date(Date.now()).toISOString()) {
   const now = Date.now();
   let checked = normalizedResult(result, now);
+  // Identity validation is independent of quota validity; failed usage must never establish a new pin.
+  if (value.pin !== null && ["ok", "unavailable"].includes(result?.status) && validPin(result)
+    && ["accountFingerprint", "organizationFingerprint", "principalFingerprint"]
+      .some(key => result[key] !== value.pin[key])) {
+    checked = normalizedResult({ status: "accountChanged" }, now);
+  }
   value.lastFailureStage = checked.status === "unavailable"
     ? (DIAGNOSTICS.has(result?.diagnostic) ? result.diagnostic : "workerValidation") : null;
   if (checked.status === "ok") {
@@ -234,25 +245,21 @@ async function finishObservation(value, result, observedAt = new Date(Date.now()
       principalFingerprint: checked.principalFingerprint
     };
     if (value.pin === null) value.pin = candidate;
-    else if (Object.keys(candidate).some(key => candidate[key] !== value.pin[key])) {
-      checked = normalizedResult({ status: "accountChanged" }, now);
-    }
   }
   const waitingForPinnedAccount = value.recovering && checked.status === "accountChanged";
   if (waitingForPinnedAccount) value.tabID = null;
   if (value.recovering && checked.status === "ok") value.recovering = false;
-  const revocation = checked.status === "accountChanged";
+  const revocation = REVOCATIONS.has(checked.status);
   if (revocation) {
     value.inFlight = null;
-    value.blocked = !value.recovering;
+    value.blocked = revocationBlocks(value, checked.status);
     value.nextAt = now + REVOCATION_DELAYS[0];
   }
   const ack = await sendNext(value, checked, observedAt, revocation);
   value.inFlight = null;
   value.status = ack === "ok"
     ? (waitingForPinnedAccount ? "waitingForAccount" : checked.status) : ack;
-  value.blocked = checked.status === "accountChanged" && !value.recovering
-    || checked.status === "organizationSelectionRequired";
+  value.blocked = revocationBlocks(value, checked.status);
   if (revocation && ack !== "ok") {
     await scheduleRevocationRetry(value);
     return;
@@ -284,7 +291,7 @@ async function observationIsDeferred(value) {
 }
 
 async function startObservation(value) {
-  if (!value.enabled || value.blocked || !Number.isInteger(value.tabID)) return;
+  if (!value.enabled || value.blocked || value.pendingRevocation || !Number.isInteger(value.tabID)) return;
   if (await observationIsDeferred(value)) return;
   let tab;
   try { tab = await chrome.tabs.get(value.tabID); } catch { /* Tab no longer exists. */ }
@@ -367,6 +374,15 @@ async function sendPendingDisconnect(value) {
   return ack;
 }
 
+async function retryPendingConnect(value) {
+  // Explicit user retry only: renew freshness, never the connection generation or sequence.
+  value.pendingConnectedMessage = {
+    ...value.pendingConnectedMessage, observedAt: new Date(Date.now()).toISOString()
+  };
+  await save(value);
+  return nativeSend(value.pendingConnectedMessage);
+}
+
 async function connect(reconnect) {
   const value = await state();
   if (value.enabled && !reconnect && !value.pendingDisconnect) return view(value);
@@ -375,7 +391,7 @@ async function connect(reconnect) {
   if (value.pendingConnect) {
     if (!value.pendingConnectedMessage || !validGeneration(value)
       || value.sequence !== 0) return { error: "connectRequired" };
-    const ack = await nativeSend(value.pendingConnectedMessage);
+    const ack = await retryPendingConnect(value);
     if (ack !== "ok") {
       value.status = ack;
       await save(value);
@@ -440,8 +456,9 @@ async function disconnect() {
   const value = await state();
   if (!value.enabled && !value.pendingDisconnect && !value.pendingConnect) return view(value);
   if (value.pendingConnect) {
-    if (!value.pendingConnectedMessage) return { error: "connectRequired" };
-    const connectedAck = await nativeSend(value.pendingConnectedMessage);
+    if (!value.pendingConnectedMessage || !validGeneration(value)
+      || value.sequence !== 0) return { error: "connectRequired" };
+    const connectedAck = await retryPendingConnect(value);
     if (connectedAck !== "ok") {
       value.status = connectedAck;
       await save(value);
@@ -509,15 +526,23 @@ chrome.alarms.onAlarm.addListener(alarm => {
       await chrome.alarms.create(ALARM, { when: deadline });
       return;
     }
-    if (value.pendingRevocation?.message.status === "accountChanged") {
+    if (REVOCATIONS.has(value.pendingRevocation?.message.status)) {
+      const status = value.pendingRevocation.message.status;
       const ack = await retryRevocation(value);
       if (ack !== "ok") await scheduleRevocationRetry(value);
-      else {
+      else if (status === "signedOut") {
         value.inFlight = null;
-        value.blocked = value.blocked || !value.recovering;
+        value.blocked = false;
+        value.status = status;
+        value.pendingRevocation = null;
+        value.failureCount += 1;
+        await schedule(value, nextDelay(value, status));
+      } else {
+        value.inFlight = null;
+        value.blocked = value.blocked || revocationBlocks(value, status);
         value.recovering = value.recovering && !value.blocked;
         value.nextAt = null;
-        value.status = value.recovering ? "waitingForAccount" : "accountChanged";
+        value.status = value.recovering ? "waitingForAccount" : status;
         value.pendingRevocation = null;
         await save(value);
         await stopPolling();
@@ -537,7 +562,7 @@ chrome.runtime.onStartup.addListener(() => {
     await stopPolling();
     if (value.pendingConnect) return;
     if (!value.enabled) return;
-    if (value.pendingRevocation?.message.status === "accountChanged") {
+    if (REVOCATIONS.has(value.pendingRevocation?.message.status)) {
       await scheduleRevocationRetry(value);
       return;
     }

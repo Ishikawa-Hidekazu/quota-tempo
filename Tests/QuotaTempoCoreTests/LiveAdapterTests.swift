@@ -2505,6 +2505,7 @@ struct LiveAdapterTests {
     return try! JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "ignored-org", "organizationUuid": "ignored-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "ignored-org",
         "fetchedAtMs": Int64(fetchedAt.timeIntervalSince1970 * 1_000),
         "utilization": [
           "five_hour": [

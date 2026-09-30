@@ -9,6 +9,14 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 
 QuotaTempo does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. It disables tools, hooks, MCP configuration, user setting sources, Remote Control startup, and auto-update for the probe, caps its runtime and output, requests a normal CLI exit, and terminates discovered child processes afterward. The provider-owned CLI still uses its existing sign-in, contacts Anthropic for current usage, and may update its own local usage or session metadata; its own privacy terms and network behavior apply.
 
+The unreleased development adapter additionally validates the observation's
+`cachedUsageUtilization.accountUuid` against the current account before assigning
+ownership. A mismatched cache is excluded; missing ownership cannot justify a
+Desktop reset join. When the browser route is not connected, its minute clock
+also rereads these same allowlisted local sources. This does not introduce a new
+file, permission, provider request, or CLI process, and does not relabel the data
+as newly captured.
+
 ## Experimental opt-in browser connection
 
 The development browser bridge is separate from the released local/CLI acquisition path. Installing its Chrome extension and native-host registration does not sign you in. After you explicitly connect a Claude tab, an isolated content script requests account, organization, and aggregate usage metadata from the same `https://claude.ai` origin. Chrome supplies its existing session normally; the extension does not access cookie values, cookie databases, authentication storage, or Keychain. No page text, conversation, prompt, or transcript is inspected.

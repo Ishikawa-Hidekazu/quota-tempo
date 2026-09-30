@@ -174,6 +174,42 @@ test("same-organization account switch during observation is rejected", async ()
   assert.equal(result.weekly, null);
 });
 
+test("verified ownership survives invalid usage without forwarding quota or raw identity", async t => {
+  const sha = value => createHash("sha256").update(value).digest("hex");
+  for (const usage of [
+    oldUsage({ seven_day: { utilization: 27, resets_at: new Date(NOW).toISOString() } }),
+    oldUsage({ five_hour: { utilization: 101, resets_at: FIVE_HOUR } }),
+    {}
+  ]) {
+    await t.test(JSON.stringify(usage), async () => {
+      const source = fetchSequence(response({ uuid: ACCOUNT_B }), response([{ uuid: ORG }]),
+        response(usage), response({ uuid: ACCOUNT_B }));
+      const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+      assert.equal(result.status, "unavailable");
+      assert.equal(result.diagnostic, "usageShape");
+      assert.equal(result.principalFingerprint, sha(ACCOUNT_B));
+      assert.equal(result.organizationFingerprint, sha(ORG));
+      assert.equal(result.accountFingerprint, sha(`claude-owner-v1:${ACCOUNT_B}:${ORG}`));
+      assert.equal(result.weekly, null);
+      assert.equal(result.fiveHour, null);
+      assert.equal(JSON.stringify(result).includes(ACCOUNT_B), false);
+      assert.equal(JSON.stringify(result).includes(ORG), false);
+    });
+  }
+});
+
+test("incomplete or mismatching account rechecks never supply ownership evidence", async () => {
+  for (const recheck of [response({}), response({}, 503), response({ uuid: ACCOUNT_A })]) {
+    const source = fetchSequence(response({ uuid: ACCOUNT_B }), response([{ uuid: ORG }]),
+      response({}), recheck);
+    const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => NOW });
+    assert.equal(result.accountFingerprint, null);
+    assert.equal(result.organizationFingerprint, null);
+    assert.equal(result.principalFingerprint, null);
+    assert.equal(result.weekly, null);
+  }
+});
+
 test("401 and 429 return status-only observations", async () => {
   for (const [status, expected] of [[401, "signedOut"], [429, "rateLimited"]]) {
     const source = fetchSequence(response({}, status));
@@ -223,7 +259,8 @@ test("only bounded stage names leave a failed acquisition", async () => {
     assert.equal(result.status, "unavailable");
     assert.equal(result.diagnostic, item.stage);
     assert.equal(result.weekly, null);
-    assert.equal(result.accountFingerprint, null);
+    if (item.stage === "usageShape") assert.match(result.accountFingerprint, /^[0-9a-f]{64}$/);
+    else assert.equal(result.accountFingerprint, null);
   }
 });
 

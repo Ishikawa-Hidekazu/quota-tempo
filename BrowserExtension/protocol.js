@@ -183,10 +183,12 @@
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let phase = "accountRequest";
+    let verifiedIdentity = null;
     const empty = status => ({
       status, diagnostic: status === "unavailable" ? phase : null,
       accountFingerprint: null, organizationFingerprint: null,
-      principalFingerprint: null, weekly: null, fiveHour: null
+      principalFingerprint: null, weekly: null, fiveHour: null,
+      ...(status === "unavailable" ? verifiedIdentity : null)
     });
     async function request(path) {
       const response = await fetchImpl(`${ORIGIN}${path}`, {
@@ -215,16 +217,16 @@
       phase = "accountRecheckShape";
       const after = accountIdentity(accountAfter);
       if (before !== after) return empty("accountChanged");
-      phase = "usageShape";
-      const windows = parseUsage(usage, now());
       phase = "fingerprint";
-      return {
-        status: "ok",
+      // Retain only rechecked ownership hashes when usage is invalid, so the worker can revoke an old pin.
+      verifiedIdentity = {
         accountFingerprint: await sha256(`claude-owner-v1:${before}:${organization}`),
         organizationFingerprint: await sha256(organization),
-        principalFingerprint: await sha256(before),
-        ...windows
+        principalFingerprint: await sha256(before)
       };
+      phase = "usageShape";
+      const windows = parseUsage(usage, now());
+      return { status: "ok", ...verifiedIdentity, ...windows };
     } catch (error) {
       controller.abort();
       return empty(error instanceof ObservationError ? error.code : "unavailable");
