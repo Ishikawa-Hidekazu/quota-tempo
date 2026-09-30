@@ -21,7 +21,7 @@ let package = Package(
       name: "QuotaTempoCore",
       exclude: ["Resources"]
     ),
-    // Synthetic-only acquisition candidate; no application product depends on it.
+    // Isolated acquisition candidate; no application product depends on it.
     .target(
       name: "QuotaTempoDesktopCandidate",
       dependencies: ["QuotaTempoCore"]

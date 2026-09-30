@@ -340,7 +340,8 @@ a timer. A one-time working token is not an authentication-lifecycle solution.
 
 The strongest active-request candidate to evaluate is **explicitly authorized,
 read-only Desktop authentication**, leaving renewal to the official client.
-It is a candidate, not approved or implemented functionality. In parallel, a
+It remains a release-gated candidate, not shipped functionality. The isolated
+implementation checkpoints below distinguish code from live verification. In parallel, a
 bounded Desktop Code Local statusLine experiment can test a no-secret path; it
 does not cover Chat/Cowork. Passive cache improvements remain useful but cannot
 alone guarantee a fresh observation. App patching, integrity disablement, debug
@@ -373,9 +374,9 @@ freshness, expiry, and failure handling can first be prepared with synthetic
 fixtures, without protected-store access. Live Desktop-only acquisition and a
 fresh weekly rollover remain separate release gates.
 
-### Offline candidate implementation, September 30
+### First offline candidate checkpoint, September 30
 
-`Sources/QuotaTempoDesktopCandidate` now contains the first **offline-only**
+At commit `ec0f7f5`, `Sources/QuotaTempoDesktopCandidate` contained the first **offline-only**
 implementation of the Desktop candidate. It is a separate SwiftPM target with
 no executable or library product and no application dependency. It cannot obtain
 real usage: there is no credential reader, Keychain access, cookie reader,
@@ -399,7 +400,7 @@ The coordinator prepares request admission and response acceptance separately:
 | Rollover | An elapsed reset is no longer displayable. Only a newly received valid reset restores the plan; no seven-day arithmetic exists. |
 | Recovery | Attempts are at least 60 seconds apart. Transient errors back off to 15 minutes. Retry-After is a minimum and survives account/permission changes, including a cancelled request's late 429. Successful polling waits five minutes, or the upcoming weekly reset if earlier, without shortening a service backoff. |
 
-This is not an identity or transport implementation. A future authorized reader
+That first checkpoint did not implement identity or transport. An authorized reader
 must generate a new opaque revision on sign-out, account/organization switching
 (including A-to-B-to-A), or credential replacement, **without exposing credentials
 or credential hashes**. A revision must remain stable between actual changes;
@@ -424,13 +425,144 @@ node scripts/test-desktop-candidate-isolation.mjs
 xcrun swift-format lint --strict --recursive Sources Tests
 ```
 
-Next integration gate: decide provider permission and explicit product opt-in,
-then implement the isolated protected-store/transport boundary and verify actual
+The next integration gate at that checkpoint was to decide provider permission
+and explicit product opt-in, implement the isolated boundary, and verify actual
 Desktop-only acquisition. Runtime UI, natural rollover, Desktop credential
 renewal, and a second Mac remain unverified. No public release or installed
 preview replacement is part of this offline implementation.
 
-#### Offline QA result
+### Protected boundary implementation checkpoint, September 30
+
+The product owner explicitly approved internal Desktop-authentication handling
+for an **isolated prototype**, with no secret values exposed to the agent or
+logs, no credential persistence, and no changes to Claude's stores. This is
+product consent only. The provider-permission decision remains unresolved; no
+protected-store experiment or authenticated live request has been executed.
+Both decisions are checked before the service admits a read. The default is off.
+
+The candidate now has the following implementation, still excluded from every
+shipped SwiftPM product:
+
+- A prompt-free native Keychain boundary and bounded Electron safeStorage
+  decryption. A refusal is latched until explicit approval changes. There is no
+  shell credential command, interactive fallback, refresh-token model, renewal
+  request, or write to Claude's stores.
+- A strict current-account/current-organization selector. Only account-scoped
+  cache entries for the exact API audience and profile scope are eligible.
+  An ambiguous candidate is rejected, and a present invalid/deleted V2 cache
+  cannot revive V1. A production-client/full-scope entry outranks old
+  profile-only leftovers; conflicting equally eligible tokens are not ranked
+  by dictionary order or longest expiry.
+- A lease whose descriptions and reflection are redacted. Its header setter
+  accepts only fixed HTTPS GET profile/usage URLs. Credentials exist in process
+  memory only; memory erasure of all Foundation/URLSession copies is **not**
+  guaranteed. No plaintext file or raw response log is created.
+- Fixed-origin profile-then-usage transport with the same lease. Redirects,
+  cookies, persistent caches, and saved HTTP credentials are disabled. Response
+  bodies are streamed with a 16-KiB limit per endpoint; error bodies are not
+  retained. Profile ownership, server time, cache age, total deadline,
+  cancellation, and Retry-After are checked.
+- A service that connects the reader, transport, and coordinator. It rechecks
+  the source lease after the requests, suppresses duplicate refreshes, cancels
+  on consent withdrawal, and retains a cancelled 429's minimum wait. Source
+  metadata changes invalidate in-flight values; an unchanged credential does
+  not gain a new generation merely because of a temporary read failure.
+
+The format references are pinned [OpenUsage cache selection][desktop-cache-selection],
+[OpenUsage profile/usage transport][desktop-usage-client], and the cc-bar reader
+linked above. Their existence establishes technical precedent, not permission
+or successful runtime compatibility for this prototype.
+
+**Known integration limits:** no application UI, timer, durable backoff,
+cross-process lifecycle watcher, or executable entry point has been added.
+Observed account transitions are tested; a sign-out or A-to-B-to-A transition
+entirely between samples is not proven observable. Explicit owner approval does
+not remove provider, natural-rollover, second-Mac, or lifecycle release gates.
+Do not describe this checkpoint as Desktop-only support in public copy.
+
+The provider inquiry is [prepared separately](desktop-provider-permission-inquiry.md),
+**not sent**. No provider response or permission is implied by this implementation.
+
+#### Current-organization reads during Desktop writes
+
+An immutable SQLite connection can miss newer committed pages in a WAL file.
+It is therefore not sufficient to open every Cookies database with
+`immutable=1`. The candidate uses SQLite's native read-only `unix-none` VFS with
+connection-local `locking_mode=EXCLUSIVE` when a WAL exists. This creates a
+private heap WAL index instead of opening or changing the source SHM. Without
+a WAL it uses immutable reads, avoiding sidecar creation. No hand-written WAL
+parser or copy of the source database is used.
+
+Synthetic probes covered an active writer, a WAL without SHM, checkpointed and
+empty WALs, and normal WAL reads. The selected values included the latest WAL
+commit; file contents, metadata, and directory entries were unchanged after the
+reader closed. The writer could still commit during the probe. These results
+apply to the tested system SQLite, not every macOS release.
+
+The reader rejects rollback journals, orphan sidecars, unsafe paths, and source
+changes observed across the query. The query is limited to the current
+organization cookie, validates its host, path, UUID, and lifetime, and rejects
+conflicting organizations. It does not load session cookies for HTTP requests.
+Before/after metadata checks are not an atomic snapshot and do not guarantee
+protection against a hostile same-user process swapping and restoring paths.
+Actual Desktop compatibility remains unverified.
+
+References: [SQLite WAL without shared memory](https://www.sqlite.org/wal.html#use_of_wal_without_shared_memory)
+and [SQLite URI parameters](https://www.sqlite.org/uri.html).
+
+#### Independent review corrections
+
+The review identified three additional defects in the isolated implementation:
+
+- `LAContext.interactionNotAllowed` alone did not cover legacy Keychain ACL
+  prompts. A serialized synchronous guard now suppresses legacy interaction and
+  restores the previous setting on success or failure. The legacy Security APIs
+  are deprecated; their process-global setting needs coordination or a dedicated
+  helper before application integration. No real Keychain query was tested.
+- A 401/403 could be forgotten when the post-request source check failed. The
+  coordinator now retains the refusal for the issued credential generation, and
+  a temporary malformed store cannot make an unchanged credential look renewed.
+- Caller cancellation did not propagate through every awaited service stage.
+  The child task now covers the protected read, HTTP request, and post-read;
+  late success cannot become an observation. A late 429 still preserves its
+  minimum retry delay.
+- A completed child result could escape after consent changed but before the
+  outer actor resumed. The final return now rechecks the approval revision with
+  no further suspension. Independent review confirmed the correction. That
+  exact scheduler interleaving has no deterministic fixture; the existing
+  cancellation/revocation fixtures cover each injectable awaited stage.
+
+All regression fixtures use invented credentials and isolated temporary stores.
+They do not establish permission, live authentication success, natural weekly
+rollover, or second-Mac support.
+
+#### Protected-boundary QA result
+
+| Check | Result |
+| --- | --- |
+| Full Swift suite after final review correction | PASS, 472 tests / 17 suites |
+| Independent code review | Findings corrected; final read-only re-review found no additional required change |
+| Browser extension fixtures | PASS, 216 tests |
+| Browser installer fixtures | PASS, 81 tests; synthetic HOME |
+| Native-host integration fixtures | PASS, 7 tests; synthetic inputs |
+| Strict Swift format and diff whitespace | PASS |
+| Product-dependency isolation | PASS, including four intentional leak fixtures |
+| Release/distribution policy | PASS |
+| Bundle build/verification | PASS; launch/window/provider-trigger checks skipped; installed app unchanged |
+| Protected-store access and authenticated provider request | NOT RUN |
+| Real account renewal, natural weekly rollover, second Mac | NOT RUN |
+
+The same per-command Command Line Tools setup documented below was used. No
+Xcode agreement was accepted and no global toolchain setting was changed.
+The legacy Keychain interaction APIs emit deprecation warnings on a fresh build;
+this is documented integration debt, not a claim that they are a long-term API.
+The reader, transport, and orchestration have no production caller, timer, or
+executable. Passing these tests cannot change the installed application's display.
+
+[desktop-cache-selection]: https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeDesktopAuthStore%2BTokenCache.swift
+[desktop-usage-client]: https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeUsageClient.swift
+
+#### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before
 closeout: a 429 concurrent with account switching or clock rollback lost its

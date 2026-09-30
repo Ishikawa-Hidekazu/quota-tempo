@@ -168,21 +168,22 @@ struct DesktopUsageCoordinatorTests {
     #expect(coordinator.nextAllowedAt == next)
   }
 
-  @Test("Expired in-flight work times out and cannot overwrite a subsequent request")
+  @Test("Expired in-flight work cannot overwrite a subsequent credential generation")
   func timeoutAndOutOfOrder() throws {
     var coordinator = allowed()
     let context = context()
     let first = try requireRequest(&coordinator, context: context, now: now)
     #expect(coordinator.begin(context: context, now: now.addingTimeInterval(30)) == nil)
     #expect(coordinator.state == .timedOut)
-    let second = try requireRequest(&coordinator, context: context, now: now.addingTimeInterval(90))
+    let renewed = self.context()
+    let second = try requireRequest(&coordinator, context: renewed, now: now.addingTimeInterval(90))
     coordinator.complete(
       first, reply: response(401), context: nil, now: now.addingTimeInterval(90))
     #expect(coordinator.activeRequest == second)
     #expect(coordinator.state == .requesting)
     coordinator.complete(
       second, reply: try success(serverDate: now.addingTimeInterval(90)),
-      context: context, now: now.addingTimeInterval(91))
+      context: renewed, now: now.addingTimeInterval(91))
     #expect(coordinator.state == .current)
   }
 
@@ -497,6 +498,50 @@ struct DesktopUsageCoordinatorTests {
     #expect(coordinator.currentObservation(context: context, now: now) == nil)
     #expect(coordinator.state == (status == 401 ? .waitingForDesktopRenewal : .accessDenied))
     #expect(coordinator.activeRequest == nil)
+  }
+
+  @Test(
+    "Authentication refusal survives a failed post-request context read", arguments: [401, 403])
+  func refusalBeforeContextRevalidation(status: Int) throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(
+      request, reply: response(status), context: nil, now: now.addingTimeInterval(1))
+    #expect(coordinator.begin(context: context, now: now.addingTimeInterval(61)) == nil)
+    #expect(coordinator.state == (status == 401 ? .waitingForDesktopRenewal : .accessDenied))
+  }
+
+  @Test("A cancelled old-generation refusal cannot reject the current generation")
+  func lateRefusalIsGenerationBound() throws {
+    var coordinator = allowed()
+    let old = context()
+    let first = try requireRequest(&coordinator, context: old, now: now)
+    let current = context()
+    let second = try requireRequest(&coordinator, context: current, now: now.addingTimeInterval(61))
+    coordinator.complete(
+      first, reply: response(401), context: current, now: now.addingTimeInterval(62))
+    coordinator.complete(
+      second, reply: try success(serverDate: now.addingTimeInterval(62)), context: current,
+      now: now.addingTimeInterval(63))
+    #expect(coordinator.state == .current)
+    #expect(coordinator.observation != nil)
+  }
+
+  @Test("A late refusal for the same generation also invalidates a newer response")
+  func lateSameGenerationRefusalWins() throws {
+    var coordinator = allowed()
+    let context = context()
+    let first = try requireRequest(&coordinator, context: context, now: now)
+    _ = coordinator.currentObservation(context: nil, now: now.addingTimeInterval(1))
+    let second = try requireRequest(&coordinator, context: context, now: now.addingTimeInterval(61))
+    coordinator.complete(
+      first, reply: response(403), context: context, now: now.addingTimeInterval(62))
+    coordinator.complete(
+      second, reply: try success(serverDate: now.addingTimeInterval(62)), context: context,
+      now: now.addingTimeInterval(63))
+    #expect(coordinator.state == .accessDenied)
+    #expect(coordinator.observation == nil)
   }
 
   private func requireRequest(
