@@ -383,3 +383,19 @@ neither may inherit an unrelated old status. These failed before their fixes.
 candidate acceptance, real rollover, restart/recovery, second-Mac and normal
 release verification, remain open. No unsupported claim was promoted to a
 Desktop-only guarantee.
+
+### September 30: browser tab absence
+
+A fresh Chrome extension inventory contained no `claude.ai` tab while the native
+bridge record retained an older successful observation. Its capture timestamp
+had not advanced. This is consistent with the existing `waitingForTab` recovery
+path: it schedules another check but cannot fetch a new authenticated observation
+without a Claude tab. The worker's private storage was not inspected, so this
+does not prove every earlier missed refresh had the same cause.
+
+The background-control connection did not support hidden tab creation; the
+attempt was rejected before creation. No foreground, new-window, OS-input, or
+alternative browser-control action was used. The owner was asked to open one
+Claude usage tab and leave it open. Recovery remains unverified until a new
+native observation arrives. No extension, native host, or installed app was
+replaced. Browser tab-dependent recovery is not Desktop-only acquisition.

@@ -90,7 +90,7 @@ QuotaTempo performs a bounded refresh for enabled providers when it starts, ever
 - `P≈` means the current plan is estimated by advancing the last confirmed weekly reset exactly once. The detail view identifies this basis. A newly observed reset replaces the estimate automatically, and QuotaTempo never uses an estimate to create another estimate.
 - **Reset time unavailable** means the weekly balance is valid, but the provider did not supply the reset timestamp needed to calculate the plan. QuotaTempo keeps `W` visible and shows `P` and the difference as `—`.
 - **Unavailable** means required data was missing, invalid, expired, or changed upstream.
-- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. QuotaTempo hides percentages rather than inferring availability from them.
+- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. In the unreleased correction, a validated quota-exhaustion response keeps its reported balance (including `0%`) and reset schedule visible, but does not show usable capacity or remove the restriction. Unknown and spend-control restrictions still hide percentages.
 
 A failed refresh does not make an older observation look newer. If a bounded reset lookup fails while a valid local balance remains available, QuotaTempo keeps the balance and exposes the failed attempt separately. Acquisition status and observation time remain separate.
 

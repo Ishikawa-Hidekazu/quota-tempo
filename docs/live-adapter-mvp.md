@@ -27,7 +27,7 @@ For enabled providers, the app performs a bounded refresh on launch through the 
 - stores only a normalized snapshot
 - preserves a previous normalized snapshot when refresh fails
 
-The child receives a minimal environment containing only `HOME`, a fixed `PATH`, `TMPDIR`, and `LANG`. Codex owns its authentication; QuotaTempo does not open authentication storage. If Codex reports that ordinary usage is unavailable, spend control is reached, or a rate-limit restriction is active, QuotaTempo hides the percentages and exposes a stable restricted state instead of inferring recovery from reset metadata.
+The child receives a minimal environment containing only `HOME`, a fixed `PATH`, `TMPDIR`, and `LANG`. Codex owns its authentication; QuotaTempo does not open authentication storage. If Codex reports a restriction, QuotaTempo retains a stable restricted state and never infers recovery from reset metadata. The unreleased known-quota-exhaustion correction retains validated balance/reset values only for explicit `rate_limit_reached` with no spend-control restriction and a validated exhausted current window. Unknown and spend-control restrictions still hide values. Available capacity is withheld while restricted; see the [result mapping](provider-freshness-contract.md#result-mapping).
 
 For a bounded development smoke that writes only to a caller-selected temporary path:
 
@@ -126,3 +126,31 @@ Repeated bounded PTY checks against the installed official Claude Code CLI retur
 The following artifact is rendered exclusively from the bundled `live-adapters` fixture. It demonstrates that a failed Codex refresh remains separate from the age of the preserved snapshot and that Claude is labeled as a local observation.
 
 ![Fixture-only live-adapter state](assets/live-adapter-mvp.png)
+
+## September 30: exhausted Codex window regression
+
+An official app-server response can report a quota-exhaustion restriction while
+still returning valid utilization and reset timestamps. The adapter previously
+discarded those windows. The unreleased candidate preserves them only for the
+narrow validated exhaustion case described above; other restrictions remain
+fail-closed, with no alternate-CLI retry. The detail heading continues to show
+the restriction, and capacity available until a checkpoint is withheld.
+
+- Swift tests: 480 tests in 17 suites passed in three consecutive final runs.
+- Strict Swift formatting, release policy, distribution policy, and Desktop
+  candidate product-isolation checks passed.
+- App-bundle assembly passed with `--skip-launch`; provider-trigger and live
+  application-window acceptance were not run.
+- English and Japanese offscreen renders of the synthetic `codex-exhausted`
+  fixture showed zero remaining, reset and target values, a prominent restriction,
+  and no available-capacity claim. This is not installed-app UI acceptance.
+- A bounded official-CLI read into an isolated temporary output succeeded, but
+  the provider was no longer returning the exhausted state by then. The exhausted
+  response regression is verified synthetically, not by a live before/after run.
+- A parallel-test descriptor-reuse race in the synthetic Desktop WAL test was
+  corrected by identifying baseline descriptors by their fixture path. The
+  production Desktop reader was unchanged; the final three full runs include
+  an explicit descriptor-reuse regression.
+
+The installed app and browser extension were not replaced. These checks do not
+close the separate browser recovery, Desktop-only acquisition, or release gates.

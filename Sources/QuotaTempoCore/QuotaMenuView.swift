@@ -574,7 +574,7 @@ public struct QuotaMenuView: View {
         }
         .layoutPriority(1)
         Spacer()
-        Text(self.copy.status(plan.status))
+        Text(self.copy.status(for: plan))
           .font(.subheadline.weight(.medium))
           .multilineTextAlignment(.trailing)
           .fixedSize(horizontal: false, vertical: true)
@@ -713,7 +713,7 @@ public struct QuotaMenuView: View {
         ? self.copy.text("claude.reset.help") : "",
       plan.errorCode.map { "\(self.copy.text("acquisition.error")) \(self.copy.error($0))" } ?? "",
       plan.targetIsEstimated ? self.copy.text("target.basis.estimated") : "",
-      self.copy.status(plan.status),
+      self.copy.status(for: plan),
     ]
     if plan.provider == .codex, let source = plan.codexExecutableSource {
       parts.append(

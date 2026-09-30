@@ -10,6 +10,27 @@ struct QuotaPlannerTests {
   private let now = Date(timeIntervalSince1970: 1_789_300_800)
   private let week: TimeInterval = 604_800
 
+  @Test("Restricted quota metadata never implies immediately usable capacity")
+  func restrictedQuotaPreservesMetadataWithoutAvailability() {
+    for remaining in [0.0, 80.0] {
+      let reset = self.now.addingTimeInterval(self.week / 2)
+      let snapshot = ProviderSnapshot(
+        provider: .codex, source: .codexAppServer, capturedAt: self.now,
+        weekly: QuotaWindow(
+          remainingPercent: remaining, durationSeconds: self.week, resetAt: reset),
+        fiveHour: nil, lastAttemptAt: self.now,
+        sourceState: .accessRestricted, errorCode: .usageRestricted)
+      let plan = QuotaPlanner.evaluate(snapshot, now: self.now)
+      #expect(plan.weeklyRemaining == remaining)
+      #expect(plan.weeklyResetAt == reset)
+      #expect(plan.targetNow == 50)
+      #expect(plan.vsTarget == remaining - 50)
+      #expect(plan.availableUntilCheckpoint == nil)
+      #expect(MenuCopy(languageCode: "en").status(for: plan) == "Provider access restricted")
+      #expect(MenuCopy(languageCode: "ja").status(for: plan) == "provider側で利用制限中")
+    }
+  }
+
   @Test("Detail dates include a localized weekday")
   func detailDatesIncludeLocalizedWeekday() {
     let date = Date(timeIntervalSince1970: 1_789_001_280)

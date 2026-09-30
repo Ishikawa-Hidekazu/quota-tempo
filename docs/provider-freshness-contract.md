@@ -39,7 +39,7 @@ Normalized snapshots use an explicit schema-version wrapper. RC13 accepts schema
 
 - `never_observed`: no valid snapshot has been received.
 - `observation_succeeded`: the latest acquisition produced a valid snapshot.
-- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable; percentages and plan values are hidden.
+- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable. Unknown and spend-control restrictions hide quota values. The unreleased known-exhaustion exception below retains validated quota metadata, not permission to use the service.
 - `attempt_timed_out`: a bounded provider pull timed out; an older valid snapshot may remain.
 - `attempt_failed`: a provider refresh exited or decoded unsuccessfully; an older valid snapshot may remain.
 - `awaiting_event` and `bridge_unavailable`: retained only for the retired, inactive Claude status-line bridge.
@@ -74,10 +74,17 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 | No recognized Codex installation exists | `attempt_failed` | Show an install/open recovery message. |
 | A known `0.133.x` or earlier Codex version fails | `attempt_failed` | Show an update-specific recovery message. |
 | The app-server protocol is incompatible | `attempt_failed` | Ask the user to update Codex and QuotaTempo. |
-| Provider says ordinary usage is unavailable or a spend/rate restriction is active | `access_restricted` | Hide percentage, target, and checkpoint values; show `Access restricted`. |
+| Explicit `rate_limit_reached`, no spend-control restriction, and a validated exhausted current window (unreleased) | `access_restricted` | Retain validated weekly balance/reset and mathematical plan values; keep the restriction prominent and withhold available capacity. |
+| Ordinary usage is unavailable without the validated known-exhaustion condition, or a spend/unknown restriction is active | `access_restricted` | Hide percentage, target, and checkpoint values; show `Access restricted`. |
 | Reset time has passed | Any | Invalidate the quota window immediately; do not extrapolate a new window. |
 
 The UI must show both `Captured` and, after a failed attempt, `Last refresh attempt`. A failed attempt does not make an old snapshot newer.
+
+The known-exhaustion exception fixes a distinction between unavailable usage data
+and a reported zero balance. It never clears `access_restricted`, retries through
+another CLI, consumes a reset credit, or treats a future reset as restored access.
+The [official app-server field definitions](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)
+separate window utilization/reset metadata from the server-classified limit state.
 
 ## Experimental browser observation (unreleased)
 

@@ -1,0 +1,19 @@
+{
+  "id": "codex-exhausted",
+  "now": "2026-09-13T00:00:00Z",
+  "snapshots": [
+    {
+      "provider": "codex",
+      "source": "codexAppServer",
+      "capturedAt": "2026-09-13T00:00:00Z",
+      "weekly": {
+        "remainingPercent": 0,
+        "durationSeconds": 604800,
+        "resetAt": "2026-09-20T00:00:00Z"
+      },
+      "lastAttemptAt": "2026-09-13T00:00:00Z",
+      "sourceState": "accessRestricted",
+      "errorCode": "usageRestricted"
+    }
+  ]
+}

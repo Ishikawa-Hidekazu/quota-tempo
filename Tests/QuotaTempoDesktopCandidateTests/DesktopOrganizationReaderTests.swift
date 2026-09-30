@@ -567,25 +567,30 @@ struct DesktopOrganizationReaderTests {
     try fixture.insert(value: "", encrypted: Self.cipher())
     try fixture.execute("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0")
     try fixture.execute("UPDATE cookies SET value=''")
-    // Inspect only new descriptors for this unique synthetic fixture. Other
-    // tests may run concurrently and their paths/descriptors are ignored.
-    let descriptors = Set((0..<4_096).map { Int32($0) }.filter { fcntl($0, F_GETFD) >= 0 })
+    let paths = [
+      fixture.database.path, fixture.database.path + "-wal", fixture.database.path + "-shm",
+    ]
+    func sourcePath(_ descriptor: Int32) -> String? {
+      var bytes = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+      let status = bytes.withUnsafeMutableBufferPointer {
+        fcntl(descriptor, F_GETPATH, $0.baseAddress!)
+      }
+      guard status == 0 else { return nil }
+      let path = bytes.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+      return paths.contains(path) ? path : nil
+    }
+    // Only the fixture's writer descriptors remain open throughout this read.
+    // Other tests can close unrelated FDs and the reader can reuse those numbers.
+    let unrelated = (0..<8).map { _ in open("/dev/null", O_RDONLY | O_CLOEXEC) }
+    let descriptors = Set((0..<4_096).map { Int32($0) }.filter { sourcePath($0) != nil })
+    for descriptor in unrelated where descriptor >= 0 { close(descriptor) }
     var inspected = false
     let result = try DesktopOrganizationReader.read(directory: fixture.directory) { _ in
       var mainCount = 0
       var walCount = 0
       var shmCount = 0
       for descriptor in Int32(0)..<4_096 where !descriptors.contains(descriptor) {
-        var bytes = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        let status = bytes.withUnsafeMutableBufferPointer {
-          fcntl(descriptor, F_GETPATH, $0.baseAddress!)
-        }
-        guard status == 0 else { continue }
-        let path = bytes.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
-        guard
-          [fixture.database.path, fixture.database.path + "-wal", fixture.database.path + "-shm"]
-            .contains(path)
-        else { continue }
+        guard let path = sourcePath(descriptor) else { continue }
         #expect(fcntl(descriptor, F_GETFL) & O_ACCMODE == O_RDONLY)
         if path == fixture.database.path { mainCount += 1 }
         if path == fixture.database.path + "-wal" { walCount += 1 }

@@ -28,6 +28,13 @@ public struct MenuCopy: Sendable {
     self.text("freshness.\(freshness.rawValue)")
   }
 
+  public func status(for plan: PlannedProvider) -> String {
+    if plan.sourceState == .accessRestricted {
+      return self.sourceState(.accessRestricted)
+    }
+    return self.status(plan.status)
+  }
+
   public func sourceState(_ state: SourceState) -> String {
     self.text("source.state.\(state.rawValue)")
   }
