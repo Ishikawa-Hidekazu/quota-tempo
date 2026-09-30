@@ -84,7 +84,11 @@ struct DesktopUsageCoordinator: Sendable {
   private(set) var observation: DesktopUsageObservation?
   private(set) var activeRequest: DesktopUsageRequest?
   private(set) var lastAttemptAt: Date?
-  private(set) var nextAllowedAt: Date?
+  var nextAllowedAt: Date? {
+    [localNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
+  }
+  private var localNextAllowedAt: Date?
+  private var serviceNotBefore: Date?
   private var context: DesktopUsageContext?
   private var rejectedGenerations: [(generation: UUID, state: DesktopUsageState)] = []
   private var issuedRequests: [DesktopUsageRequest] = []
@@ -97,9 +101,8 @@ struct DesktopUsageCoordinator: Sendable {
     observation = nil
     activeRequest = nil
     context = nil
-    rejectedGenerations = []
     state = permission == .allowed ? .ready : permissionState
-    // A permission toggle never bypasses an outstanding service backoff.
+    // Consent is not credential renewal and cannot clear refusals or service backoff.
   }
 
   mutating func begin(context newContext: DesktopUsageContext?, now: Date) -> DesktopUsageRequest? {
@@ -123,7 +126,7 @@ struct DesktopUsageCoordinator: Sendable {
     issuedRequests.append(request)
     issuedRequests = Array(issuedRequests.suffix(8))
     lastAttemptAt = now
-    nextAllowedAt = now.addingTimeInterval(60)
+    localNextAllowedAt = now.addingTimeInterval(60)
     state = .requesting
     return request
   }
@@ -146,8 +149,8 @@ struct DesktopUsageCoordinator: Sendable {
     if case .response(429, _, _, _, let retryAfter, _) = reply {
       let receivedClock = Self.validDate(now) ? now : request.startedAt
       let conservativeClock = max(latestClock ?? request.startedAt, receivedClock)
-      extendDelay(until: conservativeClock.addingTimeInterval(60))
-      if let retryAfter, Self.validDate(retryAfter) { extendDelay(until: retryAfter) }
+      extendServiceDelay(until: conservativeClock.addingTimeInterval(60))
+      if let retryAfter, Self.validDate(retryAfter) { extendServiceDelay(until: retryAfter) }
     }
     guard activeRequest == request else { return }
     guard checkClock(now), synchronize(newContext, now: now) else { return }
@@ -163,14 +166,14 @@ struct DesktopUsageCoordinator: Sendable {
     case .timeout:
       fail(.timedOut, now: now)
     case .response(
-      let status, let profileOwner, let serverDate, let cacheAge, let retryAfter, let body):
+      let status, let profileOwner, let serverDate, let cacheAge, _, let body):
       if status == 401 || status == 403 {
         observation = nil
         state = status == 401 ? .waitingForDesktopRenewal : .accessDenied
         return
       }
       if status == 429 {
-        fail(.rateLimited, now: now, retryAfter: retryAfter)
+        fail(.rateLimited, now: now)
         return
       }
       guard status == 200 else {
@@ -288,27 +291,28 @@ struct DesktopUsageCoordinator: Sendable {
   }
 
   private mutating func checkClock(_ now: Date) -> Bool {
-    guard Self.validDate(now), latestClock.map({ now >= $0 }) ?? true else {
-      observation = nil
-      activeRequest = nil
-      state = .invalidClock
-      return false
+    if Self.validDate(now) {
+      let previousClock = latestClock
+      latestClock = now
+      if let previousClock, now < previousClock {
+        // Rebase only local relative waits. Require a stable minute (or the
+        // remaining backoff, up to 15 minutes); never shorten a service deadline.
+        let remaining = localNextAllowedAt?.timeIntervalSince(previousClock) ?? 0
+        localNextAllowedAt = now.addingTimeInterval(max(60, min(remaining, 900)))
+      } else {
+        return true
+      }
     }
-    latestClock = now
-    return true
+    observation = nil
+    activeRequest = nil
+    state = .invalidClock
+    return false
   }
 
-  private mutating func fail(
-    _ state: DesktopUsageState, now: Date, retryAfter: Date? = nil
-  ) {
+  private mutating func fail(_ state: DesktopUsageState, now: Date) {
     failureCount = min(failureCount + 1, 5)
     let interval = min(60 * pow(2, Double(failureCount - 1)), 900)
-    let earliest = now.addingTimeInterval(interval)
-    if let retryAfter, Self.validDate(retryAfter), retryAfter > earliest {
-      extendDelay(until: retryAfter)
-    } else {
-      extendDelay(until: earliest)
-    }
+    extendDelay(until: now.addingTimeInterval(interval))
     self.state = state
     // Retain the original observation time only; never refresh or extend its reset.
   }
@@ -318,7 +322,11 @@ struct DesktopUsageCoordinator: Sendable {
   }
 
   private mutating func extendDelay(until date: Date) {
-    nextAllowedAt = max(nextAllowedAt ?? date, date)
+    localNextAllowedAt = max(localNextAllowedAt ?? date, date)
+  }
+
+  private mutating func extendServiceDelay(until date: Date) {
+    serviceNotBefore = max(serviceNotBefore ?? date, date)
   }
 
   private static func currentWindows(_ values: DesktopUsageValues, now: Date) -> DesktopUsageValues

@@ -624,11 +624,11 @@ could clear a future caller's display. The service now returns an explicit
 original acquisition completes. Success, HTTP failure, credential-load failure,
 retained observations and consent withdrawal have regression coverage.
 
-Two integration findings remain open: temporary Keychain lock conditions must
-eventually be distinguished from access denial without retrying a denied ACL,
-and a wall-clock rollback can keep the pure coordinator blocked until the earlier
-maximum time is reached. Neither is evidence of a successful real credential
-renewal or background lifecycle. They must be resolved before unattended release.
+At this checkpoint, two integration findings remained open: temporary Keychain
+lock conditions must be distinguished from access denial without retrying a
+denied ACL, and a wall-clock rollback could keep the coordinator blocked until
+the earlier maximum time was reached. The rollback correction is recorded below;
+temporary Keychain-lock recovery and real credential renewal remain release gates.
 
 Validation: 483 Swift tests / 17 suites passed; strict format, release and
 distribution policy, product-dependency isolation, and eight inert diagnostic
@@ -688,6 +688,95 @@ diagnostics. Strict formatting, whitespace, distribution/release policies,
 product isolation and eight inert helper argument cases passed. Independent
 source-only review found no required correction; the reviewer did not run the
 live probe. Existing legacy-Keychain API deprecation warnings remain.
+
+### Isolated automatic Desktop preview, October 1
+
+The same manually linked helper now has an explicitly authorized
+`--menu-bar-preview` mode. It is not part of a SwiftPM product, app bundle,
+installer or updater feed. It does not replace the installed QuotaTempo app.
+The preview adds a separately labelled `QT Desktop` menu-bar item, reuses the
+existing anchored popover view, and displays only Claude's Desktop-connected
+observation. It never falls back to a browser or CLI.
+
+A single long-lived service handles startup, a 30-second context/acquisition tick,
+menu opening, wake and manual refresh. Network requests retain the coordinator's
+five-minute interval, authentication-generation refusals and service backoff.
+An independent one-second display clock expires values even while acquisition is
+waiting. Display ticks never count as successful observations or invoke transport.
+No login item is installed. Quitting cancels the loop and withdraws local consent.
+A process-lifetime empty lock prevents duplicate preview instances. Display values,
+identity bindings and display preferences are not persisted by this preview.
+
+The presentation mapper preserves the actual capture time, clears invalid,
+context-changed, expired-reset or 15-minute-old observations, and never adds
+seven days to a reset. It emits a dedicated `claudeDesktopDirect` source without
+identity fingerprints. Desktop failures use Desktop-specific English/Japanese
+copy, not instructions to log into Claude Code. A duplicate in-flight disposition
+cannot erase a valid display. The mapper does not invent `lastAttemptAt` from a
+display tick or a backoff deadline.
+
+Clock rollback now discards observations and active requests, rebases only the
+remaining local wait to a conservative 60-900 seconds, and can recover without
+waiting for the old maximum wall clock. Provider Retry-After deadlines are never
+shortened. Permission toggles no longer clear a 401/403 credential-generation
+refusal. These are synthetic lifecycle fixes, not evidence of a real renewal.
+
+Independent review corrected three preview defects: cleanup waiting indefinitely
+for a reader, display time freezing during acquisition, and manual refresh being
+eligible for an automatic-update QA result. The QA deadline is now independent
+of actor cleanup, exit cleanup has its own hard deadline, and bounded QA disables
+menu/manual/wake refresh. Another integration finding showed that reader consent
+changes regenerated an unchanged credential's identity. A private in-memory,
+redacted digest/revision now preserves the refusal while releasing the usable
+lease; tests cover both 401/403 and actual synthetic renewal. No digest is emitted
+or persisted. Independent follow-up source reviews found no remaining blocker
+within these changes.
+
+Local commands, after building and explicitly signing the same helper:
+
+```bash
+# Starts only the local preview; never requests an interactive Keychain prompt.
+scripts/desktop-local-preview.command
+
+# Synthetic offscreen English/Japanese normal/failure views. No protected access.
+dist/desktop-local-probe/QuotaTempoDesktopLocalProbe --render-preview-fixtures
+
+# Bounded live acceptance: two distinct captures at least five minutes apart,
+# with W/P/difference available, or exit with failure after 400 seconds.
+dist/desktop-local-probe/QuotaTempoDesktopLocalProbe \
+  --consent-desktop-read-only --acknowledge-provider-permission-unconfirmed \
+  --menu-bar-preview-qa
+```
+
+The local wrapper verifies the designated signing identity. It does not build,
+sign, log in, alter provider files or use the interactive diagnostic as a fallback.
+The bounded live check does not open the popover or activate another application.
+Its success is not evidence of a user-click popover test, sleep/wake acceptance,
+natural weekly rollover, real credential renewal, or second-Mac acceptance.
+Those checks, restart-safe backoff/refusal handling, temporary Keychain-lock
+classification and public-release gates remain open.
+
+Validation of this checkpoint:
+
+- Final signed preview: **automatic update PASS**, with distinct server captures
+  at **2026-09-30 22:18:10 UTC** and **22:23:18 UTC**, 308 seconds apart.
+  Both profile verification and usage acceptance succeeded; W/P/difference were
+  available through the Desktop-only normalized presentation. There was no menu,
+  manual or wake refresh, browser/CLI fallback, extra login, credential renewal,
+  interactive access prompt or provider-store write. Bounded QA exited normally.
+- Full Swift suite: **531 tests / 20 suites PASS**, repeated with outbound network
+  denied. The first network-denied driver run failed during nested SwiftPM
+  manifest sandbox setup, before tests. Disabling only the nested SwiftPM sandbox
+  while retaining the outer network denial allowed all tests to run and pass.
+- Strict formatting, whitespace, strings parsing, release/distribution policies,
+  product-dependency isolation and **16 inert helper argument cases PASS**.
+- Four synthetic offscreen views (English/Japanese, current/unavailable) rendered
+  and visually inspected. The unavailable copy does not direct users to CLI login.
+- The signed local wrapper rejects a second preview instance before constructing
+  the acquisition service. Signature verification passed.
+- Earlier compile-order/fixture-owner errors and one formatting finding were
+  corrected before the final suite. Legacy Keychain deprecation warnings and a
+  test-only weak-binding style warning remain; there were no test failures.
 
 #### First offline checkpoint QA result
 

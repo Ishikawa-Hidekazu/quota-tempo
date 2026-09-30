@@ -14,6 +14,7 @@
 "source.codexAppServer" = "Codex app-server";
 "source.claudeStatusLine" = "Claude Code status line";
 "source.claudeDesktopHistory" = "Claude Desktop history";
+"source.claudeDesktopDirect" = "Claude Desktop connection";
 "source.claudeLocalCache" = "Claude local cache";
 "source.claudeLocalMerged" = "Claude local sources";
 "source.claudeCLI" = "Claude CLI";
@@ -35,6 +36,7 @@
 "stale.comparison.confirmed.help" = "W? is the last observed balance. P is calculated from the last confirmed reset. Difference and available capacity are waiting for a current balance.";
 "stale.comparison.estimated.help" = "W? is the last observed balance. P≈ is calculated from a one-window reset estimate. Difference and available capacity are waiting for a current balance.";
 "claude.reset.help" = "QuotaTempo could not confirm Claude's current reset time. Confirm that Claude Code is signed in, then refresh.";
+"claude.desktop.reset.help" = "Claude Desktop's weekly reset cannot yet be used for pacing. Refresh after Desktop updates its usage.";
 "source.state.neverObserved" = "Never observed";
 "source.state.observationSucceeded" = "Observation succeeded";
 "source.state.accessRestricted" = "Provider access restricted";
@@ -56,6 +58,10 @@
 "error.protocolIncompatible" = "This Codex app-server is not compatible. Update Codex and QuotaTempo, then refresh.";
 "error.temporaryFailure" = "Codex usage is temporarily unavailable. Confirm that Codex is signed in, then refresh.";
 "error.authenticationRequired" = "Claude Code CLI is signed out. Run `claude auth login` in Terminal, then refresh. Claude Desktop sign-in is separate.";
+"error.claudeDesktopDirect.authenticationRequired" = "Open Claude Desktop and confirm that you are signed in. Refresh after Desktop renews its connection.";
+"error.claudeDesktopDirect.temporaryFailure" = "Claude Desktop usage is temporarily unavailable. Wait before refreshing again.";
+"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop connection is unavailable. Check Desktop sign-in and local preview access permissions.";
+"error.claudeDesktopDirect.usageRestricted" = "Claude Desktop access is restricted. Check your Desktop account permissions before refreshing.";
 "freshness.live" = "Current";
 "freshness.recent" = "Recent";
 "freshness.stale" = "Stale";

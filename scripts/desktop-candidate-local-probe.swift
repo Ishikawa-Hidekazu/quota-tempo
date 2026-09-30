@@ -1,13 +1,23 @@
 import Foundation
+import QuotaTempoCore
 import Security
 
 @testable import QuotaTempoDesktopCandidate
 
 // Manually linked local diagnostic, never part of a SwiftPM product or app bundle.
-// No raw result/error interpolation, credential output, persistence, or retries.
+// No raw result/error interpolation, credential output, or observation persistence.
+// One-shot by default; the explicit local preview reuses the guarded service.
 @main
 struct DesktopCandidateLocalProbe {
-  static func main() async {
+  @MainActor static func main() async {
+    setbuf(stdout, nil)
+    if Array(CommandLine.arguments.dropFirst()) == ["--render-preview-fixtures"] {
+      do { try DesktopPreviewApplication.renderFixtures() } catch {
+        print("{\"status\":\"synthetic_render_failed\"}")
+        exit(2)
+      }
+      return
+    }
     if Array(CommandLine.arguments.dropFirst()) == ["--keychain-status-only"] {
       var keychain: SecKeychain?
       var status: SecKeychainStatus = 0
@@ -25,8 +35,60 @@ struct DesktopCandidateLocalProbe {
       "--consent-desktop-read-only", "--acknowledge-provider-permission-unconfirmed",
     ]
     let interactive = arguments == requiredArguments + ["--request-keychain-access"]
-    guard arguments == requiredArguments || interactive else {
+    let preview = arguments == requiredArguments + ["--menu-bar-preview"]
+    let previewQA = arguments == requiredArguments + ["--menu-bar-preview-qa"]
+    guard arguments == requiredArguments || interactive || preview || previewQA else {
       print("{\"status\":\"explicit_local_consent_required\"}")
+      return
+    }
+    if preview || previewQA {
+      let instanceLock: DesktopPreviewInstanceLock
+      do {
+        instanceLock = try DesktopPreviewInstanceLock(
+          directory: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent())
+      } catch {
+        print("{\"status\":\"preview_instance_lock_unavailable\"}")
+        return
+      }
+      let previewWatchdog =
+        previewQA
+        ? Task.detached {
+          try? await Task.sleep(for: .seconds(400))
+          guard !Task.isCancelled else { return }
+          print("{\"previewQA\":\"deadline_exceeded\"}")
+          exit(2)
+        } : nil
+      let diagnostics = TransportDiagnostics()
+      let service = DesktopUsageCandidateService(fetch: { request, lease in
+        await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
+          .fetch(request: request, lease: lease)
+      })
+      DesktopPreviewApplication.run(service: service, qa: previewQA) { result, scenario in
+        // Values stay in the UI; terminal output is bounded, fixed metadata only.
+        let plan = scenario.snapshots.first.map { QuotaPlanner.evaluate($0, now: scenario.now) }
+        var fields: [String: Any] = [
+          "status": result.state.rawValue,
+          "desktopOnly": true,
+          "providerPermissionConfirmed": false,
+          "observationAvailable": result.observation != nil,
+          "planVisible": plan?.targetNow != nil && plan?.vsTarget != nil,
+          "transportStages": diagnostics.takeStages(),
+          "capturedAt": result.observation.map {
+            ISO8601DateFormatter().string(from: $0.capturedAt)
+          } ?? "",
+        ]
+        if let error = result.credentialError { fields["credentialError"] = errorCode(error) }
+        if let next = result.nextAllowedAt {
+          fields["nextAllowedAt"] = ISO8601DateFormatter().string(from: next)
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: fields, options: .sortedKeys),
+          let output = String(data: data, encoding: .utf8)
+        {
+          print(output)
+        }
+      }
+      previewWatchdog?.cancel()
+      withExtendedLifetime(instanceLock) {}
       return
     }
     let watchdog = Task.detached {
@@ -122,6 +184,13 @@ private final class TransportDiagnostics: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return values.map(\.rawValue)
+  }
+  func takeStages() -> [String] {
+    lock.lock()
+    defer { lock.unlock() }
+    let result = values.map(\.rawValue)
+    values.removeAll(keepingCapacity: true)
+    return result
   }
 }
 

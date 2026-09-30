@@ -15,6 +15,12 @@ const cases = [
   [required[0], "--request-keychain-access"],
   [...required, "--unexpected"], [...required].reverse(),
   [...required, "--request-keychain-access", "--unexpected"],
+  ["--menu-bar-preview"], [required[0], "--menu-bar-preview"],
+  [...required, "--menu-bar-preview", "--request-keychain-access"],
+  [...required, "--menu-bar-preview", "--unexpected"],
+  ["--menu-bar-preview-qa"], [required[1], "--menu-bar-preview-qa"],
+  [...required, "--menu-bar-preview-qa", "--request-keychain-access"],
+  [...required, "--render-preview-fixtures"],
 ];
 for (const args of cases) {
   const output = execFileSync(binary, args, {

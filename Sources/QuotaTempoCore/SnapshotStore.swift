@@ -219,6 +219,11 @@ public enum NormalizedSnapshotCodec {
   private static func hasValidExecutableMetadata(_ snapshot: ProviderSnapshot) -> Bool {
     switch snapshot.provider {
     case .claude:
+      if snapshot.source == .claudeDesktopDirect,
+        snapshot.claudeAccountFingerprint != nil || snapshot.claudeOrganizationFingerprint != nil
+      {
+        return false
+      }
       return snapshot.codexExecutableSource == nil && snapshot.codexExecutableVersion == nil
         && self.isValidClaudeFingerprint(snapshot.claudeAccountFingerprint)
         && self.isValidClaudeFingerprint(snapshot.claudeOrganizationFingerprint)
@@ -262,7 +267,7 @@ public enum NormalizedSnapshotCodec {
     case .claude:
       return source == .claudeStatusLine || source == .claudeDesktopHistory
         || source == .claudeLocalCache || source == .claudeLocalMerged || source == .claudeCLI
-        || source == .claudeBrowser
+        || source == .claudeBrowser || source == .claudeDesktopDirect
     }
   }
 

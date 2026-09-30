@@ -14,6 +14,7 @@
 "source.codexAppServer" = "Codex app-server";
 "source.claudeStatusLine" = "Claude Code status line";
 "source.claudeDesktopHistory" = "Claude Desktop履歴";
+"source.claudeDesktopDirect" = "Claude Desktop接続";
 "source.claudeLocalCache" = "Claudeローカルキャッシュ";
 "source.claudeLocalMerged" = "Claudeローカル統合";
 "source.claudeCLI" = "Claude CLI";
@@ -35,6 +36,7 @@
 "stale.comparison.confirmed.help" = "W?は最後に確認した残量です。Pは最後に確認したリセットから計算しています。目標差と利用可能量は最新の残量待ちです。";
 "stale.comparison.estimated.help" = "W?は最後に確認した残量です。P≈はリセットを1期間だけ進めた推定から計算しています。目標差と利用可能量は最新の残量待ちです。";
 "claude.reset.help" = "Claudeの現在のリセット時刻を確認できませんでした。Claude Codeへサインイン済みか確認してから更新してください。";
+"claude.desktop.reset.help" = "Claude Desktopの週間リセット時刻から現在の目標残量を計算できません。Desktopの利用状況が更新されてから再取得してください。";
 "source.state.neverObserved" = "未取得";
 "source.state.observationSucceeded" = "取得成功";
 "source.state.accessRestricted" = "provider側で利用制限中";
@@ -56,6 +58,10 @@
 "error.protocolIncompatible" = "Codex app-serverに互換性がありません。CodexとQuotaTempoを更新してから再度更新してください。";
 "error.temporaryFailure" = "Codexの利用状況を一時的に取得できません。Codexへログイン済みか確認してから更新してください。";
 "error.authenticationRequired" = "Claude Code CLIは未ログインです。ターミナルで`claude auth login`を実行し、認証後に更新してください。Claude Desktopのログインとは別です。";
+"error.claudeDesktopDirect.authenticationRequired" = "Claude Desktopを開いてログイン状態を確認してください。Desktop側の接続が更新されてから再取得してください。";
+"error.claudeDesktopDirect.temporaryFailure" = "Claude Desktopの利用状況を一時的に取得できません。しばらく待ってから再取得してください。";
+"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop接続を利用できません。Desktopのログイン状態とローカルプレビューのアクセス許可を確認してください。";
+"error.claudeDesktopDirect.usageRestricted" = "Claude Desktopへのアクセスが制限されています。Desktopアカウントの権限を確認してから再取得してください。";
 "freshness.live" = "最新";
 "freshness.recent" = "最近";
 "freshness.stale" = "更新待ち";

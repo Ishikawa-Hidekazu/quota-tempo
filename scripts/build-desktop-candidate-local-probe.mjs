@@ -17,7 +17,8 @@ const objects = ["QuotaTempoDesktopCandidate", "QuotaTempoCore"].flatMap((target
 });
 mkdirSync(`${root}dist/desktop-local-probe`, { recursive: true, mode: 0o700 });
 execFileSync("xcrun", [
-  "swiftc", "-parse-as-library", "-I", `${build}/Modules`,
-  `${root}scripts/desktop-candidate-local-probe.swift`, ...objects, "-o", output,
+  "swiftc", "-swift-version", "6", "-parse-as-library", "-I", `${build}/Modules`,
+  `${root}scripts/desktop-candidate-local-probe.swift`,
+  `${root}scripts/desktop-preview-application.swift`, ...objects, "-o", output,
 ], { cwd: root, stdio: "inherit", timeout: 120_000 });
 console.log("desktop_local_probe_built=true; not signed or executed");

@@ -101,8 +101,134 @@ private final class ReaderCounter: @unchecked Sendable {
   }
 }
 
+private final class ReaderClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var instant = readerNow
+
+  func now() -> Date {
+    lock.lock()
+    defer { lock.unlock() }
+    return instant
+  }
+
+  func advance(by interval: TimeInterval) {
+    lock.lock()
+    defer { lock.unlock() }
+    instant = instant.addingTimeInterval(interval)
+  }
+}
+
 @Suite("Desktop protected reader synthetic integration")
 struct DesktopCredentialReaderTests {
+  @Test(arguments: [401, 403])
+  func approvalChangesDoNotRenewRefusedCredentials(status: Int) async throws {
+    let fixture = try ReaderFixture()
+    let reader = fixture.reader()
+    let clock = ReaderClock()
+    let count = ReaderCounter()
+    let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() },
+      fetch: { request, _ in
+        count.increment()
+        if count.count == 1 {
+          return .response(
+            status: status, profileOwner: nil, serverDate: nil, cacheAge: nil, retryAfter: nil,
+            body: Data())
+        }
+        let reset = ISO8601DateFormatter().string(
+          from: request.startedAt.addingTimeInterval(604_700))
+        return .response(
+          status: 200, profileOwner: request.context.owner, serverDate: request.startedAt,
+          cacheAge: 0, retryAfter: nil,
+          body: Data("{\"seven_day\":{\"utilization\":25,\"resets_at\":\"\(reset)\"}}".utf8))
+      })
+    await service.setApproval(approval)
+    let rejected = await service.refresh()
+    let expected: DesktopUsageState = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    #expect(rejected.state == expected)
+    #expect(rejected.observation == nil)
+    let originalGeneration = try await reader.load(now: clock.now()).context.generation
+
+    for withdraw in [false, true] {
+      if withdraw {
+        await service.setApproval(DesktopAccessApproval())
+        let denied = await service.refresh()
+        #expect(denied.credentialError == .consentRequired)
+        #expect(denied.observation == nil)
+        #expect(count.count == 1)
+      }
+      await service.setApproval(approval)
+      clock.advance(by: 61)
+      let repeated = await service.refresh()
+      #expect(repeated.state == expected)
+      #expect(repeated.observation == nil)
+      #expect(count.count == 1)
+      #expect(try await reader.load(now: clock.now()).context.generation == originalGeneration)
+    }
+
+    try fixture.write(token: "synthetic-renewed-after-consent-token")
+    clock.advance(by: 61)
+    let renewed = await service.refresh()
+    #expect(count.count == 2)
+    #expect(renewed.state == .current)
+    #expect(renewed.observation?.capturedAt == clock.now())
+    #expect(try await reader.load(now: clock.now()).context.generation != originalGeneration)
+  }
+
+  @Test(arguments: [false, true])
+  func withdrawalDiscardsLeaseWithoutLosingRefusalIdentity(userConsent: Bool) async throws {
+    let fixture = try ReaderFixture()
+    let count = ReaderCounter()
+    let key = fixture.key
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory,
+      keyReader: {
+        count.increment()
+        return key
+      })
+    let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
+    await reader.setApproval(approval)
+    var lease: DesktopCredentialLease? = try await reader.load(now: readerNow)
+    let generation = try #require(lease).context.generation
+    weak var discarded = lease
+    lease = nil
+    #expect(discarded != nil)
+
+    await reader.setApproval(DesktopAccessApproval(userConsented: userConsent))
+    #expect(discarded == nil)
+    let readCount = count.count
+    do {
+      _ = try await reader.load(now: readerNow)
+      Issue.record("Credential read without access approval")
+    } catch {
+      #expect(
+        error as? DesktopCredentialError
+          == (userConsent ? .providerApprovalRequired : .consentRequired))
+    }
+    #expect(count.count == readCount)
+    await reader.setApproval(approval)
+    let reacquired = try await reader.load(now: readerNow)
+    #expect(reacquired.context.generation == generation)
+    #expect(count.count > readCount)
+  }
+
+  @Test func reapprovalNeverRevalidatesAnOldLeaseObject() async throws {
+    let fixture = try ReaderFixture()
+    let reader = fixture.reader()
+    let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
+    await reader.setApproval(approval)
+    let original = try await reader.load(now: readerNow)
+    await reader.setApproval(DesktopAccessApproval())
+    #expect(await reader.currentContext(for: original, now: readerNow) == nil)
+    await reader.setApproval(approval)
+    #expect(await reader.currentContext(for: original, now: readerNow) == nil)
+    let reacquired = try await reader.load(now: readerNow)
+    #expect(reacquired !== original)
+    #expect(reacquired.context.generation == original.context.generation)
+    #expect(await reader.currentContext(for: reacquired, now: readerNow) == reacquired.context)
+  }
+
   @Test func repeatedReadReusesLeaseAndActualRenewalChangesGeneration() async throws {
     let fixture = try ReaderFixture()
     let reader = fixture.reader()

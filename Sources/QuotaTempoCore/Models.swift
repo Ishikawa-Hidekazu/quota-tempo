@@ -17,6 +17,7 @@ public enum SnapshotSource: String, Codable, Sendable {
   case codexAppServer
   case claudeStatusLine
   case claudeDesktopHistory
+  case claudeDesktopDirect
   case claudeLocalCache
   case claudeLocalMerged
   case claudeCLI

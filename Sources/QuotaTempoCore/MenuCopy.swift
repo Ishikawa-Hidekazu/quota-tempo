@@ -47,6 +47,21 @@ public struct MenuCopy: Sendable {
     self.text("error.\(error.rawValue)")
   }
 
+  public func error(_ error: AcquisitionErrorCode, source: SnapshotSource) -> String {
+    if source == .claudeBrowser {
+      return self.text("claude.browser.refresh.error")
+    }
+    if source == .claudeDesktopDirect {
+      switch error {
+      case .authenticationRequired, .temporaryFailure, .sourceUnavailable, .usageRestricted:
+        return self.text("error.claudeDesktopDirect.\(error.rawValue)")
+      default:
+        break
+      }
+    }
+    return self.error(error)
+  }
+
   public func codexExecutableSource(_ source: CodexExecutableSource) -> String {
     self.text("codex.executable.source.\(source.rawValue)")
   }

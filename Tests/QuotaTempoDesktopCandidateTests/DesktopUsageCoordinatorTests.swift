@@ -310,7 +310,10 @@ struct DesktopUsageCoordinatorTests {
 
   @Test("Transport errors never advance observation time or lend a reset to another value")
   func retainsBoundedSameOwnerObservation() throws {
-    let errors: [DesktopUsageReply] = [.networkFailure, .timeout, response(500), response(302)]
+    let errors: [DesktopUsageReply] = [
+      .networkFailure, .timeout, response(500), response(302),
+      response(429, retryAfter: now.addingTimeInterval(7200)),
+    ]
     for error in errors {
       var coordinator = allowed()
       let context = context()
@@ -321,10 +324,20 @@ struct DesktopUsageCoordinatorTests {
       coordinator.complete(second, reply: error, context: context, now: secondAt)
       #expect(coordinator.observation?.capturedAt == now)
       #expect(coordinator.observation?.values.weekly.remainingPercent == 90)
+      #expect(coordinator.observation?.values.weekly.resetAt == now.addingTimeInterval(200_000))
       #expect(coordinator.state != .current)
       #expect(coordinator.currentObservation(context: context, now: secondAt)?.capturedAt == now)
+      let failureState = coordinator.state
+      let lastAttemptAt = coordinator.lastAttemptAt
+      let nextAllowedAt = coordinator.nextAllowedAt
+      #expect(
+        coordinator.currentObservation(context: context, now: secondAt)?.values.fiveHour == nil)
+      #expect(coordinator.state == failureState)
+      #expect(coordinator.lastAttemptAt == lastAttemptAt)
+      #expect(coordinator.nextAllowedAt == nextAllowedAt)
       #expect(
         coordinator.currentObservation(context: context, now: now.addingTimeInterval(901)) == nil)
+      #expect(coordinator.state == failureState)
     }
   }
 
@@ -467,7 +480,182 @@ struct DesktopUsageCoordinatorTests {
     #expect(coordinator.state == .invalidClock)
     #expect(coordinator.observation == nil)
     #expect(coordinator.begin(context: context, now: now) == nil)
-    #expect(coordinator.begin(context: context, now: now.addingTimeInterval(300)) != nil)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(299))
+    #expect(coordinator.begin(context: context, now: now.addingTimeInterval(298)) == nil)
+    #expect(coordinator.begin(context: context, now: now.addingTimeInterval(299)) != nil)
+  }
+
+  @Test("A large rollback rebases only the remaining local wait and requires fresh values")
+  func clockRollbackRecoversBeforeOldClock() throws {
+    var coordinator = allowed()
+    let context = context()
+    let first = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(first, reply: try success(), context: context, now: now)
+    #expect(
+      coordinator.currentObservation(context: context, now: now.addingTimeInterval(100)) != nil)
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.currentObservation(context: context, now: corrected) == nil)
+    #expect(coordinator.state == .invalidClock)
+    #expect(coordinator.observation == nil)
+    #expect(coordinator.lastAttemptAt == now)
+    let retryAt = corrected.addingTimeInterval(200)
+    #expect(coordinator.nextAllowedAt == retryAt)
+    #expect(coordinator.begin(context: context, now: retryAt.addingTimeInterval(-1)) == nil)
+    let second = try requireRequest(&coordinator, context: context, now: retryAt)
+    #expect(coordinator.observation == nil)
+    coordinator.complete(
+      second, reply: try success(serverDate: retryAt), context: context, now: retryAt)
+    #expect(coordinator.state == .current)
+    #expect(coordinator.observation?.capturedAt == retryAt)
+  }
+
+  @Test("Rollback preserves bounded transient backoff instead of retrying immediately")
+  func clockRollbackPreservesTransientBackoff() throws {
+    var coordinator = allowed()
+    let context = context()
+    var instant = now
+    for delay in [60.0, 120, 240, 480, 900] {
+      let request = try requireRequest(&coordinator, context: context, now: instant)
+      coordinator.complete(request, reply: .networkFailure, context: context, now: instant)
+      if delay < 900 { instant = instant.addingTimeInterval(delay) }
+    }
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.begin(context: context, now: corrected) == nil)
+    #expect(coordinator.nextAllowedAt == corrected.addingTimeInterval(900))
+    #expect(coordinator.begin(context: context, now: corrected.addingTimeInterval(899)) == nil)
+    let retryAt = corrected.addingTimeInterval(900)
+    let request = try requireRequest(&coordinator, context: context, now: retryAt)
+    coordinator.complete(request, reply: .networkFailure, context: context, now: retryAt)
+    #expect(coordinator.nextAllowedAt == retryAt.addingTimeInterval(900))
+  }
+
+  @Test("Repeated rollback requires a stable minimum wait and revoked success cannot return")
+  func clockRollbackCancelsInflightWork() throws {
+    var coordinator = allowed()
+    let context = context()
+    let first = try requireRequest(&coordinator, context: context, now: now)
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.begin(context: context, now: corrected) == nil)
+    #expect(coordinator.activeRequest == nil)
+    #expect(coordinator.nextAllowedAt == corrected.addingTimeInterval(60))
+    let earlier = corrected.addingTimeInterval(-10)
+    #expect(coordinator.currentObservation(context: context, now: earlier) == nil)
+    #expect(coordinator.nextAllowedAt == earlier.addingTimeInterval(60))
+    #expect(coordinator.begin(context: context, now: earlier.addingTimeInterval(59)) == nil)
+    let retryAt = earlier.addingTimeInterval(60)
+    let second = try requireRequest(&coordinator, context: context, now: retryAt)
+    coordinator.complete(first, reply: try success(), context: context, now: retryAt)
+    #expect(coordinator.activeRequest == second)
+    #expect(coordinator.state == .requesting)
+    #expect(coordinator.observation == nil)
+    coordinator.complete(
+      second, reply: try success(serverDate: retryAt), context: context, now: retryAt)
+    #expect(coordinator.state == .current)
+  }
+
+  @Test(
+    "Rollback never bypasses a generation refusal or revives retained values",
+    arguments: [401, 403])
+  func clockRollbackPreservesRefusal(status: Int) throws {
+    var coordinator = allowed()
+    let context = context()
+    let first = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(first, reply: try success(), context: context, now: now)
+    let second = try requireRequest(
+      &coordinator, context: context, now: now.addingTimeInterval(300))
+    let corrected = now.addingTimeInterval(-3600)
+    coordinator.complete(second, reply: response(status), context: context, now: corrected)
+    #expect(coordinator.state == .invalidClock)
+    #expect(coordinator.observation == nil)
+    #expect(coordinator.activeRequest == nil)
+    coordinator.setPermission(.denied)
+    coordinator.setPermission(.allowed)
+    let retryAt = corrected.addingTimeInterval(60)
+    #expect(coordinator.begin(context: nil, now: retryAt) == nil)
+    #expect(coordinator.begin(context: context, now: retryAt) == nil)
+    #expect(coordinator.state == (status == 401 ? .waitingForDesktopRenewal : .accessDenied))
+    #expect(coordinator.currentObservation(context: context, now: retryAt) == nil)
+    #expect(coordinator.begin(context: self.context(), now: retryAt) != nil)
+  }
+
+  @Test("A prior Retry-After survives rollback, permission and identity changes")
+  func clockRollbackPreservesExistingRateLimit() throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    let retryAt = now.addingTimeInterval(7200)
+    coordinator.complete(
+      request, reply: response(429, retryAfter: retryAt), context: context, now: now)
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.begin(context: context, now: corrected) == nil)
+    #expect(coordinator.nextAllowedAt == retryAt)
+    coordinator.setPermission(.denied)
+    coordinator.setPermission(.allowed)
+    let changed = self.context(owner: otherOwner)
+    #expect(coordinator.begin(context: changed, now: corrected.addingTimeInterval(900)) == nil)
+    #expect(coordinator.begin(context: changed, now: retryAt.addingTimeInterval(-1)) == nil)
+    #expect(coordinator.nextAllowedAt == retryAt)
+    #expect(coordinator.begin(context: changed, now: retryAt) != nil)
+  }
+
+  @Test("A revoked request's late 429 still constrains successful rollback recovery")
+  func clockRollbackLateRateLimit() throws {
+    var coordinator = allowed()
+    let context = context()
+    let first = try requireRequest(&coordinator, context: context, now: now)
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.begin(context: context, now: corrected) == nil)
+    let recoveredAt = corrected.addingTimeInterval(60)
+    let second = try requireRequest(&coordinator, context: context, now: recoveredAt)
+    let retryAt = now.addingTimeInterval(7200)
+    coordinator.complete(
+      first, reply: response(429, retryAfter: retryAt), context: nil, now: recoveredAt)
+    #expect(coordinator.activeRequest == second)
+    coordinator.complete(
+      second, reply: try success(serverDate: recoveredAt), context: context, now: recoveredAt)
+    #expect(coordinator.state == .current)
+    #expect(coordinator.nextAllowedAt == retryAt)
+    #expect(coordinator.begin(context: context, now: now.addingTimeInterval(300)) == nil)
+  }
+
+  @Test(
+    "Nonfinite clock values never anchor recovery", arguments: [Double.nan, .infinity, -.infinity])
+  func invalidClockRemainsFailClosed(value: Double) throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(request, reply: try success(), context: context, now: now)
+    #expect(coordinator.begin(context: context, now: Date(timeIntervalSince1970: value)) == nil)
+    #expect(coordinator.state == .invalidClock)
+    #expect(coordinator.observation == nil)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(300))
+    let corrected = now.addingTimeInterval(-3600)
+    #expect(coordinator.begin(context: context, now: corrected) == nil)
+    #expect(coordinator.begin(context: context, now: corrected.addingTimeInterval(300)) != nil)
+  }
+
+  @Test("Same-owner renewal retains only the original observation until its reset expires")
+  func retainedObservationAcrossRenewal() throws {
+    var coordinator = allowed()
+    let initial = context()
+    let first = try requireRequest(&coordinator, context: initial, now: now)
+    let resetAt = now.addingTimeInterval(360)
+    coordinator.complete(first, reply: try success(resetAt: resetAt), context: initial, now: now)
+    let renewed = context()
+    let retained = coordinator.currentObservation(
+      context: renewed, now: now.addingTimeInterval(100))
+    #expect(retained?.capturedAt == now)
+    #expect(retained?.values.weekly.resetAt == resetAt)
+    #expect(retained?.values.fiveHour == nil)
+    #expect(coordinator.state == .contextChanged)
+    let retryAt = now.addingTimeInterval(300)
+    let second = try requireRequest(&coordinator, context: renewed, now: retryAt)
+    coordinator.complete(second, reply: .networkFailure, context: renewed, now: retryAt)
+    #expect(coordinator.currentObservation(context: renewed, now: retryAt) == retained)
+    #expect(coordinator.state == .temporaryFailure)
+    #expect(coordinator.currentObservation(context: renewed, now: resetAt) == nil)
+    #expect(coordinator.observation == nil)
+    #expect(coordinator.state == .temporaryFailure)
   }
 
   @Test("A 429 received during clock rollback preserves the service deadline")

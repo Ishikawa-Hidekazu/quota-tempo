@@ -613,8 +613,7 @@ public struct QuotaMenuView: View {
         if let errorCode = plan.errorCode {
           self.detailRow(
             "acquisition.error",
-            value: plan.source == .claudeBrowser
-              ? self.copy.text("claude.browser.refresh.error") : self.copy.error(errorCode))
+            value: self.copy.error(errorCode, source: plan.source))
         }
         if plan.freshness == .stale, plan.targetNow != nil {
           Text(self.staleComparisonHelp(plan))
@@ -630,7 +629,7 @@ public struct QuotaMenuView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
           if plan.status == .resetUnknown {
-            Text(self.copy.text("claude.reset.help"))
+            Text(self.claudeResetHelp(plan))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
@@ -699,6 +698,11 @@ public struct QuotaMenuView: View {
     QuotaDateFormatting.string(value, locale: self.locale, timeZone: self.timeZone)
   }
 
+  private func claudeResetHelp(_ plan: PlannedProvider) -> String {
+    self.copy.text(
+      plan.source == .claudeDesktopDirect ? "claude.desktop.reset.help" : "claude.reset.help")
+  }
+
   private func accessibilitySummary(_ plan: PlannedProvider) -> String {
     var parts = [
       plan.provider.displayName,
@@ -710,8 +714,10 @@ public struct QuotaMenuView: View {
       plan.freshness == .stale && plan.targetNow != nil
         ? self.staleComparisonHelp(plan) : "",
       plan.provider == .claude && plan.status == .resetUnknown
-        ? self.copy.text("claude.reset.help") : "",
-      plan.errorCode.map { "\(self.copy.text("acquisition.error")) \(self.copy.error($0))" } ?? "",
+        ? self.claudeResetHelp(plan) : "",
+      plan.errorCode.map {
+        "\(self.copy.text("acquisition.error")) \(self.copy.error($0, source: plan.source))"
+      } ?? "",
       plan.targetIsEstimated ? self.copy.text("target.basis.estimated") : "",
       self.copy.status(for: plan),
     ]

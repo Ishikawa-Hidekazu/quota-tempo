@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 private struct DesktopConfig: Decodable {
@@ -161,15 +162,36 @@ actor DesktopCredentialReader {
     case configuration, keychain, organization, decryption, selection, revalidation
   }
 
+  // In-memory comparison only: consent withdrawal discards the usable lease,
+  // not the identity of an unchanged credential already refused by the provider.
+  private struct CredentialRevision: Sendable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+  {
+    let context: DesktopUsageContext
+    private let tokenDigest: SHA256.Digest
+
+    init(_ credential: DesktopSelectedCredential, context: DesktopUsageContext) {
+      self.context = context
+      tokenDigest = SHA256.hash(data: credential.token)
+    }
+
+    func matches(_ credential: DesktopSelectedCredential) -> Bool {
+      context.owner == credential.owner && context.expiresAt == credential.expiresAt
+        && tokenDigest == SHA256.hash(data: credential.token)
+    }
+
+    var description: String { "CredentialRevision(redacted)" }
+    var debugDescription: String { description }
+    var customMirror: Mirror { Mirror(self, children: [:]) }
+  }
+
   private(set) var lastFailureStage: FailureStage?
   private let directory: URL
   private let keyReader: @Sendable () throws -> Data
   private var approval = DesktopAccessApproval()
   private var permissionRefused = false
   private var previous: DesktopCredentialLease?
-  // Only recognizes the same rejected credential after a transient read failure.
-  // This in-memory value is never returned without revalidating all source files.
-  private var lastCredential: DesktopCredentialLease?
+  private var lastRevision: CredentialRevision?
   private var previousStamp: DesktopFileStamp?
   private var previousOrganization: DesktopOrganizationSelection?
 
@@ -185,7 +207,6 @@ actor DesktopCredentialReader {
   func setApproval(_ approval: DesktopAccessApproval) {
     self.approval = approval
     permissionRefused = false
-    lastCredential = nil
     lastFailureStage = nil
     invalidate()
   }
@@ -220,20 +241,18 @@ actor DesktopCredentialReader {
       guard try DesktopProtectedFile.stamp(url, maximumBytes: 4 * 1_048_576) == file.stamp else {
         throw DesktopCredentialError.changedDuringRead
       }
-      let unchanged =
-        lastCredential.map {
-          $0.context.owner == selected.owner && $0.context.expiresAt == selected.expiresAt
-            && $0.matches(token: selected.token)
-        } ?? false
-      if unchanged, previousStamp == file.stamp, previousOrganization == organization, let previous
+      let generation = lastRevision.flatMap {
+        $0.matches(selected) ? $0.context.generation : nil
+      }
+      if generation != nil, previousStamp == file.stamp, previousOrganization == organization,
+        let previous
       {
         return previous
       }
-      // Metadata-only changes invalidate in-flight reads, not an existing 401 block.
-      let generation = unchanged ? lastCredential!.context.generation : UUID()
-      let lease = try selected.lease(generation: generation)
+      // Reapproval and metadata-only changes invalidate leases, not a 401/403 block.
+      let lease = try selected.lease(generation: generation ?? UUID())
       previous = lease
-      lastCredential = lease
+      lastRevision = CredentialRevision(selected, context: lease.context)
       previousStamp = file.stamp
       previousOrganization = organization
       return lease
