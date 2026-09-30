@@ -118,6 +118,25 @@ await test('oversized and truncated native messages are rejected', () => fixture
   assert.equal((await run(path, Buffer.from([1, 0]))).ack.error, 'truncatedMessage');
 }));
 
+await test('elapsed optional session keeps the exact weekly value through the native host', () => fixture(async path => {
+  await connect(path);
+  const now = Date.now();
+  const weeklyReset = new Date(now + 86400000).toISOString();
+  const message = { ...success(now), ...parseUsage({
+    seven_day: { utilization: 27, resets_at: weeklyReset },
+    five_hour: { utilization: 80, resets_at: new Date(now - 23000).toISOString() }
+  }, now) };
+  assert.equal(message.fiveHour, null);
+  assert.equal((await run(path, frame(message))).ack.ok, true);
+  const record = JSON.parse(await readFile(join(path, 'browser-observation.json')));
+  assert.equal(record.lastStatus, 'ok');
+  assert.equal(record.snapshot.sourceState, 'observationSucceeded');
+  assert.equal(record.snapshot.weekly.remainingPercent, 73);
+  assert.ok(Math.abs((record.snapshot.weekly.resetAt + 978307200) * 1000 - Date.parse(weeklyReset)) < 1);
+  assert.notEqual(record.snapshot.weekly.resetAtIsEstimated, true);
+  assert.equal(record.snapshot.fiveHour ?? null, null);
+}));
+
 await test('owner change clears values without rebinding', () => fixture(async path => {
   await connect(path);
   const first = success();

@@ -199,6 +199,58 @@ Reload-recovery synthetic tests pass 57/57. Live automatic polling with 0.1.2 re
 pending its manual Chrome reload. CI/CodeQL for the earlier `4a3f9ff` revision all passed;
 that result does not cover these new changes.
 
+### September 30 automatic polling and reset-boundary follow-up
+
+After the owner reported reloading 0.1.2, a bounded metadata-only check observed:
+
+- One automatic success 302 seconds after the previous capture. The preview app
+  imported it about 61 seconds after capture, retaining the exact weekly reset.
+- The next scheduled acquisition failed shortly after the prior five-hour reset
+  elapsed. Failure delivery preserved the last successful capture timestamp; it
+  did not make that observation look fresh. The two-cycle uninterrupted check failed.
+- A subsequent scheduled acquisition recovered without Refresh or Reconnect and
+  supplied a new provider five-hour reset. The preview imported it automatically.
+- The official CLI's authentication-status command reported signed out. Only its
+  boolean result was inspected. Browser sign-in, not CLI authentication, supplied
+  the successful observations.
+
+No raw response, browser storage, authentication value, or conversation was read.
+The failure stage was not captured, so reset timing alone does not prove the live
+failure's exact cause. An additional hidden browser-page check was not available;
+no foreground, OS-control, or alternate-browser fallback was used.
+
+An independently reproducible parser defect did reject a valid weekly observation
+when its optional five-hour window had just elapsed. Prototype 0.1.3 omits only a
+well-formed expired optional window, after checking mixed-schema consistency.
+Invalid percentages/dates, duplicate or conflicting windows, and an elapsed weekly
+reset still fail closed. It never supplies a guessed next reset or balance. Tests
+cover before/at/after reset, recovery to a newly supplied timestamp, both schemas,
+and parser-to-native-host delivery of the surviving exact weekly observation. The
+worker also handles a valid optional reset expiring between parsing and delivery;
+its required weekly window and account pin must still validate.
+
+Independent review also found two worker-stop persistence defects: retries could
+exceed their budget if the worker stopped while awaiting an ACK, and a successful
+revocation could clear its pending control before terminal state was saved. The
+candidate reserves retries before sending and commits revocation completion with
+its terminal/recovery state. By-value storage and crash-boundary regressions cover
+initial send, retry, ACK, storage commits, alarm updates, and explicit reconnection.
+
+Extension Node QA passed 153/153 tests, including the by-value worker-stop and
+rollover regressions. Independent read-only review of the parser changes found
+no further issue in that scope; the parent reviewed the worker changes.
+
+Swift QA initially failed one existing five-second shell-wrapper test with a
+timeout. The focused test passed without a code change, and the subsequent full
+suite passed 281/281. This is a transient test failure, not evidence of a fixed
+wrapper defect. Installer QA passed 81/81, native-host process QA passed 7/7,
+Swift lint and release-policy checks passed, and app-bundle QA passed with the
+provider-trigger and application-window checks deliberately skipped.
+
+The active 0.1.2 observation above must not be counted as live acceptance of the
+0.1.3 candidate. A loaded-version check and uninterrupted automatic acquisition
+with that exact candidate remain required.
+
 Remaining release gates:
 
 1. Load the exact prototype extension, register its exact ID, and confirm a live
@@ -215,7 +267,8 @@ Remaining release gates:
    distribution. User consent and the absence of cookie extraction do not, by
    themselves, establish provider approval for undocumented endpoints.
 
-**Decision: not ready for release.** Live ingestion by a local preview is verified,
-but sustained polling and installed release UI acceptance are not. Desktop-only reliability is
+**Decision: not ready for release.** Live ingestion, automatic polling, and recovery
+by a local preview are verified, but uninterrupted reset-boundary behavior and
+installed release UI acceptance are not. Desktop-only reliability is
 still a separate unresolved requirement; the browser route must not be advertised
 as resolving it. Do not merge/release Draft PR #42 on the strength of these results.

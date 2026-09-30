@@ -101,6 +101,68 @@ test("explicit null five-hour bucket does not invalidate a weekly observation", 
   assert.equal(parsed.fiveHour, null);
 });
 
+test("elapsed optional five-hour windows do not discard a current exact weekly observation", () => {
+  for (const reset of ["2026-09-28T23:59:59Z", "2026-09-29T09:00:00+09:00"]) {
+    const session = { utilization: 80, resets_at: reset };
+    for (const usage of [
+      oldUsage({ five_hour: session }),
+      { limits: [{ kind: "weekly_all", utilization: 27, resets_at: WEEKLY }, { kind: "session", ...session }] },
+      oldUsage({ five_hour: session, limits: [{ kind: "session", ...session }] })
+    ]) {
+      assert.deepEqual(protocol.parseUsage(usage, NOW), {
+        weekly: { remainingPercent: 73, resetAt: WEEKLY }, fiveHour: null
+      });
+    }
+  }
+});
+
+test("optional window omission does not hide conflicting or malformed expired buckets", () => {
+  const elapsed = { utilization: 80, resets_at: "2026-09-28T23:59:59Z" };
+  for (const session of [
+    { ...elapsed, utilization: 81 },
+    { ...elapsed, resets_at: "2026-09-28T23:59:58Z" },
+    { ...elapsed, resets_at: FIVE_HOUR }
+  ]) {
+    assert.throws(() => protocol.parseUsage(oldUsage({
+      five_hour: elapsed, limits: [{ kind: "session", ...session }]
+    }), NOW));
+  }
+  assert.throws(() => protocol.parseUsage(oldUsage({
+    five_hour: elapsed, limits: [{ kind: "session", ...elapsed }, { kind: "session", ...elapsed }]
+  }), NOW));
+  for (const session of [
+    { ...elapsed, utilization: NaN }, { ...elapsed, utilization: -1 },
+    { ...elapsed, utilization: 101 }, { ...elapsed, utilization: "80" },
+    { ...elapsed, percent: 80 }, { ...elapsed, resets_at: null },
+    { ...elapsed, resets_at: "2026-02-30T00:00:00Z" },
+    { ...elapsed, resets_at: "2026-09-28T23:59:59+24:00" }
+  ]) {
+    for (const usage of [oldUsage({ five_hour: session }),
+      oldUsage({ five_hour: null, limits: [{ kind: "session", ...session }] })]) {
+      assert.throws(() => protocol.parseUsage(usage, NOW));
+    }
+  }
+});
+
+test("five-hour rollover transitions to absent then a newly observed window, never an inferred one", async () => {
+  const reset = "2026-09-29T00:00:00.000Z";
+  const newReset = "2026-09-29T05:00:00.000Z";
+  for (const [now, reportedReset, expected] of [
+    [NOW - 1, reset, { remainingPercent: 20, resetAt: reset }],
+    [NOW, reset, null],
+    [NOW + 23_000, reset, null],
+    [NOW + 5 * 60_000, newReset, { remainingPercent: 20, resetAt: newReset }]
+  ]) {
+    const source = fetchSequence(response({ uuid: ACCOUNT_A }), response([{ uuid: ORG }]),
+      response(oldUsage({ five_hour: { utilization: 80, resets_at: reportedReset } })),
+      response({ uuid: ACCOUNT_A }));
+    const result = await protocol.observe({ fetchImpl: source.fetchImpl, now: () => now });
+    assert.equal(result.status, "ok");
+    assert.deepEqual(result.weekly, { remainingPercent: 73, resetAt: WEEKLY });
+    assert.deepEqual(result.fiveHour, expected);
+  }
+});
+
 test("same-organization account switch during observation is rejected", async () => {
   const source = fetchSequence(
     response({ uuid: ACCOUNT_A }), response([{ uuid: ORG }]),
@@ -307,7 +369,7 @@ test("malformed offsets, missing zones and excessive precision fail closed", () 
   }
 });
 
-test("offset normalization preserves future-only and maximum window boundaries", () => {
+test("offset normalization preserves required weekly and optional session time boundaries", () => {
   for (const [kind, legacy, last, over] of [
     ["weekly_all", "seven_day", "2026-10-07T09:00:00+09:00", "2026-10-07T09:00:00.001+09:00"],
     ["session", "five_hour", "2026-09-29T01:00:00-05:00", "2026-09-29T01:00:00.001-05:00"]
@@ -323,9 +385,11 @@ test("offset normalization preserves future-only and maximum window boundaries",
       };
       assert.doesNotThrow(() => parse(last));
       assert.doesNotThrow(() => parse("2026-09-29T09:00:00.001+09:00"));
-      for (const reset of [over, "2026-09-29T09:00:00+09:00", "2026-09-28T17:00:00-07:00",
+      assert.throws(() => parse(over));
+      for (const reset of ["2026-09-29T09:00:00+09:00", "2026-09-28T17:00:00-07:00",
         "2026-09-29T08:59:59.999999999+09:00", "2026-09-29T09:00:00.000999999+09:00"]) {
-        assert.throws(() => parse(reset));
+        if (kind === "session") assert.equal(parse(reset).fiveHour, null);
+        else assert.throws(() => parse(reset));
       }
     }
   }

@@ -1,6 +1,6 @@
 "use strict";
 
-const POPUP_VERSION = "0.1.2";
+const POPUP_VERSION = "0.1.3";
 let workerVersion = null;
 const versionNode = document.getElementById("version");
 const statusNode = document.getElementById("status");

@@ -81,7 +81,7 @@
     }
     const offsetMs = (offsetHours * 60 + offsetMinutes) * 60_000 * (match[9] === "-" ? -1 : 1);
     const parsed = local.getTime() - offsetMs;
-    if (!Number.isFinite(parsed) || parsed <= nowMs || parsed > nowMs + maximumMs) {
+    if (!Number.isFinite(parsed) || parsed > nowMs + maximumMs) {
       throw new ObservationError("unavailable");
     }
     return new Date(parsed).toISOString();
@@ -102,7 +102,7 @@
     return { remainingPercent: 100 - raw, resetAt: resetAt(row.resets_at, nowMs, maximumMs) };
   }
 
-  function mergedWindow(legacy, limits, nowMs, maximumMs) {
+  function mergedWindow(legacy, limits, nowMs, maximumMs, optional = false) {
     if (limits.length > 1) throw new ObservationError("unavailable");
     const oldWindow = legacy == null ? null : windowValue(legacy, nowMs, maximumMs);
     const newWindow = limits.length === 0 ? null : windowValue(limits[0], nowMs, maximumMs);
@@ -110,7 +110,13 @@
       && (oldWindow.remainingPercent !== newWindow.remainingPercent || oldWindow.resetAt !== newWindow.resetAt)) {
       throw new ObservationError("unavailable");
     }
-    return oldWindow ?? newWindow;
+    const window = oldWindow ?? newWindow;
+    // Validate both schemas before omitting an elapsed optional window. Never extend its reset.
+    if (window && Date.parse(window.resetAt) <= nowMs) {
+      if (optional) return null;
+      throw new ObservationError("unavailable");
+    }
+    return window;
   }
 
   function parseUsage(data, nowMs) {
@@ -128,7 +134,7 @@
     if (!weekly) throw new ObservationError("unavailable");
     return {
       weekly,
-      fiveHour: mergedWindow(data.five_hour, buckets.session, nowMs, SIX_HOURS_MS)
+      fiveHour: mergedWindow(data.five_hour, buckets.session, nowMs, SIX_HOURS_MS, true)
     };
   }
 

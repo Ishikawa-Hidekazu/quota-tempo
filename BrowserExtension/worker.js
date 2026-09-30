@@ -1,7 +1,7 @@
 "use strict";
 
 const HOST = "co.ishikawa.quotatempo";
-const WORKER_VERSION = "0.1.2";
+const WORKER_VERSION = "0.1.3";
 const ALARM = "quotaTempoPoll";
 const FIVE_MINUTES = 5 * 60 * 1000;
 const MAX_BACKOFF = 60 * 60 * 1000;
@@ -77,14 +77,14 @@ function claudeURL(url) {
   try { return new URL(url).origin === "https://claude.ai"; } catch { return false; }
 }
 
-function validWindow(value, now, maximum) {
+function validWindow(value, now, maximum, allowElapsed = false) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   if (typeof value.remainingPercent !== "number" || !Number.isFinite(value.remainingPercent)
     || value.remainingPercent < 0 || value.remainingPercent > 100) return false;
   if (typeof value.resetAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.resetAt)) return false;
   const reset = Date.parse(value.resetAt);
   return Number.isFinite(reset) && new Date(reset).toISOString() === value.resetAt
-    && reset > now && reset <= now + maximum;
+    && (allowElapsed || reset > now) && reset <= now + maximum;
 }
 
 function normalizedResult(input, now) {
@@ -99,17 +99,18 @@ function normalizedResult(input, now) {
   if (![input.accountFingerprint, input.organizationFingerprint, input.principalFingerprint]
     .every(value => typeof value === "string" && HASH.test(value))) return empty("unavailable");
   if (!validWindow(input.weekly, now, 8 * 24 * 60 * 60 * 1000)) return empty("unavailable");
-  if (input.fiveHour !== null && !validWindow(input.fiveHour, now, 6 * 60 * 60 * 1000)) {
+  if (input.fiveHour !== null && !validWindow(input.fiveHour, now, 6 * 60 * 60 * 1000, true)) {
     return empty("unavailable");
   }
+  // Delivery can cross the optional reset; validate first, then omit without extending it.
+  const fiveHour = input.fiveHour !== null && Date.parse(input.fiveHour.resetAt) > now
+    ? { remainingPercent: input.fiveHour.remainingPercent, resetAt: input.fiveHour.resetAt } : null;
   return {
     status: "ok", accountFingerprint: input.accountFingerprint,
     organizationFingerprint: input.organizationFingerprint,
     principalFingerprint: input.principalFingerprint,
     weekly: { remainingPercent: input.weekly.remainingPercent, resetAt: input.weekly.resetAt },
-    fiveHour: input.fiveHour === null ? null : {
-      remainingPercent: input.fiveHour.remainingPercent, resetAt: input.fiveHour.resetAt
-    }
+    fiveHour
   };
 }
 
@@ -141,8 +142,8 @@ async function sendNext(value, result, observedAt, retryable = false) {
   await save(value);
   const ack = await nativeSend(message);
   value.lastObservedAt = message.observedAt;
-  if (ack === "ok" && retryable) value.pendingRevocation = null;
-  await save(value);
+  // Control ACKs are committed by the caller with the final connection state.
+  if (!retryable) await save(value);
   return ack;
 }
 
@@ -150,14 +151,17 @@ async function retryRevocation(value, explicit = false) {
   const pending = value.pendingRevocation;
   if (!pending) return "ok";
   if (!explicit && pending.retryCount >= REVOCATION_DELAYS.length) return "nativeUnavailable";
-  const ack = await nativeSend(pending.message);
-  if (ack === "ok") {
-    value.pendingRevocation = null;
-  } else {
-    if (!explicit) pending.retryCount += 1;
+  if (!explicit) {
+    // A terminated worker still consumes this attempt, even if its ACK is lost.
+    pending.retryCount += 1;
+    value.inFlight = null;
+    value.blocked = value.blocked || !value.recovering;
+    value.nextAt = pending.retryCount < REVOCATION_DELAYS.length
+      ? Date.now() + REVOCATION_DELAYS[pending.retryCount] : null;
+    if (pending.retryCount >= REVOCATION_DELAYS.length) value.status = "nativeUnavailable";
+    await save(value);
   }
-  await save(value);
-  return ack;
+  return nativeSend(pending.message);
 }
 
 async function scheduleRevocationRetry(value) {
@@ -169,7 +173,11 @@ async function scheduleRevocationRetry(value) {
     await stopPolling();
     return;
   }
-  await schedule(value, REVOCATION_DELAYS[pending.retryCount]);
+  if (!Number.isFinite(value.nextAt)) {
+    value.nextAt = Date.now() + REVOCATION_DELAYS[pending.retryCount];
+  }
+  await save(value);
+  await chrome.alarms.create(ALARM, { when: value.nextAt });
 }
 
 async function nativeSend(message) {
@@ -234,6 +242,11 @@ async function finishObservation(value, result, observedAt = new Date(Date.now()
   if (waitingForPinnedAccount) value.tabID = null;
   if (value.recovering && checked.status === "ok") value.recovering = false;
   const revocation = checked.status === "accountChanged";
+  if (revocation) {
+    value.inFlight = null;
+    value.blocked = !value.recovering;
+    value.nextAt = now + REVOCATION_DELAYS[0];
+  }
   const ack = await sendNext(value, checked, observedAt, revocation);
   value.inFlight = null;
   value.status = ack === "ok"
@@ -244,6 +257,7 @@ async function finishObservation(value, result, observedAt = new Date(Date.now()
     await scheduleRevocationRetry(value);
     return;
   }
+  if (revocation) value.pendingRevocation = null;
   if (!value.enabled || value.blocked) {
     value.nextAt = null;
     await save(value);
@@ -499,8 +513,12 @@ chrome.alarms.onAlarm.addListener(alarm => {
       const ack = await retryRevocation(value);
       if (ack !== "ok") await scheduleRevocationRetry(value);
       else {
+        value.inFlight = null;
+        value.blocked = value.blocked || !value.recovering;
+        value.recovering = value.recovering && !value.blocked;
         value.nextAt = null;
         value.status = value.recovering ? "waitingForAccount" : "accountChanged";
+        value.pendingRevocation = null;
         await save(value);
         await stopPolling();
         if (value.recovering) await rebind(value);
@@ -519,13 +537,13 @@ chrome.runtime.onStartup.addListener(() => {
     await stopPolling();
     if (value.pendingConnect) return;
     if (!value.enabled) return;
-    value.inFlight = null;
-    if (value.failureCount === 0) value.nextAt = null;
-    value.recovering = true;
     if (value.pendingRevocation?.message.status === "accountChanged") {
       await scheduleRevocationRetry(value);
       return;
     }
+    value.inFlight = null;
+    if (value.failureCount === 0) value.nextAt = null;
+    value.recovering = true;
     await rebind(value);
   });
 });
