@@ -159,6 +159,46 @@ establish that the entire updated worker is active. User reload confirmation,
 two automatic refreshes, official-display comparison, installed-app UI, and
 rollover acceptance remain pending. No public app replacement or release occurred.
 
+### September 30 reload recovery and local preview follow-up
+
+The owner's extension-details screenshot confirmed version 0.1.1 and the expected
+unpacked source. Successful observation sequences had advanced, but that alone did
+not establish automatic polling: tab activity or owner actions can also trigger
+acquisition. After reload, a later metadata-only check still showed the same record
+more than two normal polling intervals later. The precise live worker state was
+not inspected; no browser storage, raw responses, or credentials were read.
+
+A synthetic reload regression reproduced a separate concrete defect: persisted
+connection state could outlive its Chrome alarm, and only browser startup restored
+polling. Version 0.1.2 checks for a missing alarm on every worker initialization,
+as recommended by the [Chrome alarms documentation](https://developer.chrome.com/docs/extensions/reference/api/alarms).
+It preserves the existing connection, capture timestamp, failure deadline, in-flight
+expiry, and bounded revocation retries. Initialization only arms the alarm; a normal
+due event performs acquisition. Early or queued events cannot bypass a newer deadline.
+This fix is not yet proven to explain or repair the live stopped record.
+
+The parent verified a real normalized observation through `LiveQuotaModel`, the
+planner, menu-title formatter, and an offscreen `QuotaMenuView` render. Weekly
+remaining usage and the weekly reset schedule matched the official visible Claude
+usage page. The first temporary test asserted subsecond identity across the existing
+second-resolution normalized codec and failed; after comparing with the codec's
+actual encoded/decoded result, the import check passed. No capture time was rewritten
+to appear fresher. Temporary test code, its private bitmap, and copied records were
+removed after inspection. The full unchanged Swift suite then passed 281/281.
+
+A separately named, ad-hoc-signed local preview bundle was prepared with automatic
+updating disabled. The running public app was stopped and the preview started without
+requesting an application window or activation. The public installed bundle was not
+modified. A read-back confirmed the preview persisted a successful `claudeBrowser`
+observation with the original capture time and non-estimated reset. This verifies
+running-app ingestion, not an observed click/popover flow or notarized deployment.
+Rollback snapshots are retained locally, outside Git. The preview must not be mistaken
+for a public release.
+
+Reload-recovery synthetic tests pass 57/57. Live automatic polling with 0.1.2 remains
+pending its manual Chrome reload. CI/CodeQL for the earlier `4a3f9ff` revision all passed;
+that result does not cover these new changes.
+
 Remaining release gates:
 
 1. Load the exact prototype extension, register its exact ID, and confirm a live
@@ -175,7 +215,7 @@ Remaining release gates:
    distribution. User consent and the absence of cookie extraction do not, by
    themselves, establish provider approval for undocumented endpoints.
 
-**Decision: not ready for release.** Automated implementation QA has passed, but
-live extension-to-installed-app acquisition has not. Desktop-only reliability is
+**Decision: not ready for release.** Live ingestion by a local preview is verified,
+but sustained polling and installed release UI acceptance are not. Desktop-only reliability is
 still a separate unresolved requirement; the browser route must not be advertised
 as resolving it. Do not merge/release Draft PR #42 on the strength of these results.

@@ -1,7 +1,7 @@
 "use strict";
 
 const HOST = "co.ishikawa.quotatempo";
-const WORKER_VERSION = "0.1.1";
+const WORKER_VERSION = "0.1.2";
 const ALARM = "quotaTempoPoll";
 const FIVE_MINUTES = 5 * 60 * 1000;
 const MAX_BACKOFF = 60 * 60 * 1000;
@@ -194,6 +194,18 @@ async function schedule(value, delay) {
 
 async function stopPolling() {
   await chrome.alarms.clear(ALARM);
+}
+
+function pollingDeadline(value) {
+  if (!value.enabled || value.pendingConnect || value.pendingDisconnect
+    || value.status === "disconnected") return null;
+  if (value.pendingRevocation) {
+    if (value.pendingRevocation.message.status !== "accountChanged"
+      || value.pendingRevocation.retryCount >= REVOCATION_DELAYS.length) return null;
+  } else if (value.blocked) return null;
+  const deadline = value.pendingRevocation ? value.nextAt
+    : value.inFlight?.expiresAt ?? value.nextAt;
+  return Number.isFinite(deadline) ? deadline : Date.now();
 }
 
 function nextDelay(value, status) {
@@ -476,6 +488,13 @@ chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name !== ALARM) return;
   serialize(async () => {
     const value = await state();
+    const deadline = pollingDeadline(value);
+    if (deadline === null) return;
+    // A restored alarm may already be queued after another event advances the deadline.
+    if (deadline > Date.now()) {
+      await chrome.alarms.create(ALARM, { when: deadline });
+      return;
+    }
     if (value.pendingRevocation?.message.status === "accountChanged") {
       const ack = await retryRevocation(value);
       if (ack !== "ok") await scheduleRevocationRetry(value);
@@ -531,4 +550,14 @@ chrome.tabs.onRemoved.addListener(tabID => {
     }
     if (value.recovering) await rebind(value);
   });
+});
+
+// Restore missing alarms on every worker initialization without starting an observation.
+serialize(async () => {
+  if (await chrome.alarms.get(ALARM)) return;
+  const deadline = pollingDeadline(await state());
+  if (deadline !== null) {
+    const now = Date.now();
+    await chrome.alarms.create(ALARM, { when: deadline > now ? deadline : now + 1_000 });
+  }
 });
