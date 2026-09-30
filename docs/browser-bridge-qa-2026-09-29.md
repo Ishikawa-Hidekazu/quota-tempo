@@ -248,15 +248,47 @@ Swift lint and release-policy checks passed, and app-bundle QA passed with the
 provider-trigger and application-window checks deliberately skipped.
 
 The active 0.1.2 observation above must not be counted as live acceptance of the
-0.1.3 candidate. A loaded-version check and uninterrupted automatic acquisition
-with that exact candidate remain required.
+0.1.3 candidate. The following separate round begins after the owner's 0.1.3
+reload confirmation.
+
+### September 30 0.1.3 owner reload follow-up
+
+The owner confirmed completing the requested 0.1.3 reload. The staged extension
+matches the source at `fe789c5`; the live worker version is based on that owner
+confirmation, not on reading Chrome storage. All GitHub CI and CodeQL checks for
+that commit passed. The official CLI still reported signed out when checked in
+this round; only the parsed authentication boolean was exposed.
+
+A bounded read-only check of the normalized bridge and app records passed two
+consecutive no-click automatic updates at 302- and 301-second intervals. The
+running preview imported each same capture, owner fingerprint, weekly percentage
+and non-estimated reset about 17 and 16 seconds after capture, respectively.
+Neither interval contained a failed observation or a changed connection generation.
+No Refresh, Reconnect, browser interaction, credential access, or provider request
+was initiated by the QA observer. Application integration tests passed 9/9 using
+isolated synthetic fixtures; these tests do not constitute live popover QA.
+The owner also supplied a current menu-bar screenshot showing numeric Claude
+weekly remaining, target, and difference, without unavailable/stale markers.
+This is real menu-bar display evidence, not a screenshot of synthetic fixtures.
+The screenshot and its private values are not included in the repository.
+The check ended successfully and its temporary observer was removed. The public
+installed app's strict signature verification passed; no installed bundle,
+registration, provider authentication, browser setting, or release was changed.
+
+**Local checkpoint: PASS for menu-bar W/P/difference and two automatic imports
+with browser sign-in and CLI signed out.** This short run crossed neither a
+five-hour nor a weekly reset and is not a long-duration reliability guarantee.
 
 Remaining release gates:
 
-1. Load the exact prototype extension, register its exact ID, and confirm a live
-   normalized success from web sign-in while Claude Code remains signed out.
-2. Compare W, exact reset, P, and difference with the official usage display and
-   confirm at least two automatic refreshes without manual Refresh.
+1. Repeat exact-version acquisition and full popover acceptance on a clean or
+   second Mac, comparing W, the reset timestamp, P, and the difference against
+   the official usage display and the planning calculation. Local registration,
+   browser-signed-in/CLI-signed-out acquisition,
+   two automatic imports, and the owner's menu-bar display check are complete.
+2. Verify a live five-hour rollover with 0.1.3 retains eligible weekly values
+   without inventing a new optional window; that boundary is tested synthetically
+   but was not crossed during the successful live follow-up.
 3. Verify live browser restart, sleep/wake, lost tab, sign-out, account changes, and
    failure recovery. The web endpoints are undocumented and not transactionally
    account-bound; before/after identity checks are a mitigation, not an official guarantee.
