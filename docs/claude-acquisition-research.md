@@ -9,14 +9,20 @@ The unresolved requirement is reliable Claude weekly remaining (`W`), today's
 target remaining (`P`), and reset availability using an existing Claude Desktop
 sign-in, with the standalone CLI signed out and **no new login**.
 
-No additional publicly documented path examined here establishes that guarantee.
+No path examined here has been independently verified against that complete guarantee.
+This is not a claim that Desktop-only acquisition is technically impossible:
+other applications implement active requests using Desktop authentication. The
+expanded comparison below separates technical feasibility, product/security
+approval, and demonstrated runtime reliability.
 Desktop HTTP-cache work in Draft PR #42 remains experimental: organization-level
 ownership and uncertain refresh behavior do not establish account-bound,
 continuous availability. The browser extension prototype is tracked in a
 separate pull request from Draft PR #42. A working browser-session bridge would
 not, by itself, satisfy the Desktop-only requirement.
 
-Research and any future observer must preserve these boundaries:
+The currently authorized research and observation preserve these boundaries.
+Studying public code that crosses them does not authorize running that code or
+changing QuotaTempo's privacy contract:
 
 - Read only allowlisted, nonsecret quota and identity metadata. Do not read,
   extract, copy, or hash tokens, cookies, credentials, or conversation transcripts.
@@ -164,6 +170,208 @@ The remaining upstream request is concrete: expose an opt-in, nonsecret local
 quota record or subscription containing account and organization identity,
 `utilization`, `resets_at`, and the source observation time, updated after ordinary
 Desktop activity and rollover. No upstream request was sent in this round.
+
+## Expanded Desktop-only investigation, September 30
+
+This pass examines additional public implementations, including paths outside
+the current no-secret policy. Two independent research agents cover provider
+implementations and first-party integration surfaces. Source inspection is not
+a live test: no competitor was executed, no authentication store was read, and
+no app, browser, permission, or sign-in setting was changed.
+
+### New implementation evidence
+
+**OpenUsage: a shipped Desktop-authentication implementation.** Release
+v0.7.12, `3b84fec518d5b3775adb93456fa8af7330c852d5`, has a
+[Desktop auth reader](https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeDesktopAuthStore.swift#L73-L170)
+that decrypts Desktop's OAuth cache and obtains active-organization metadata from
+its cookie store. It is not dependent on standalone CLI sign-in. A live usage
+request supplies resets, not a projected date. Desktop-owned refresh tokens are
+not exchanged; this still involves handling protected authentication material.
+The same release already includes useful
+[profile verification and post-request generation checks](https://github.com/robinebers/openusage/blob/3b84fec518d5b3775adb93456fa8af7330c852d5/Sources/OpenUsage/Providers/Claude/ClaudeProvider.swift#L368-L450).
+Profile verification is conditional on expected identity being configured, so
+it is not proof of unconditional account binding. These checks were also found
+in inspected main `5ef840538266af4cf33e924c60bd5ff3662eda7f`.
+
+**cc-bar: Desktop OAuth rather than the standalone CLI.** The published
+[v1.1.1 release](https://github.com/nanvon/cc-bar/releases/tag/v1.1.1) resolves to
+`63d0f7eb06b307177bc85be586ed32fe2e5ec997`. Its
+[Desktop reader](https://github.com/nanvon/cc-bar/blob/63d0f7eb06b307177bc85be586ed32fe2e5ec997/Core/Credentials/ClaudeDesktopAuth.swift#L68-L161)
+discovers an account without CLI credentials and selects an unexpired Desktop
+access token with the required scope. Its
+[quota client](https://github.com/nanvon/cc-bar/blob/63d0f7eb06b307177bc85be586ed32fe2e5ec997/Core/Quota/ClaudeQuotaClient.swift#L3-L29)
+requests usage instead of rereading history. Protected-authentication access is
+required; author comments about long token lifetimes are not service guarantees.
+Do not copy account selection unchanged: `discoverAccount()` at lines 117-121
+falls back from the current account's entries to **all** entries. A valid older
+account can be selected when the current account has no usable entry.
+QuotaTempo must instead reject missing or conflicting current identity.
+
+**CodexBar is not equivalent to a proven Desktop-only source.** Current main
+`001ed11d4d3a475809765145e36f44a756ef52ca` selects
+[OAuth, then CLI, then Web for app Auto; Web, then CLI for command-line Auto](https://github.com/steipete/CodexBar/blob/001ed11d4d3a475809765145e36f44a756ef52ca/Sources/CodexBarCore/Providers/Claude/ClaudeSourcePlanner.swift#L174-L205).
+The inspected sources do not establish the same Desktop OAuth-cache path as
+OpenUsage/cc-bar. Its successful display is not evidence that a Desktop-only
+configuration will work. Historical auth reports remain useful failure scenarios:
+[CodexBar #1287](https://github.com/steipete/CodexBar/issues/1287),
+[OpenUsage #1200](https://github.com/robinebers/openusage/issues/1200), and
+[cc-bar #8](https://github.com/nanvon/cc-bar/issues/8) are all closed at inspection;
+they are neither proof of a current defect nor proof of long-term reliability.
+CodexBar's linked [PR #1539](https://github.com/steipete/CodexBar/pull/1539)
+explicitly covers cookie-cache isolation tests, not the entire auth lifecycle.
+
+**VibeMenu: another passive-cache implementation, not a new refresh mechanism.**
+Inspected master `5b1588f6d6a923519d886d8e0d015e2373593356`; its published v1.0 tag
+is a different commit. The
+[reader](https://github.com/Kirill-Chistov/VibeMenu/blob/5b1588f6d6a923519d886d8e0d015e2373593356/Sources/VibeMenuCore/ClaudeDesktopUsageCacheReader.swift#L330-L389)
+decodes compressed Desktop responses and chooses the newest decodable snapshot.
+Its [design record](https://github.com/Kirill-Chistov/VibeMenu/blob/5b1588f6d6a923519d886d8e0d015e2373593356/docs/decisions/0016-claude-usage-limits.md)
+describes population through Desktop's Usage view, not independent refresh.
+The parser permits an mtime fallback and does not bind the snapshot to the active
+account. Those are not substitutes for QuotaTempo's source-time and ownership
+checks. Draft PR #42 already has zstd decoding and both window/limits payload
+shapes; another decoder is not the missing root fix.
+
+**CCDEX: fresh requests inside Desktop, but by modifying the app.** At
+`0058664bd3dbed5e5900b24b71401e963cfbd686`, its
+[renderer code](https://github.com/Saqoosha/CCDEX/blob/0058664bd3dbed5e5900b24b71401e963cfbd686/context-indicator.js#L19-L58)
+fetches usage with the existing renderer session and reads returned resets.
+It [schedules periodic requests](https://github.com/Saqoosha/CCDEX/blob/0058664bd3dbed5e5900b24b71401e963cfbd686/context-indicator.js#L425-L438).
+This is not a public Desktop API: the
+[patcher](https://github.com/Saqoosha/CCDEX/blob/0058664bd3dbed5e5900b24b71401e963cfbd686/patch.py#L193-L235)
+disables ASAR integrity, changes the app archive, and applies an ad-hoc signature.
+No GitHub release asset was present at inspection. Do not adopt this installation
+path: it weakens tamper protection, depends on private preload/IPC details, and
+requires patch maintenance after Claude updates.
+
+Electron's [ASAR integrity documentation](https://www.electronjs.org/docs/latest/tutorial/asar-integrity)
+confirms that this is a code-integrity security feature. Its
+[extension documentation](https://www.electronjs.org/docs/latest/api/extensions)
+requires the host app to load an extension into its own session. Installing an
+ordinary Chrome extension does not install the bridge into Claude Desktop.
+The ASAR page was also extracted with Public Source Extractor and checked against
+the original; its generated summary was not treated as authority.
+
+**UI automation is interactive, not passive telemetry.** The Windows project
+`claude-desktop-auto-resume`, at `895c21740f012b5179c8a2e1d9a0d339fc177d4c`,
+[focuses the window, clicks the meter, reads its panel, and sends Escape](https://github.com/MichalCholajczyk/claude-desktop-auto-resume/blob/895c21740f012b5179c8a2e1d9a0d339fc177d4c/claude_auto_continue.py#L806-L849).
+This does not prove noninterfering macOS acquisition or timestamp precision.
+Targeted accessibility remains a user-prepared experiment, not a fallback that
+silently changes the active window.
+
+### First-party structured usage lead
+
+The published official [Agent SDK v0.3.277 type definition](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.d.ts)
+contains an experimental structured `get_usage` control request, exposed as
+`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`. It can return
+weekly utilization and ISO reset timestamps without parsing terminal text.
+Crucially, `skipBehaviors: true` is required for a quota-only experiment: the
+default behavior scans local transcripts. Do not invoke the default method.
+The response may omit plan limits for non-subscription authentication or missing
+scope, and its type does not prove current fetch time or account ownership.
+This is a promising PTY-replacement research path, but does not establish a
+supported attachment to Desktop's existing authenticated session.
+
+The same-version [published JavaScript](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/sdk.mjs)
+confirms that the method sends `get_usage` with `skip_behaviors: true` when
+requested. Its standard transport owns a newly spawned CLI, not Desktop's
+existing child. Inspecting package text does not execute it. The GitHub v0.3.277
+tag is `ba8f408d24e20b0662e5833c86051316114a0972`; this does not prove npm build
+identity. The [tagged changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/ba8f408d24e20b0662e5833c86051316114a0972/CHANGELOG.md#L3-L11)
+describes live-only rows for `SDKUsageReport`, which is a different result type;
+do not apply that guarantee to `SDKControlGetUsageResponse`.
+
+The SDK's [bridge types](https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.277/bridge.d.ts)
+also do not supply a read-only Desktop attachment: worker authentication involves
+a JWT and can change the worker epoch. Do not attach to a user's existing session
+or intercept its control stdin. A later PTY-alternative experiment must own its
+child process, send no user/model prompt, disable behavior scanning, allowlist
+quota output, and close within 30 seconds. It still needs its own valid
+subscription authentication; it is not a Desktop-only workaround.
+
+### Bounded no-secret Code Local experiment
+
+The [statusLine contract][statusline] provides rate-limit fields, but is not proof
+that Desktop Code Local invokes this callback. Conversely, headless startup alone
+is not sufficient evidence that all current/future Desktop versions cannot do so.
+Community claims about seeing limits inside Desktop and writing a statusLine
+file are not interchangeable evidence.
+
+After explicit configuration approval, use one test project only; do not overwrite
+an existing statusLine or change global settings. Wait for ordinary user activity,
+not a test prompt, `/usage` request, new login, or session restart. For at most
+45 minutes/two ordinary responses, project only callback time, version, invocation
+count, utilization, and reset timestamps. Never retain raw stdin, transcript paths,
+account data, or message content. Attribute the callback through process executable
+and parent metadata, without reading process arguments or environment values.
+Remove only the configuration and files added by this experiment.
+
+Distinguish `callbackNotObserved`, `weeklyFieldAbsent`, `expiredReset`,
+`currentWeeklyReceived`, and `originUnknown`. A current reset is only an initial
+capability result: same-account evidence and a new reset after natural rollover
+remain required. This experiment covers Code Local, not Chat, Cowork, Cloud, or
+SSH. It has not been executed.
+
+### Approval is separate from feasibility
+
+Reading Desktop authentication inside a future product is a different capability
+from reading nonsecret quota files. It requires an explicit product decision and
+user opt-in; the agent must still never receive, display, or save secret values.
+The current privacy contract has not changed.
+
+The [first-party authentication policy](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)
+restricts third-party credential/session-token intermediation and directs
+authentication-use questions to Anthropic. Competitor source does not establish
+approval for a quota-only reader. Confirm that use case before shipping; this
+report does not make a legal determination. API-key billing usage does not replace
+a subscription's weekly allowance.
+The [SDK overview](https://code.claude.com/docs/en/agent-sdk/overview#get-started)
+also explicitly requires prior approval for third-party products offering
+claude.ai login or rate limits. Treat this as an adoption gate, not as evidence
+that the code cannot technically fetch data.
+
+Electron's [safeStorage documentation](https://www.electronjs.org/docs/latest/api/safe-storage#platform-specific-key-providers)
+explains the macOS cross-application Keychain boundary and importance of consistent
+code signing. Never bypass denial with another helper or repeatedly prompt from
+a timer. A one-time working token is not an authentication-lifecycle solution.
+
+### Candidate decision and acceptance criteria
+
+The strongest active-request candidate to evaluate is **explicitly authorized,
+read-only Desktop authentication**, leaving renewal to the official client.
+It is a candidate, not approved or implemented functionality. In parallel, a
+bounded Desktop Code Local statusLine experiment can test a no-secret path; it
+does not cover Chat/Cowork. Passive cache improvements remain useful but cannot
+alone guarantee a fresh observation. App patching, integrity disablement, debug
+ports, automatic UI navigation, and renewing another client's authentication are
+excluded from this proposal.
+
+Before a protected-store experiment, complete provider-permission and
+product-consent decisions. The prototype must then enforce:
+
+1. **No CLI/browser dependency:** test Desktop Chat-only, Code Local, and Cowork
+   separately, without a standalone CLI credential or browser bridge.
+2. **Current identity only:** bind each request to its account and organization;
+   reject ambiguous identity and delayed old-account responses. Do not select a
+   convenient older account or infer ownership from matching percentages.
+3. **Read-only lifecycle:** no refresh-token exchange or writes to Claude stores;
+   no secrets or raw responses in logs. Report only eligibility, expiry state,
+   request outcome, and normalized quota. Honor permission denial.
+4. **Actual rollover:** receive a new server reset and fresh utilization after
+   the prior reset expires. Never add seven days. Test early limit resets apart
+   from the scheduled weekly reset.
+5. **Recovery:** test background use, idle, sleep/wake, network loss, 401/403,
+   429/Retry-After, Desktop's own credential renewal, account switching, and app
+   updates. Use bounded backoff; never switch accounts to evade limits.
+6. **Independent evidence:** a single fetch and synthetic tests are insufficient.
+   Record source/time/ownership outcomes without identifiers or raw payloads,
+   compare the official Usage display, and verify on a second Mac.
+
+No route becomes release-ready through this report. Identity selection,
+freshness, expiry, and failure handling can first be prepared with synthetic
+fixtures, without protected-store access. Live Desktop-only acquisition and a
+fresh weekly rollover remain separate release gates.
 
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift
