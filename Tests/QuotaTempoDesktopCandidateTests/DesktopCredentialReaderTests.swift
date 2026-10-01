@@ -159,7 +159,7 @@ struct DesktopCredentialReaderTests {
     await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     var first: DesktopCredentialLease? = try await reader.load(now: readerNow)
     let context = try #require(first).context
-    weak let released = first
+    weak var released = first
     first = nil
     keychain.set(.locked)
     for _ in 0..<3 {

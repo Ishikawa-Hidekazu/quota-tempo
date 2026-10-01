@@ -273,7 +273,7 @@ struct DesktopPreviewTerminationTests {
         events.add(.deadlineFinished)
         withExtendedLifetime(capture) {}
       }, onTimeout: { events.add(.timeout) }, requestExit: { events.add(.exit($0)) })
-    weak let reference = termination
+    weak var reference = termination
     termination?.finish(code: 0) { [capture = TerminationCapture { events.add(.stopReleased) }] in
       events.add(.stopStarted)
       await cleanup.wait()

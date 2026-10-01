@@ -925,6 +925,15 @@ restart-safe provider backoff/refusal handling, supervised Quit/Escape/outside
 click, real renewal, sleep/wake, natural reset, and a second Mac. In particular,
 this patch must not be presented as solving persistence across process restarts.
 
+#### CI compatibility follow-up, October 1
+
+The `b12876d` macOS CI failed while compiling two new tests: its Swift toolchain
+rejects `weak let`, although the local Swift 6.3.2 toolchain accepted it. Both weak
+test references now use `weak var`. No acquisition or presentation behavior was
+changed. After this correction, the local full suite again passed all 549 tests
+in 22 suites and strict formatting passed. The earlier local PASS did not imply
+CI compatibility; the corrected head still needs its own successful CI result.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before
