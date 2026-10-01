@@ -21,7 +21,10 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
   init(
     service: any DesktopPreviewServing,
     qa: Bool,
-    onResult: @escaping @MainActor @Sendable (DesktopUsageCandidateResult, FixtureScenario) -> Void
+    onResult:
+      @escaping @MainActor @Sendable (
+        DesktopUsageCandidateResult, FixtureScenario, DesktopPreviewRefreshTrigger
+      ) -> Void
   ) {
     self.qa = qa
     model = DesktopPreviewModel(service: service, onResult: onResult)
@@ -31,7 +34,10 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
   static func run(
     service: any DesktopPreviewServing,
     qa: Bool,
-    onResult: @escaping @MainActor @Sendable (DesktopUsageCandidateResult, FixtureScenario) -> Void
+    onResult:
+      @escaping @MainActor @Sendable (
+        DesktopUsageCandidateResult, FixtureScenario, DesktopPreviewRefreshTrigger
+      ) -> Void
   ) {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -64,7 +70,7 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
       wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
         forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
       ) { [weak self] _ in
-        Task { @MainActor in await self?.model.refresh() }
+        Task { @MainActor in await self?.model.refresh(trigger: .wake) }
       }
     }
     Task { await model.start() }

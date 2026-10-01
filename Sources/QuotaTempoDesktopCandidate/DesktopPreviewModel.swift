@@ -9,6 +9,10 @@ protocol DesktopPreviewServing: Sendable {
 
 extension DesktopUsageCandidateService: DesktopPreviewServing {}
 
+enum DesktopPreviewRefreshTrigger: String, Sendable {
+  case startup, scheduled, manual, wake
+}
+
 // Local preview only. A single service owns backoff and credential refusals for
 // its entire lifetime; menu openings and manual refresh never replace it.
 @MainActor
@@ -21,7 +25,8 @@ final class DesktopPreviewModel: ObservableObject {
   private let clock: @Sendable () -> Date
   private let interval: Duration
   private let displayInterval: Duration
-  private let onResult: @MainActor (DesktopUsageCandidateResult, FixtureScenario) -> Void
+  private let onResult:
+    @MainActor (DesktopUsageCandidateResult, FixtureScenario, DesktopPreviewRefreshTrigger) -> Void
   private var loop: Task<Void, Never>?
   private var displayLoop: Task<Void, Never>?
   private var generation = UUID()
@@ -32,9 +37,12 @@ final class DesktopPreviewModel: ObservableObject {
     clock: @escaping @Sendable () -> Date = Date.init,
     interval: Duration = .seconds(30),
     displayInterval: Duration = .seconds(1),
-    onResult: @escaping @MainActor (DesktopUsageCandidateResult, FixtureScenario) -> Void = {
-      _, _ in
-    }
+    onResult:
+      @escaping @MainActor (
+        DesktopUsageCandidateResult, FixtureScenario, DesktopPreviewRefreshTrigger
+      ) -> Void = {
+        _, _, _ in
+      }
   ) {
     self.service = service
     self.clock = clock
@@ -53,9 +61,11 @@ final class DesktopPreviewModel: ObservableObject {
       DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true))
     guard isRunning, generation == expected else { return }
     loop = Task { [weak self] in
+      var trigger = DesktopPreviewRefreshTrigger.startup
       while !Task.isCancelled {
         guard self?.isRunning == true, self?.generation == expected else { return }
-        await self?.refresh()
+        await self?.refresh(trigger: trigger)
+        trigger = .scheduled
         guard let interval = self?.interval else { return }
         do { try await Task.sleep(for: interval) } catch { return }
       }
@@ -70,7 +80,7 @@ final class DesktopPreviewModel: ObservableObject {
     }
   }
 
-  func refresh() async {
+  func refresh(trigger: DesktopPreviewRefreshTrigger = .manual) async {
     guard isRunning, !Task.isCancelled else { return }
     refreshDisplay()
     guard !refreshing else { return }
@@ -83,7 +93,7 @@ final class DesktopPreviewModel: ObservableObject {
     lastResult = result
     state = result.state
     apply(result)
-    onResult(result, scenario)
+    onResult(result, scenario, trigger)
   }
 
   func stop() async {

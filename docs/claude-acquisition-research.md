@@ -1006,6 +1006,69 @@ preserving its signing identity and any currently known not-before deadline.
 Until that step and new acceptance evidence, the visible running preview must
 not be described as fixed. No new branch or worktree was created for this rework.
 
+#### Supervised preview replacement, October 1
+
+The owner authorized replacing only the isolated `QT Desktop` helper. Before
+replacement, the old helper had recovered without an update and had a current
+observation at **13:00:06 UTC**. This recovery is not evidence that the new code
+fixed the earlier payload failure.
+
+The old process was stopped after checking its exact executable. The replacement
+was built from `d71ca5446996011e4a32577a791d0413433ba364`, signed with the same
+Developer ID, identifier and designated-requirement boundary, and verified before
+launch. Startup at **13:05:37 UTC** honored the prior next-allowed deadline and an
+additional one-minute stop-to-start floor. Only the isolated helper was replaced;
+the installed public app remained version **0.1.9**, and Claude/Chrome were not
+restarted or activated. No additional login or interactive permission request
+was performed.
+
+The new helper accepted Desktop-only observations at **13:05:39 UTC**,
+**13:10:46 UTC**, and **13:15:54 UTC**, 307/308 seconds apart, with `observationAvailable=true`,
+`planVisible=true`, and `usageAccepted`. No agent-triggered manual Refresh was
+performed. This is real revised-helper repeated-acquisition evidence, not
+visual/UI acceptance or natural-reset QA. This build still lacks per-result
+trigger labels, so it is not exclusively timer-origin acceptance evidence.
+Manual menu checks are still pending at this checkpoint.
+
+CI for `d71ca54` did not pass completely: branch CI passed, but PR CI failed
+`blockedCleanupCannotDelayTimeout(onMainActor: false)`. The synthetic cleanup
+exhausted its one-second safety wait before the asynchronous deadline task ran.
+The failure was reproduced locally with `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1`.
+The follow-up replaces the asynchronous task watchdog with a `DispatchSourceTimer`
+on a dedicated queue, independent of both Swift's cooperative executor and the
+MainActor. The real three-second timeout, exactly-once exit, request-exit before
+potentially blocking cleanup cancellation, and normal/deinit cancellation remain.
+The revised focused suite passes seven tests in strict-pool mode, including both
+blocked-executor variants. Virtual-timer tests cover duplicate/late events,
+25 timeout/cleanup races, and callback cancellation ordering. This is not just
+a longer test safety timeout or a blind CI rerun.
+
+The follow-up also adds a fixed `startup` / `scheduled` / `manual` / `wake`
+diagnostic label to local preview results. Display-only ticks emit no result or
+trigger, and overlapping refreshes cannot relabel the accepted request. This
+metadata does not contain quota values, account identity or credentials. It is
+intended to separate actual scheduled-acquisition evidence from merely seeing
+two different capture times; it is not present in the `d71ca54` binary above.
+
+The full follow-up suite passes **579 tests / 22 suites**, also with outbound
+network denied; browser fixtures pass **229 tests** and strict formatting passes.
+Candidate isolation, release/distribution policies, validation-only compilation,
+and the 17 inert argument cases pass. The newly signed helper must receive
+its own runtime evidence after replacement; a previous process's observations
+are not carried forward as proof for another binary.
+
+Restart-safety design review also identified that a numeric Retry-After longer
+than the current 15-digit parser bound becomes `nil`. That must not be confused
+with an absent deadline. The next implementation should distinguish absent,
+representable and unsupported service waits, preserve known deadlines across
+restart, and durably store a bounded, account-independent attempt/throttle record
+before HTTP. No credentials, credential hashes, account fingerprints, response
+bodies or quota values belong in that record. Crash, clock discontinuity,
+write/rename failure and cancelled-response cases need explicit recovery tests.
+Permanent lockout after an ordinary interrupted request is not accepted as a
+product recovery policy; that proposal still needs refinement. This is design
+work, not a claim that M4 or M6 has been implemented.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before

@@ -88,12 +88,17 @@ struct DesktopPreviewModelTests {
 
   @Test func timerPublishesWithoutOpeningAMenuAndStartIsIdempotent() async throws {
     let service = PreviewServiceStub(replies: [previewResult(81), previewResult(80)])
+    var triggers: [DesktopPreviewRefreshTrigger] = []
     let model = DesktopPreviewModel(
-      service: service, clock: { previewNow }, interval: .milliseconds(10))
+      service: service, clock: { previewNow }, interval: .milliseconds(10),
+      onResult: { _, _, trigger in triggers.append(trigger) })
     await model.start()
     await model.start()
     try await eventually { model.scenario.snapshots.first?.weekly?.remainingPercent == 80 }
     #expect(await service.calls >= 2)
+    #expect(triggers.first == .startup)
+    #expect(triggers.dropFirst().allSatisfy { $0 == .scheduled })
+    #expect(triggers.contains(.scheduled))
     #expect(await service.approvals.count == 1)
     #expect(await service.approvals.first?.localExperimentAuthorized == true)
     #expect(await service.approvals.first?.providerApproved == false)
@@ -107,14 +112,34 @@ struct DesktopPreviewModelTests {
 
   @Test func concurrentRefreshesDoNotOverlap() async throws {
     let service = PreviewServiceStub(blocked: true)
-    let model = DesktopPreviewModel(service: service, clock: { previewNow })
+    var triggers: [DesktopPreviewRefreshTrigger] = []
+    let model = DesktopPreviewModel(
+      service: service, clock: { previewNow },
+      onResult: { _, _, trigger in triggers.append(trigger) })
     await model.start()
     try await eventually { await service.calls == 1 }
     await model.refresh()
-    await model.refresh()
+    await model.refresh(trigger: .wake)
     #expect(await service.calls == 1)
     await service.release()
     try await eventually { !model.refreshing }
+    #expect(triggers == [.startup])
+    await model.stop()
+  }
+
+  @Test func manualAndWakeTriggersDoNotRelabelStartupOrDisplayTicks() async throws {
+    let service = PreviewServiceStub()
+    var triggers: [DesktopPreviewRefreshTrigger] = []
+    let model = DesktopPreviewModel(
+      service: service, clock: { previewNow }, interval: .seconds(3600),
+      displayInterval: .milliseconds(10), onResult: { _, _, trigger in triggers.append(trigger) })
+    await model.start()
+    try await eventually { triggers == [.startup] }
+    await model.refresh()
+    await model.refresh(trigger: .wake)
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(triggers == [.startup, .manual, .wake])
+    #expect(await service.calls == 3)
     await model.stop()
   }
 
@@ -181,7 +206,7 @@ struct DesktopPreviewModelTests {
     var resultCount = 0
     let model = DesktopPreviewModel(
       service: service, clock: { clock.now() }, interval: .seconds(3600),
-      displayInterval: .milliseconds(10), onResult: { _, _ in resultCount += 1 })
+      displayInterval: .milliseconds(10), onResult: { _, _, _ in resultCount += 1 })
     await model.start()
     await model.start()
     try await eventually { resultCount == 1 }
@@ -207,7 +232,7 @@ struct DesktopPreviewModelTests {
     var resultCount = 0
     let model = DesktopPreviewModel(
       service: service, clock: { clock.now() }, interval: .seconds(3600),
-      displayInterval: .milliseconds(10), onResult: { _, _ in resultCount += 1 })
+      displayInterval: .milliseconds(10), onResult: { _, _, _ in resultCount += 1 })
     await model.start()
     try await eventually { resultCount == 1 }
     await service.block()
@@ -237,7 +262,7 @@ struct DesktopPreviewModelTests {
     var resultCount = 0
     let model = DesktopPreviewModel(
       service: service, clock: { clock.now() }, interval: .seconds(3600),
-      displayInterval: .milliseconds(10), onResult: { _, _ in resultCount += 1 })
+      displayInterval: .milliseconds(10), onResult: { _, _, _ in resultCount += 1 })
     await model.start()
     try await eventually { resultCount == 1 }
     await service.block()

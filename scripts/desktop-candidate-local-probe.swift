@@ -57,11 +57,12 @@ struct DesktopCandidateLocalProbe {
         await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
           .fetch(request: request, lease: lease)
       })
-      DesktopPreviewApplication.run(service: service, qa: previewQA) { result, scenario in
+      DesktopPreviewApplication.run(service: service, qa: previewQA) { result, scenario, trigger in
         // Values stay in the UI; terminal output is bounded, fixed metadata only.
         let plan = scenario.snapshots.first.map { QuotaPlanner.evaluate($0, now: scenario.now) }
         var fields: [String: Any] = [
           "status": result.state.rawValue,
+          "trigger": trigger.rawValue,
           "desktopOnly": true,
           "providerPermissionConfirmed": false,
           "observationAvailable": result.observation != nil,
