@@ -12,7 +12,8 @@ private func throttleRecord() -> DesktopThrottleRecord {
     localNextAllowedAt: throttleNow.addingTimeInterval(60),
     successfulNextAllowedAt: throttleNow.addingTimeInterval(300),
     serviceNotBefore: throttleNow.addingTimeInterval(600), unsupportedServiceWait: true,
-    failureCount: 3, interruptedUntil: throttleNow.addingTimeInterval(30))
+    failureCount: 3, interruptedUntil: throttleNow.addingTimeInterval(30),
+    authRefusal: .accessDenied)
 }
 
 private final class ThrottleFixture {
@@ -58,6 +59,100 @@ private final class ThrottleCounter: @unchecked Sendable {
 
 @Suite("Desktop restart throttle metadata store")
 struct DesktopThrottleStoreTests {
+  @Test func applicationSupportCreatesOnlyPrivateCandidateDirectory() throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    let support = library.appendingPathComponent("Application Support")
+    try FileManager.default.createDirectory(
+      at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let existing = support.appendingPathComponent("QuotaTempo")
+    try FileManager.default.createDirectory(
+      at: existing, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let sentinel = existing.appendingPathComponent("synthetic-public-data")
+    let bytes = Data("untouched-synthetic-data".utf8)
+    try bytes.write(to: sentinel)
+    var first: DesktopThrottleFileStore? = try .applicationSupport(homeDirectory: fixture.directory)
+    let candidate = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    var info = stat()
+    #expect(lstat(candidate.path, &info) == 0)
+    #expect(info.st_uid == geteuid())
+    #expect(info.st_mode & 0o7777 == 0o700)
+    #expect(try first?.load() == nil)
+    try first?.save(throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    first = nil
+    let restarted = try DesktopThrottleFileStore.applicationSupport(
+      homeDirectory: fixture.directory)
+    #expect(try restarted.load() == throttleRecord())
+    #expect(try Data(contentsOf: sentinel) == bytes)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: existing.path) == [
+        "synthetic-public-data"
+      ])
+    #expect(
+      Set(try FileManager.default.contentsOfDirectory(atPath: support.path))
+        == ["QuotaTempo", "QuotaTempoDesktopPreview"])
+  }
+
+  @Test(arguments: [false, true])
+  func applicationSupportNeverCreatesMissingAncestors(libraryExists: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    if libraryExists {
+      try FileManager.default.createDirectory(
+        at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(try fixture.names() == (libraryExists ? ["Library"] : []))
+    if libraryExists {
+      #expect(try FileManager.default.contentsOfDirectory(atPath: library.path).isEmpty)
+    }
+  }
+
+  @Test(arguments: ["parent-mode", "parent-link", "child-link", "child-mode"])
+  func applicationSupportRejectsUnsafePaths(kind: String) throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    let support = library.appendingPathComponent("Application Support")
+    try FileManager.default.createDirectory(
+      at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let target = fixture.directory.appendingPathComponent("synthetic-link-target")
+    try FileManager.default.createDirectory(
+      at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let child = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    switch kind {
+    case "parent-mode":
+      #expect(chmod(support.path, 0o777) == 0)
+    case "parent-link":
+      try FileManager.default.removeItem(at: support)
+      try FileManager.default.createSymbolicLink(at: support, withDestinationURL: target)
+    case "child-link":
+      try FileManager.default.createSymbolicLink(at: child, withDestinationURL: target)
+    default:
+      try FileManager.default.createDirectory(
+        at: child, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o777])
+      #expect(chmod(child.path, 0o777) == 0)
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+    if kind == "parent-mode" {
+      var info = stat()
+      #expect(lstat(support.path, &info) == 0)
+      #expect(info.st_mode & 0o7777 == 0o777)
+      #expect(!FileManager.default.fileExists(atPath: child.path))
+    }
+  }
+
   @Test func missingRoundTripReplacementAndRestart() throws {
     let fixture = try ThrottleFixture(mode: 0o755)
     var first: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
@@ -92,8 +187,9 @@ struct DesktopThrottleStoreTests {
       Set(json.keys) == [
         "schemaVersion", "recordedAt", "lastAttemptAt", "localNextAllowedAt",
         "successfulNextAllowedAt", "serviceNotBefore", "unsupportedServiceWait",
-        "failureCount", "interruptedUntil",
+        "failureCount", "interruptedUntil", "authRefusal",
       ])
+    #expect(json["authRefusal"] as? String == "accessDenied")
     #expect(data.count <= 4096)
     #expect(try Data(contentsOf: fixture.lockURL) == Data([1]))
     for url in [fixture.recordURL, fixture.lockURL] {
@@ -103,6 +199,48 @@ struct DesktopThrottleStoreTests {
       #expect(info.st_mode & 0o7777 == 0o600)
       #expect(info.st_nlink == 1)
     }
+  }
+
+  @Test(arguments: [DesktopAuthRefusal.waitingForDesktopRenewal, .accessDenied])
+  func refusalRoundTripAndRestart(refusal: DesktopAuthRefusal) throws {
+    let fixture = try ThrottleFixture()
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    let minimal = DesktopThrottleRecord(recordedAt: throttleNow, authRefusal: refusal)
+    try store?.save(minimal)
+    #expect(try store?.load() == minimal)
+    var full = throttleRecord()
+    full.authRefusal = refusal
+    try store?.save(full)
+    store = nil
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == full)
+  }
+
+  @Test func legacyV1WithoutRefusalRemainsReadable() throws {
+    let fixture = try ThrottleFixture()
+    var legacy = throttleRecord()
+    legacy.authRefusal = nil
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+    json.removeValue(forKey: "authRefusal")
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try store.load() == legacy)
+    try store.save(legacy)
+    #expect(try store.load() == legacy)
+  }
+
+  @Test(arguments: ["unknown", "current", "401", ""])
+  func invalidRefusalEnumRejected(value: String) throws {
+    let fixture = try ThrottleFixture()
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(throttleRecord()))
+        as? [String: Any])
+    json["authRefusal"] = value
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
   }
 
   @Test(arguments: ["{", "[]", "null", "{}", "\"synthetic-only\""])
@@ -127,6 +265,7 @@ struct DesktopThrottleStoreTests {
 
   @Test(arguments: [
     "accountFingerprint", "organizationFingerprint", "credential", "token", "extra",
+    "authRefusalGeneration", "generation", "credentialHash", "owner",
   ])
   func unknownFieldsRejected(field: String) throws {
     let fixture = try ThrottleFixture()

@@ -56,6 +56,40 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
   private var recordStamp: DesktopFileStamp?
   private var uncertainCommit = false
 
+  static func applicationSupport(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) throws -> DesktopThrottleFileStore {
+    let parentURL = homeDirectory.appendingPathComponent(
+      "Library/Application Support", isDirectory: true)
+    let parent = try openDirectory(parentURL)
+    defer { Darwin.close(parent.fd) }
+    let childName = "QuotaTempoDesktopPreview"
+    if mkdirat(parent.fd, childName, 0o700) != 0 {
+      guard errno == EEXIST else { throw DesktopThrottleStoreError.ioFailure }
+    }
+    let child = openat(parent.fd, childName, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+    guard child >= 0 else { throw DesktopThrottleStoreError.unsafePath }
+    defer { Darwin.close(child) }
+    var info = stat()
+    guard fstat(child, &info) == 0 else { throw DesktopThrottleStoreError.ioFailure }
+    try validateDirectory(info, final: true)
+    guard info.st_mode & 0o7777 == 0o700 else { throw DesktopThrottleStoreError.unsafePath }
+    while Darwin.fsync(parent.fd) != 0 {
+      guard errno == EINTR else { throw DesktopThrottleStoreError.ioFailure }
+    }
+    let checked = try openDirectory(parentURL)
+    defer { Darwin.close(checked.fd) }
+    guard checked.ancestry == parent.ancestry else { throw DesktopThrottleStoreError.changed }
+    let store = try DesktopThrottleFileStore(
+      directory: parentURL.appendingPathComponent(childName, isDirectory: true))
+    // The path-based initializer must have opened the same parent and child.
+    guard store.ancestry == parent.ancestry + [Identity(info)] else {
+      throw DesktopThrottleStoreError.changed
+    }
+    try store.validateEnvironment()
+    return store
+  }
+
   init(directory: URL, io: IO = IO()) throws {
     let opened = try Self.openDirectory(directory)
     var retained = false
@@ -363,11 +397,12 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     let unsupportedServiceWait: Bool
     let failureCount: Int
     let interruptedUntil: Date?
+    let authRefusal: DesktopAuthRefusal?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
       case schemaVersion, recordedAt, lastAttemptAt, localNextAllowedAt
       case successfulNextAllowedAt, serviceNotBefore, unsupportedServiceWait
-      case failureCount, interruptedUntil
+      case failureCount, interruptedUntil, authRefusal
     }
 
     private struct AnyKey: CodingKey {
@@ -387,6 +422,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       unsupportedServiceWait = record.unsupportedServiceWait
       failureCount = record.failureCount
       interruptedUntil = record.interruptedUntil
+      authRefusal = record.authRefusal
     }
 
     init(from decoder: Decoder) throws {
@@ -406,6 +442,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       unsupportedServiceWait = try values.decode(Bool.self, forKey: .unsupportedServiceWait)
       failureCount = try values.decode(Int.self, forKey: .failureCount)
       interruptedUntil = try values.decodeIfPresent(Date.self, forKey: .interruptedUntil)
+      authRefusal = try values.decodeIfPresent(DesktopAuthRefusal.self, forKey: .authRefusal)
     }
 
     var record: DesktopThrottleRecord {
@@ -413,7 +450,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
         schemaVersion: schemaVersion, recordedAt: recordedAt, lastAttemptAt: lastAttemptAt,
         localNextAllowedAt: localNextAllowedAt, successfulNextAllowedAt: successfulNextAllowedAt,
         serviceNotBefore: serviceNotBefore, unsupportedServiceWait: unsupportedServiceWait,
-        failureCount: failureCount, interruptedUntil: interruptedUntil)
+        failureCount: failureCount, interruptedUntil: interruptedUntil, authRefusal: authRefusal)
     }
   }
 }

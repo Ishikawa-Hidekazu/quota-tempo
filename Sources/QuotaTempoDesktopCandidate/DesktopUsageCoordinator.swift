@@ -77,6 +77,18 @@ enum DesktopUsageReply: Sendable {
   case unsupportedRateLimit
 }
 
+enum DesktopAuthRefusal: String, Codable, Sendable {
+  case waitingForDesktopRenewal
+  case accessDenied
+
+  var state: DesktopUsageState {
+    switch self {
+    case .waitingForDesktopRenewal: .waitingForDesktopRenewal
+    case .accessDenied: .accessDenied
+    }
+  }
+}
+
 // Restart metadata only. No observation, owner, credential or credential revision.
 struct DesktopThrottleRecord: Codable, Equatable, Sendable {
   var schemaVersion = 1
@@ -88,6 +100,7 @@ struct DesktopThrottleRecord: Codable, Equatable, Sendable {
   var unsupportedServiceWait = false
   var failureCount = 0
   var interruptedUntil: Date? = nil
+  var authRefusal: DesktopAuthRefusal? = nil
 
   var isValid: Bool {
     let reference = max(recordedAt, lastAttemptAt ?? recordedAt)
@@ -131,6 +144,8 @@ struct DesktopUsageCoordinator: Sendable {
   private var serviceNotBefore: Date?
   private var unsupportedServiceWait = false
   private var interruptedUntil: Date?
+  private var authRefusal: DesktopAuthRefusal?
+  private var authRefusalGeneration: UUID?
   private var context: DesktopUsageContext?
   private var suspendedState: DesktopUsageState?
   private var rejectedGenerations: [(generation: UUID, state: DesktopUsageState)] = []
@@ -146,6 +161,8 @@ struct DesktopUsageCoordinator: Sendable {
     serviceNotBefore = record.serviceNotBefore
     unsupportedServiceWait = record.unsupportedServiceWait
     failureCount = record.failureCount
+    authRefusal = record.authRefusal
+    authRefusalGeneration = nil
     latestClock = record.recordedAt
     // No observation is restored. An interrupted attempt gets a bounded quiet
     // period, not an immediate retry or a permanently unrecoverable pending bit.
@@ -161,7 +178,7 @@ struct DesktopUsageCoordinator: Sendable {
       lastAttemptAt: lastAttemptAt, localNextAllowedAt: localNextAllowedAt,
       successfulNextAllowedAt: successfulNextAllowedAt, serviceNotBefore: serviceNotBefore,
       unsupportedServiceWait: unsupportedServiceWait, failureCount: failureCount,
-      interruptedUntil: interruptedUntil)
+      interruptedUntil: interruptedUntil, authRefusal: authRefusal)
   }
 
   // Called before any suspension after HTTP, so known restrictions can be made
@@ -173,6 +190,12 @@ struct DesktopUsageCoordinator: Sendable {
     let receivedClock = Self.validDate(now) ? now : request.startedAt
     let conservativeClock = max(latestClock ?? request.startedAt, receivedClock)
     switch reply {
+    case .response(let status, _, _, _, _, _) where status == 401 || status == 403:
+      let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+      authRefusal = refusal
+      authRefusalGeneration = request.context.generation
+      reject(request.context.generation, state: refusal.state)
+      if context?.generation == request.context.generation { observation = nil }
     case .unsupportedRateLimit:
       unsupportedServiceWait = true
     case .response(429, _, _, _, let retryAfter, _):
@@ -251,14 +274,6 @@ struct DesktopUsageCoordinator: Sendable {
     recordServiceRestriction(request, reply: reply, now: now)
     issuedRequests.remove(at: issuedIndex)
     if activeRequest == request { interruptedUntil = nil }
-    // Authentication refusal belongs to the issued credential, independently of
-    // whether current local files can be reread or this request was cancelled.
-    if case .response(let status, _, _, _, _, _) = reply, status == 401 || status == 403 {
-      reject(
-        request.context.generation, state: status == 401 ? .waitingForDesktopRenewal : .accessDenied
-      )
-      if context?.generation == request.context.generation { observation = nil }
-    }
     guard activeRequest == request else { return }
     if newContext == nil {
       suspendContext(now: now)
@@ -379,6 +394,17 @@ struct DesktopUsageCoordinator: Sendable {
       activeRequest = nil
       state = .missingScope
       return false
+    }
+    if let authRefusal {
+      // A new process's random generation is not proof of renewal. Bind the
+      // restored refusal only after a valid read, then require a later change.
+      if authRefusalGeneration == nil { authRefusalGeneration = newContext.generation }
+      if authRefusalGeneration == newContext.generation {
+        reject(newContext.generation, state: authRefusal.state)
+      } else if rejection(for: newContext.generation) == nil {
+        self.authRefusal = nil
+        authRefusalGeneration = nil
+      }
     }
     if let rejection = rejection(for: newContext.generation) {
       observation = nil

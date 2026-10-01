@@ -26,7 +26,7 @@ struct DesktopUsageCoordinatorTests {
       Set(object.keys).isSubset(of: [
         "schemaVersion", "recordedAt", "lastAttemptAt", "localNextAllowedAt",
         "successfulNextAllowedAt", "serviceNotBefore", "unsupportedServiceWait", "failureCount",
-        "interruptedUntil",
+        "interruptedUntil", "authRefusal",
       ]))
     var restarted = allowed()
     #expect(restarted.restoreThrottle(record, now: now) == true)
@@ -35,6 +35,99 @@ struct DesktopUsageCoordinatorTests {
     #expect(restarted.lastAttemptAt == now)
     #expect(restarted.begin(context: context, now: now.addingTimeInterval(299)) == nil)
     #expect(restarted.begin(context: context, now: now.addingTimeInterval(300)) != nil)
+  }
+
+  @Test("401/403 survive repeated restarts with fresh process generations", arguments: [401, 403])
+  func refusalSurvivesRepeatedRestarts(status: Int) throws {
+    var first = allowed()
+    let initial = context()
+    let request = try requireRequest(&first, context: initial, now: now)
+    first.complete(request, reply: response(status), context: initial, now: now)
+    var record = first.throttleRecord(now: now)
+    let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    #expect(record.authRefusal == refusal)
+    for offset in [60.0, 120, 180] {
+      let instant = now.addingTimeInterval(offset)
+      var restarted = allowed()
+      #expect(restarted.restoreThrottle(record, now: instant) == true)
+      #expect(restarted.begin(context: context(), now: instant) == nil)
+      #expect(restarted.state == refusal.state)
+      record = restarted.throttleRecord(now: instant)
+      #expect(record.authRefusal == refusal)
+    }
+  }
+
+  @Test(
+    "Restored refusal binds only valid identity and survives reapproval and read loss",
+    arguments: [401, 403], ["identity", "expired", "scope"])
+  func restoredRefusalRequiresSubsequentValidGeneration(status: Int, invalid: String) throws {
+    let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    var coordinator = allowed()
+    #expect(
+      coordinator.restoreThrottle(
+        DesktopThrottleRecord(recordedAt: now, authRefusal: refusal), now: now) == true)
+    let invalidContext = DesktopUsageContext(
+      owner: invalid == "identity"
+        ? DesktopUsageOwner(accountFingerprint: "invalid", organizationFingerprint: "invalid")
+        : owner,
+      generation: UUID(), expiresAt: invalid == "expired" ? now : now.addingTimeInterval(7200),
+      hasProfileScope: invalid != "scope")
+    #expect(coordinator.begin(context: invalidContext, now: now) == nil)
+    let initial = context()
+    #expect(coordinator.begin(context: initial, now: now) == nil)
+    #expect(coordinator.state == refusal.state)
+    coordinator.setPermission(.denied)
+    #expect(coordinator.begin(context: context(), now: now) == nil)
+    coordinator.setPermission(.allowed)
+    #expect(coordinator.begin(context: nil, now: now) == nil)
+    coordinator.suspendContext(now: now)
+    #expect(coordinator.begin(context: initial, now: now) == nil)
+    #expect(coordinator.state == refusal.state)
+    #expect(coordinator.throttleRecord(now: now).authRefusal == refusal)
+    #expect(coordinator.begin(context: invalidContext, now: now) == nil)
+    #expect(coordinator.throttleRecord(now: now).authRefusal == refusal)
+    let renewed = context()
+    let request = try requireRequest(&coordinator, context: renewed, now: now)
+    #expect(coordinator.throttleRecord(now: now).authRefusal == nil)
+    coordinator.complete(request, reply: .networkFailure, context: renewed, now: now)
+    #expect(coordinator.begin(context: initial, now: now.addingTimeInterval(60)) == nil)
+    #expect(coordinator.state == refusal.state)
+  }
+
+  @Test(
+    "Refusal recovery preserves Retry-After and prior rejected generations", arguments: [401, 403])
+  func refusalRecoveryPreservesRateLimit(status: Int) throws {
+    let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    let retry = now.addingTimeInterval(7200)
+    var coordinator = allowed()
+    #expect(
+      coordinator.restoreThrottle(
+        DesktopThrottleRecord(recordedAt: now, serviceNotBefore: retry, authRefusal: refusal),
+        now: now)
+        == true)
+    let initial = context(expiresAt: retry.addingTimeInterval(3600))
+    #expect(coordinator.begin(context: initial, now: now) == nil)
+    let renewed = context(expiresAt: retry.addingTimeInterval(3600))
+    #expect(coordinator.begin(context: renewed, now: now.addingTimeInterval(60)) == nil)
+    #expect(coordinator.throttleRecord(now: now.addingTimeInterval(60)).authRefusal == nil)
+    #expect(coordinator.nextAllowedAt == retry)
+    #expect(coordinator.begin(context: initial, now: retry) == nil)
+    #expect(coordinator.state == refusal.state)
+    #expect(coordinator.begin(context: renewed, now: retry) != nil)
+  }
+
+  @Test("An already rejected generation cannot clear a later refusal", arguments: [401, 403])
+  func rejectedGenerationCannotRecoverRefusal(status: Int) throws {
+    var coordinator = allowed()
+    let initial = context()
+    let first = try requireRequest(&coordinator, context: initial, now: now)
+    coordinator.complete(first, reply: response(status), context: initial, now: now)
+    let renewed = context()
+    let later = now.addingTimeInterval(60)
+    let second = try requireRequest(&coordinator, context: renewed, now: later)
+    coordinator.complete(second, reply: response(status), context: renewed, now: later)
+    #expect(coordinator.begin(context: initial, now: later.addingTimeInterval(60)) == nil)
+    #expect(coordinator.throttleRecord(now: later).authRefusal != nil)
   }
 
   @Test("Restart clock rollback rebases local waits without shortening the service deadline")

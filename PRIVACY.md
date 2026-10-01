@@ -37,12 +37,14 @@ process memory; raw bodies, headers, identities, credentials and credential hash
 are not written to logs or normalized snapshots. The local preview displays
 quota values and records only fixed diagnostic categories, capture/backoff times
 and boolean availability metadata. It does not persist observations. The candidate
-now stores a size-bounded `desktop-throttle.json` beside the local helper, with
+now stores a size-bounded `desktop-throttle.json` in the isolated preview's private
+`~/Library/Application Support/QuotaTempoDesktopPreview` directory, with
 owner-only permissions and a process-lifetime lock. The lock contains only a
 one-byte initialization marker to detect checkpoint loss after restart. The
 checkpoint's allowlisted fields are
 schema version, checkpoint/attempt times, local and provider wait deadlines,
-failure count, an interrupted-attempt deadline, and an unsupported-wait flag.
+failure count, an interrupted-attempt deadline, an unsupported-wait flag, and a
+fixed authentication-refusal category.
 No identity, ownership fingerprint, credential revision or usage value is stored
 there. Provider requests stop while the checkpoint cannot be validated or saved.
 The crash boundary between an HTTP response and its durable checkpoint still

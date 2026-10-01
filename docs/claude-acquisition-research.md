@@ -1150,6 +1150,73 @@ release: product consent/revocation/reapproval, acquisition priority, owner-awar
 observation persistence and signed installation/update/removal QA are still
 separate work. Provider permission remains unconfirmed; no inquiry was sent.
 
+#### Overnight acquisition and restart QA, October 2
+
+Metadata-only review of the existing `da04cee` preview log found **120 distinct
+accepted acquisitions** between **2026-10-01 13:20:55 UTC** and
+**2026-10-01 23:20:38 UTC** (22:20 JST through 08:20 JST the next day).
+Every accepted result carried `usageAccepted`, a new capture timestamp, and true
+observation/plan-availability flags. No transport attempt in that interval failed.
+This is approximately ten hours of Desktop-only automatic-acquisition evidence,
+not proof that every user-visible menu interaction or weekly rollover passed.
+One in-process context change produced a 62-second acquisition gap; the other
+gaps were at least 300 seconds and the maximum was 309 seconds. The metadata does
+not identify whether that context change was credential renewal or another
+Desktop authentication change, so it is not recorded as renewal acceptance.
+
+All checks for `5147806` subsequently passed on GitHub, including both macOS runs
+and Swift/Actions/Ruby CodeQL. A fresh local run also passed all 622 Swift tests
+and 229 browser tests. An initial browser-test invocation used a directory rather
+than the CI glob; the corrected CI command passed. No browser was controlled.
+
+The first live replacement with the signed `5147806` helper exposed a startup
+defect not reproduced by the synthetic stores: the development checkout's
+ancestor is writable by other users, so the correctly strict throttle store
+rejected its location. The helper exited with `throttle_store_unavailable` before
+any identity or provider access. The fix is a stable, private Application Support
+directory for the isolated preview, not weaker path validation or changes to
+the user's development-directory permissions. This also keeps request deadlines
+independent of where the local binary is built or moved.
+
+Independent review additionally found that authentication refusals were not
+restored across process restarts. The follow-up persists only a fixed refusal
+category, never a credential, identity or generation. Its recovery must require
+a later Desktop-managed generation change observed in that process; simply
+starting with a new reader or toggling consent is not proof of renewal. An
+authentication change that occurred entirely while the helper was stopped is
+not proven by this mechanism, and remains a product-recovery limitation.
+
+The response-to-checkpoint crash interval is a separate, explicit limitation:
+remote HTTP receipt and local durable storage are not one transaction. Persisted
+provider deadlines must be honored across restarts. An unfinished checkpoint
+retains the bounded 15-minute guard and any saved provider deadline; it cannot
+recover an unknown, longer Retry-After lost before persistence. This must not be
+described as an unconditional guarantee. It is not evidence that a normal
+successful refresh requires a manual recovery action.
+
+The patched, signed helper successfully acquired at **2026-10-01 23:53:04 UTC**.
+Its binary SHA-256 is
+`cb0440eadef3a12e7bc7c2953f061ed6b187fc03a107eb8f67e707fce5674956`.
+The private directory was created with mode 0700; checkpoint and lock are 0600.
+After that completed observation, a controlled SIGTERM and relaunch at
+**23:54:10 UTC** retained the **23:58:04 UTC** deadline. Startup and seven
+scheduled reads issued no HTTP and restored no observation. The next scheduled
+acquisition succeeded at **23:58:15 UTC**, with both observation and plan flags
+true and no failed transport. No additional login or permission prompt was used.
+This passes normal completed-checkpoint process-restart recovery, not interruption
+during HTTP, crash durability, native Quit/Escape/outside-click acceptance or
+observation restoration. A wait-time blank display remains visible behavior of
+the isolated preview; production owner-aware observation persistence is unfinished.
+
+The patched sources passed **634 Swift tests / 23 suites**, both normally and
+with outbound network denied, strict formatting (including helper scripts),
+candidate isolation, 17 inert helper arguments and bundle verification with
+launch/provider-trigger/window checks skipped. The temporary bundles were removed.
+The 229 browser tests and release/distribution-policy checks also passed during
+this session. The revised candidate remains outside shipped products. Public
+integration, natural-rollover/renewal/second-Mac acceptance, product recovery and
+the unconfirmed provider-permission gate are not closed by these results.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before

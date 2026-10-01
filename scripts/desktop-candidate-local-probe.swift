@@ -7,7 +7,8 @@ import Security
 
 // Manually linked local diagnostic, never part of a SwiftPM product or app bundle.
 // No raw result/error interpolation, credential output, or observation persistence.
-// Only account-independent request/backoff metadata is persisted beside this helper.
+// Only account-independent request/backoff metadata is persisted in the isolated
+// preview's private Application Support directory, never the development checkout.
 // One-shot by default; the explicit local preview reuses the guarded service.
 @main
 struct DesktopCandidateLocalProbe {
@@ -38,8 +39,7 @@ struct DesktopCandidateLocalProbe {
     }
     let throttleStore: DesktopThrottleFileStore
     do {
-      throttleStore = try DesktopThrottleFileStore(
-        directory: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent())
+      throttleStore = try DesktopThrottleFileStore.applicationSupport()
     } catch {
       print("{\"status\":\"throttle_store_unavailable\"}")
       return

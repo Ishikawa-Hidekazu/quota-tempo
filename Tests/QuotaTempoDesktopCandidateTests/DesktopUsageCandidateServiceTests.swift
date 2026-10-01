@@ -204,6 +204,105 @@ struct DesktopUsageCandidateServiceTests {
     #expect(await counter.count == 2)
   }
 
+  @Test(
+    "401/403 survive restart, new readers and reapproval until observed renewal",
+    arguments: [401, 403])
+  func restartAfterAuthenticationRefusal(status: Int) async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let counter = SyntheticFetchCounter()
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    let fetch: DesktopUsageCandidateService.Fetch = { request, _ in
+      await counter.increment()
+      if await counter.count == 1 {
+        return .response(
+          status: status, profileOwner: nil, serverDate: nil, cacheAge: nil,
+          retryAfter: nil, body: Data())
+      }
+      return successfulReply(request)
+    }
+    let first = DesktopUsageCandidateService(
+      reader: try SyntheticDesktopReader(), clock: { clock.now() }, throttleStore: store,
+      fetch: fetch)
+    await first.setApproval(approval)
+    #expect(await first.refresh().state == refusal.state)
+    #expect(try store.load()?.authRefusal == refusal)
+    for _ in 0..<2 {
+      clock.advance(by: 60)
+      let restarted = DesktopUsageCandidateService(
+        reader: try SyntheticDesktopReader(), clock: { clock.now() }, throttleStore: store,
+        fetch: fetch)
+      await restarted.setApproval(approval)
+      #expect(await restarted.refresh().state == refusal.state)
+      #expect(try store.load()?.authRefusal == refusal)
+      #expect(await counter.count == 1)
+    }
+    let reader = try SyntheticDesktopReader()
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    #expect(await restarted.refresh().state == refusal.state)
+    await restarted.setApproval(DesktopAccessApproval())
+    await restarted.setApproval(approval)
+    for error in [DesktopCredentialError.changedDuringRead, .unavailable, .invalidStore] {
+      await reader.fail(error)
+      #expect(await restarted.refresh().observation == nil)
+      await reader.recover()
+      #expect(await restarted.refresh().state == refusal.state)
+      #expect(try store.load()?.authRefusal == refusal)
+    }
+    #expect(await counter.count == 1)
+    try await reader.renew()
+    #expect(await restarted.refresh().observation != nil)
+    #expect(await counter.count == 2)
+    #expect(try store.load()?.authRefusal == nil)
+    let afterRecovery = DesktopUsageCandidateService(
+      reader: try SyntheticDesktopReader(), clock: { clock.now() }, throttleStore: store,
+      fetch: fetch)
+    await afterRecovery.setApproval(approval)
+    #expect(await afterRecovery.refresh().observation == nil)
+    #expect(await counter.count == 2)
+    clock.advance(by: 300)
+    #expect(await afterRecovery.refresh().observation != nil)
+    #expect(await counter.count == 3)
+  }
+
+  @Test("401/403 are checkpointed before the post-response context await", arguments: [401, 403])
+  func persistRefusalBeforeContextVerification(status: Int) async throws {
+    let gate = SyntheticFetchGate()
+    let reader = try SyntheticDesktopReader(contextGate: gate)
+    let store = SyntheticThrottleStore()
+    let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: store,
+      fetch: { _, _ in
+        .response(
+          status: status, profileOwner: nil, serverDate: nil, cacheAge: nil,
+          retryAfter: nil, body: Data())
+      })
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    await service.setApproval(approval)
+    let pending = Task { await service.refresh() }
+    await gate.waitForEntry()
+    #expect(try store.load()?.authRefusal == refusal)
+    #expect(try store.load()?.interruptedUntil != nil)
+    let counter = SyntheticFetchCounter()
+    let restarted = DesktopUsageCandidateService(
+      reader: try SyntheticDesktopReader(), clock: { serviceNow.addingTimeInterval(900) },
+      throttleStore: store,
+      fetch: { request, _ in
+        await counter.increment()
+        return successfulReply(request)
+      })
+    await restarted.setApproval(approval)
+    #expect(await restarted.refresh().state == refusal.state)
+    #expect(await counter.count == 0)
+    await gate.release()
+    #expect(await pending.value.state == refusal.state)
+    #expect(try store.load()?.authRefusal == refusal)
+  }
+
   @Test("A known 429 is stored before waiting for local context verification")
   func persistBeforeContextVerification() async throws {
     let gate = SyntheticFetchGate()
