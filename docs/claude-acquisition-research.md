@@ -694,18 +694,21 @@ live probe. Existing legacy-Keychain API deprecation warnings remain.
 The same manually linked helper now has an explicitly authorized
 `--menu-bar-preview` mode. It is not part of a SwiftPM product, app bundle,
 installer or updater feed. It does not replace the installed QuotaTempo app.
-The preview adds a separately labelled `QT Desktop` menu-bar item, reuses the
-existing anchored popover view, and displays only Claude's Desktop-connected
-observation. It never falls back to a browser or CLI.
+The preview adds a separately labelled `QT Desktop` menu-bar item and displays
+only Claude's Desktop-connected observation. It never falls back to a browser
+or CLI. **The first custom-popover build was withdrawn after a user-reported
+interaction failure; the helper is stopped.** The replacement uses a compact
+native `NSMenu`, not the released app's SwiftUI view. See the incident below.
 
 A single long-lived service handles startup, a 30-second context/acquisition tick,
-menu opening, wake and manual refresh. Network requests retain the coordinator's
+wake and manual refresh. Opening the native menu does not trigger acquisition.
+Network requests retain the coordinator's
 five-minute interval, authentication-generation refusals and service backoff.
 An independent one-second display clock expires values even while acquisition is
 waiting. Display ticks never count as successful observations or invoke transport.
 No login item is installed. Quitting cancels the loop and withdraws local consent.
-A process-lifetime empty lock prevents duplicate preview instances. Display values,
-identity bindings and display preferences are not persisted by this preview.
+A process-lifetime empty lock prevents duplicate preview instances. Display values
+and identity bindings are not persisted by this preview.
 
 The presentation mapper preserves the actual capture time, clears invalid,
 context-changed, expired-reset or 15-minute-old observations, and never adds
@@ -735,11 +738,9 @@ within these changes.
 Local commands, after building and explicitly signing the same helper:
 
 ```bash
+# Held pending supervised UI acceptance; do not relaunch automatically.
 # Starts only the local preview; never requests an interactive Keychain prompt.
 scripts/desktop-local-preview.command
-
-# Synthetic offscreen English/Japanese normal/failure views. No protected access.
-dist/desktop-local-probe/QuotaTempoDesktopLocalProbe --render-preview-fixtures
 
 # Bounded live acceptance: two distinct captures at least five minutes apart,
 # with W/P/difference available, or exit with failure after 400 seconds.
@@ -750,13 +751,13 @@ dist/desktop-local-probe/QuotaTempoDesktopLocalProbe \
 
 The local wrapper verifies the designated signing identity. It does not build,
 sign, log in, alter provider files or use the interactive diagnostic as a fallback.
-The bounded live check does not open the popover or activate another application.
-Its success is not evidence of a user-click popover test, sleep/wake acceptance,
+The bounded live check does not open the menu or activate another application.
+Its success is not evidence of a user-click menu test, sleep/wake acceptance,
 natural weekly rollover, real credential renewal, or second-Mac acceptance.
 Those checks, restart-safe backoff/refusal handling, temporary Keychain-lock
 classification and public-release gates remain open.
 
-Validation of this checkpoint:
+Historical acquisition validation before the interaction incident:
 
 - Final signed preview: **automatic update PASS**, with distinct server captures
   at **2026-09-30 22:18:10 UTC** and **22:23:18 UTC**, 308 seconds apart.
@@ -772,11 +773,70 @@ Validation of this checkpoint:
   product-dependency isolation and **16 inert helper argument cases PASS**.
 - Four synthetic offscreen views (English/Japanese, current/unavailable) rendered
   and visually inspected. The unavailable copy does not direct users to CLI login.
+  These images did not test the live AppKit host, placement or action delivery.
+  The obsolete `--render-preview-fixtures` helper path has now been removed.
 - The signed local wrapper rejects a second preview instance before constructing
   the acquisition service. Signature verification passed.
 - Earlier compile-order/fixture-owner errors and one formatting finding were
   corrected before the final suite. Legacy Keychain deprecation warnings and a
   test-only weak-binding style warning remain; there were no test failures.
+
+#### Preview interaction incident, October 1
+
+The owner reported that clicking `QT Desktop` opened an oversized popover that
+extended above the display and could not be dismissed. The exact local helper
+process was identified by its executable path and terminated with SIGTERM.
+The released `/Applications/QuotaTempo.app` was not stopped or replaced.
+
+The prior automatic acquisition check disabled the click action, and the
+offscreen renderer used no-op Refresh/Quit callbacks. Neither established real
+interaction readiness. The custom `NSPopover`/`NSHostingController` host differed
+from the released app's SwiftUI `MenuBarExtra(.window)` host. The exact AppKit
+failure has not been reproduced; it must not be reported as a proven sizing-only
+or focus-only root cause.
+
+The mitigation removes that custom host entirely from the local preview:
+
+- Native `NSMenu` only, twelve fixed rows including three commands, no custom
+  views, hosted SwiftUI controls, submenus or explicit window positioning.
+- Refresh, Close Menu and Quit Desktop Preview have explicit targets/selectors;
+  Close and Quit remain enabled during acquisition. Actions cancel menu tracking
+  before callbacks. The existing independent cleanup deadline remains in place.
+- The AppKit event loop now starts from synchronous `main`, outside an existing
+  async MainActor task. Only the headless one-shot path uses an async task.
+- Six synthetic menu tests verify structure, action order, value replacement,
+  stable item identities, failure/busy states and enabled dismissal commands.
+  Tests dispatch selectors directly without opening a menu, starting AppKit,
+  constructing a real acquisition service or reading protected data.
+
+The helper remains stopped and has not been relaunched after this change.
+Actual click, Escape, outside-click, screen-edge positioning and Quit acceptance
+are **pending**, as is post-change live acquisition acceptance. Do not describe
+the preview as interaction-tested, restart it automatically, or promote it to a
+public release on the strength of headless tests. The next UI gate is one
+supervised open/close/Quit check, followed by the separate acquisition gates.
+
+Post-change validation:
+
+| Check | Result |
+| --- | --- |
+| Full Swift suite | PASS, 537 tests / 21 suites; repeated with network denied |
+| Native menu structural/action tests | PASS, 6 tests; no displayed menu or OS input |
+| Local helper build and designated signature | PASS; not launched in authorized acquisition/preview mode |
+| Inert argument validation | PASS, 17 cases, including retired renderer rejection |
+| Strict formatting, whitespace, release/distribution policies | PASS |
+| Product dependency isolation | PASS, actual graph and four leak fixtures |
+| Independent read-only follow-up review | No new actionable hang or permission-expansion finding |
+| Live menu positioning, Escape, outside-click, Quit and post-change acquisition | NOT RUN; preview remains stopped |
+
+One isolation-check invocation initially selected an unlicensed Xcode and failed
+before inspecting the package. Repeating it with the existing Command Line Tools
+passed; no license or global toolchain configuration was changed. Existing legacy
+Keychain deprecation warnings remain. The helper's process-level cleanup deadline
+and async one-shot exits were source-reviewed, not dynamically exercised by the
+six native-menu tests. No public release, installed-app replacement, provider
+request, credential renewal or interactive permission request occurred during
+this incident fix.
 
 #### First offline checkpoint QA result
 

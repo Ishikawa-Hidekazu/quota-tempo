@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import QuotaTempoCore
 import Security
@@ -9,15 +10,8 @@ import Security
 // One-shot by default; the explicit local preview reuses the guarded service.
 @main
 struct DesktopCandidateLocalProbe {
-  @MainActor static func main() async {
+  @MainActor static func main() {
     setbuf(stdout, nil)
-    if Array(CommandLine.arguments.dropFirst()) == ["--render-preview-fixtures"] {
-      do { try DesktopPreviewApplication.renderFixtures() } catch {
-        print("{\"status\":\"synthetic_render_failed\"}")
-        exit(2)
-      }
-      return
-    }
     if Array(CommandLine.arguments.dropFirst()) == ["--keychain-status-only"] {
       var keychain: SecKeychain?
       var status: SecKeychainStatus = 0
@@ -91,6 +85,16 @@ struct DesktopCandidateLocalProbe {
       withExtendedLifetime(instanceLock) {}
       return
     }
+    // AppKit's preview event loop starts synchronously above, never inside an
+    // already-running MainActor task. Only the headless one-shot is async.
+    Task {
+      await runOneShot(interactive: interactive)
+      exit(0)
+    }
+    dispatchMain()
+  }
+
+  @MainActor private static func runOneShot(interactive: Bool) async {
     let watchdog = Task.detached {
       try? await Task.sleep(for: .seconds(interactive ? 180 : 45))
       guard !Task.isCancelled else { return }
