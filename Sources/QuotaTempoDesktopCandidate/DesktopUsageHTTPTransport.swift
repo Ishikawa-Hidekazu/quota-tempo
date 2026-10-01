@@ -235,7 +235,7 @@ struct DesktopUsageHTTPTransport: Sendable {
     let serverDate: Date?
     let cacheAge: TimeInterval?
     let metadataFailure: FreshnessFailure?
-    let retryAfter: Date?
+    let retryAfter: HTTPDate.RetryAfter
     var receivedAt: Date
     var body = Data()
 
@@ -279,13 +279,22 @@ struct DesktopUsageHTTPTransport: Sendable {
     }
 
     func reply(owner: DesktopUsageOwner?) -> DesktopUsageReply {
-      .response(
+      if status == 429, case .unsupported = retryAfter { return .unsupportedRateLimit }
+      return .response(
         status: status, profileOwner: owner, serverDate: serverDate,
-        cacheAge: cacheAge, retryAfter: retryAfter, body: status == 200 ? body : Data())
+        cacheAge: cacheAge, retryAfter: retryAfter.date, body: status == 200 ? body : Data())
     }
   }
 
   private enum HTTPDate {
+    enum RetryAfter: Sendable {
+      case absentOrMalformed, unsupported
+      case deadline(Date)
+      var date: Date? {
+        if case .deadline(let date) = self { return date }
+        return nil
+      }
+    }
     static func parse(_ value: String?) -> Date? {
       guard let value, value.utf8.count == 29 else { return nil }
       let formatter = DateFormatter()
@@ -309,14 +318,27 @@ struct DesktopUsageHTTPTransport: Sendable {
       return result
     }
 
-    static func retryAfter(_ value: String?, receivedAt: Date, serverDate: Date?) -> Date? {
-      guard receivedAt.timeIntervalSince1970.isFinite else { return nil }
-      if let seconds = deltaSeconds(value) {
-        return max(receivedAt, serverDate ?? receivedAt).addingTimeInterval(seconds)
+    static func retryAfter(_ value: String?, receivedAt: Date, serverDate: Date?) -> RetryAfter {
+      guard let value, !value.isEmpty else { return .absentOrMalformed }
+      guard receivedAt.timeIntervalSince1970.isFinite else { return .unsupported }
+      let deadline: Date
+      if value.utf8.allSatisfy({ (48...57).contains($0) }) {
+        // Do not let an overflowing integer look like an absent header. Long
+        // legitimate waits are preserved; unsupported waits disable auto-retry.
+        guard let seconds = TimeInterval(value), seconds.isFinite,
+          seconds <= DesktopUsageCoordinator.maximumSupportedServiceWait
+        else { return .unsupported }
+        deadline = max(receivedAt, serverDate ?? receivedAt).addingTimeInterval(seconds)
+      } else {
+        guard let absolute = parse(value) else { return .absentOrMalformed }
+        let delay = max(0, absolute.timeIntervalSince(serverDate ?? receivedAt))
+        deadline = max(absolute, receivedAt.addingTimeInterval(delay))
       }
-      guard let absolute = parse(value) else { return nil }
-      let delay = max(0, absolute.timeIntervalSince(serverDate ?? receivedAt))
-      return max(absolute, receivedAt.addingTimeInterval(delay))
+      guard deadline.timeIntervalSince1970.isFinite,
+        deadline.timeIntervalSince(receivedAt)
+          <= DesktopUsageCoordinator.maximumSupportedServiceWait
+      else { return .unsupported }
+      return .deadline(deadline)
     }
   }
 

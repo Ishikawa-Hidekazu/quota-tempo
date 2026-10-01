@@ -1067,7 +1067,88 @@ bodies or quota values belong in that record. Crash, clock discontinuity,
 write/rename failure and cancelled-response cases need explicit recovery tests.
 Permanent lockout after an ordinary interrupted request is not accepted as a
 product recovery policy; that proposal still needs refinement. This is design
-work, not a claim that M4 or M6 has been implemented.
+work, not a claim that M4 or M6 has been implemented at that checkpoint.
+
+#### Scheduled acquisition and restart metadata follow-up, October 1
+
+The isolated preview was subsequently built from `da04cee1a4f0d9eb37e4ab27e4092f04c84e4a20`,
+signed and verified with the unchanged Developer ID requirement, and launched at
+**13:20:54 UTC**, after the preceding process's **13:20:54 UTC** not-before time.
+Its binary SHA-256 is
+`e4dd6f2f1e63d0c3f312f28ffbd0f377e1a09bb82564be7ccc1f51884921cd02`.
+It accepted a `startup` observation at **13:20:55 UTC** and `scheduled`
+observations at **13:26:04**, **13:31:10**, and **13:36:17 UTC**. Each had
+`usageAccepted`, a new capture time, and visible-plan/observation booleans true.
+The 309/306/307-second gaps exceed the five-minute floor. Intermediate scheduled
+callbacks with an empty transport-stage list are display/cache reads, not new
+acquisitions. No manual Refresh, CLI login, browser or additional permission
+dialog was used. This is repeated Desktop-only automatic-acquisition evidence;
+it does not replace native menu acceptance, real renewal, rollover or second-Mac QA.
+Both macOS CI runs and all three CodeQL languages (Swift, Actions and Ruby) for
+this code head passed. This does not establish CI status for the later persistence
+follow-up below.
+
+The next source-only change adds a bounded, owner-only `desktop-throttle.json`
+and a process-lifetime file lock beside the helper. It is not part of the running
+`da04cee` binary or the public app. The explicit wire schema contains only attempt,
+checkpoint and backoff times, failure count, and an unsupported-wait flag. No
+observations, identities, credential material or credential generations are
+restored. The request checkpoint must be written before HTTP. Known 429 metadata
+is saved before awaiting post-request context verification. Consent changes,
+owner changes and restarts do not clear a successfully persisted service wait.
+Storage failures prevent new HTTP while metadata cannot be validated/saved.
+
+M4 is now handled by distinguishing malformed/absent headers, supported deadlines,
+and unsupported waits. Deadlines up to 366 days are honored in full, not capped
+to retry sooner. Larger numeric/absolute values (including numeric overflow) stop
+automatic retries with `serviceWaitUnavailable`; their raw values are not stored.
+The flag survives restarts and consent changes. Product-facing recovery from that
+exceptional stop is still required before release.
+
+M6 has checkpoint implementation and synthetic recovery coverage, but is not
+unconditionally closed. An unfinished request leaves a finite 15-minute quiet
+period; it does not permanently lock an ordinary interrupted process. A crash
+after receiving HTTP but before saving its response can still lose a newly received
+Retry-After, retaining only the pre-request guard. This ambiguity, disk-durability
+failure recovery, and a real restart test remain explicit release gates. Refusal
+generations remain memory-only; no credential identifier was added to persistence.
+The running helper was not replaced again to claim these new controls as live-tested.
+
+A separate source review found three follow-up defects, all covered by new
+regressions: a lost checkpoint after restart was mistaken for a first launch;
+post-HTTP clock rollback lost the original deadline reference; and scheduling
+failures were presented as login/permission problems. A durable initialization
+byte in the validated lock now detects checkpoint loss across store instances.
+Checkpoint timestamps retain the latest clock reference for local-wait rebasing,
+without shortening provider deadlines. The preview shows distinct scheduling
+notices, and its normalized errors no longer suggest changing authentication.
+These fixes do not claim to solve the separate response-to-checkpoint crash gap.
+The bounded follow-up source review marked those three findings resolved and
+found no additional concrete bug in the reviewed fixes. The reviewer did not
+execute tests; the test evidence below was produced independently by the implementer.
+
+| Follow-up check | Result |
+| --- | --- |
+| Full Swift suite | PASS, 622 tests / 23 suites |
+| Same suite with outbound network denied | PASS, 622 tests / 23 suites |
+| Browser fixtures | PASS, 229 tests |
+| Strict Swift formatting | PASS |
+| Candidate isolation | PASS, manifest and four intentional leaks |
+| Release/distribution policy | PASS |
+| Validation-only helper compilation and inert arguments | PASS, 17 cases; no authorized provider mode executed |
+| Bundle verification | PASS; launch/window/provider-trigger checks SKIP; temporary bundles removed |
+| Throttle fixture directories remaining | 0 |
+
+The network-denied pass initially exposed a test-fixture issue: sandboxed macOS
+stripped set-id mode bits despite a successful chmod. Special bits are now
+tested against the exact synthetic `stat` input, while ordinary permission,
+symlink/hardlink, replacement, lock-contention and write-failure cases still use
+real isolated fixture files. Production permission checks were not relaxed.
+
+The public application remains **0.1.9**. Draft PR #43 remains **NOT_READY** for
+release: product consent/revocation/reapproval, acquisition priority, owner-aware
+observation persistence and signed installation/update/removal QA are still
+separate work. Provider permission remains unconfirmed; no inquiry was sent.
 
 #### First offline checkpoint QA result
 

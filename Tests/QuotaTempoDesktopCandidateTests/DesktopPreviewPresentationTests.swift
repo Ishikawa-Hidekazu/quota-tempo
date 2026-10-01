@@ -11,6 +11,25 @@ struct DesktopPreviewPresentationTests {
     accountFingerprint: String(repeating: "a", count: 64),
     organizationFingerprint: String(repeating: "b", count: 64))
 
+  @Test("Scheduling failures never ask the owner to sign in or change account permissions")
+  func schedulingFailures() throws {
+    for (state, expected): (DesktopUsageState, AcquisitionErrorCode) in [
+      (.serviceWaitUnavailable, .invalidResponse), (.persistenceUnavailable, .atomicWriteFailed),
+    ] {
+      let snapshot = try #require(
+        DesktopPreviewPresentation.snapshot(result(state: state), now: now))
+      #expect(snapshot.errorCode == expected)
+      #expect(snapshot.sourceState == .attemptFailed)
+      let notice = try #require(DesktopPreviewPresentation.schedulingNotice(state))
+      #expect(notice.count <= 72)
+      #expect(!notice.contains("sign in") && !notice.contains("permission"))
+      for language in ["en", "ja"] {
+        let message = MenuCopy(languageCode: language).error(expected, source: .claudeDesktopDirect)
+        #expect(!message.contains("sign-in") && !message.contains("ログイン"))
+      }
+    }
+  }
+
   @Test("A current Desktop result uses the core planner for W, P, and difference")
   func currentObservation() throws {
     let observed = observation()

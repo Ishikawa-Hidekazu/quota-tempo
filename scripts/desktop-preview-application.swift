@@ -60,10 +60,11 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
       previewMenu = menu
       item.menu = menu.menu
     }
-    model.$scenario.combineLatest(model.$refreshing).sink { [weak self] scenario, refreshing in
+    model.$scenario.combineLatest(model.$refreshing, model.$state).sink {
+      [weak self] scenario, refreshing, state in
       let title = MenuBarTitleFormatter.title(scenario: scenario, mode: .full) ?? "Claude"
       self?.statusItem?.button?.title = "QT Desktop | \(title)"
-      self?.previewMenu?.update(scenario: scenario, refreshing: refreshing)
+      self?.previewMenu?.update(scenario: scenario, refreshing: refreshing, state: state)
       self?.checkAutomaticUpdate(scenario)
     }.store(in: &subscriptions)
     if !qa {

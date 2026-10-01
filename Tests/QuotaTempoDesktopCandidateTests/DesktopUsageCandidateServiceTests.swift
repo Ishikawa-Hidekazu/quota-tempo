@@ -109,8 +109,216 @@ private func successfulReply(_ request: DesktopUsageRequest, utilization: Int = 
     body: Data("{\"seven_day\":{\"utilization\":\(utilization),\"resets_at\":\"\(reset)\"}}".utf8))
 }
 
+private final class SyntheticThrottleStore: DesktopThrottleStoring, @unchecked Sendable {
+  private let lock = NSLock()
+  private var record: DesktopThrottleRecord?
+  private var writes = 0
+  private var failingWrite: Int?
+  private var unreadable = false
+  init(_ record: DesktopThrottleRecord? = nil) { self.record = record }
+  func load() throws -> DesktopThrottleRecord? {
+    try lock.withLock {
+      if unreadable { throw Failure.synthetic }
+      return record
+    }
+  }
+  func save(_ record: DesktopThrottleRecord) throws {
+    try lock.withLock {
+      writes += 1
+      if writes == failingWrite { throw Failure.synthetic }
+      self.record = record
+    }
+  }
+  func fail(write: Int? = nil, read: Bool = false) {
+    lock.withLock {
+      failingWrite = write
+      unreadable = read
+    }
+  }
+  enum Failure: Error { case synthetic }
+}
+
 @Suite("Desktop candidate service")
 struct DesktopUsageCandidateServiceTests {
+  @Test("Restart retains the successful polling floor without restoring any observation")
+  func restartAfterSuccess() async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let counter = SyntheticFetchCounter()
+    let reader = try SyntheticDesktopReader()
+    let fetch: DesktopUsageCandidateService.Fetch = { request, _ in
+      await counter.increment()
+      #expect((try? store.load())?.lastAttemptAt == request.startedAt)
+      #expect((try? store.load())?.interruptedUntil != nil)
+      return successfulReply(request)
+    }
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    await first.setApproval(approval)
+    #expect(await first.refresh().observation != nil)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    #expect(await restarted.refresh().observation == nil)
+    clock.advance(by: 299)
+    #expect(await restarted.refresh().observation == nil)
+    #expect(await counter.count == 1)
+    clock.advance(by: 1)
+    #expect(await restarted.refresh().observation != nil)
+    #expect(await counter.count == 2)
+    #expect(try store.load()?.interruptedUntil == nil)
+  }
+
+  @Test("429 deadline survives restart and owner or approval changes")
+  func restartAfterRateLimit() async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let counter = SyntheticFetchCounter()
+    let reader = try SyntheticDesktopReader()
+    let fetch: DesktopUsageCandidateService.Fetch = { _, _ in
+      await counter.increment()
+      return .response(
+        status: 429, profileOwner: nil, serverDate: nil, cacheAge: nil,
+        retryAfter: serviceNow.addingTimeInterval(1800), body: Data())
+    }
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    await first.setApproval(approval)
+    #expect(await first.refresh().state == .rateLimited)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    try await reader.renew(otherOwner: true)
+    clock.advance(by: 1799)
+    let waiting = await restarted.refresh()
+    #expect(waiting.nextAllowedAt == serviceNow.addingTimeInterval(1800))
+    #expect(await counter.count == 1)
+    await restarted.setApproval(DesktopAccessApproval())
+    await restarted.setApproval(approval)
+    _ = await restarted.refresh()
+    #expect(await counter.count == 1)
+    clock.advance(by: 1)
+    _ = await restarted.refresh()
+    #expect(await counter.count == 2)
+  }
+
+  @Test("A known 429 is stored before waiting for local context verification")
+  func persistBeforeContextVerification() async throws {
+    let gate = SyntheticFetchGate()
+    let reader = try SyntheticDesktopReader(contextGate: gate)
+    let store = SyntheticThrottleStore()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: store,
+      fetch: { _, _ in
+        .response(
+          status: 429, profileOwner: nil, serverDate: nil, cacheAge: nil,
+          retryAfter: serviceNow.addingTimeInterval(1800), body: Data())
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    let pending = Task { await service.refresh() }
+    await gate.waitForEntry()
+    #expect(try store.load()?.serviceNotBefore == serviceNow.addingTimeInterval(1800))
+    #expect(try store.load()?.interruptedUntil != nil)
+    await gate.release()
+    #expect(await pending.value.state == .rateLimited)
+    #expect(try store.load()?.interruptedUntil == nil)
+  }
+
+  @Test(
+    "Storage failure fails before network and protected identity access", arguments: [false, true])
+  func throttleStorageUnavailable(read: Bool) async throws {
+    let reader = try SyntheticDesktopReader()
+    let store = SyntheticThrottleStore()
+    store.fail(write: read ? nil : 1, read: read)
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: store,
+      fetch: { request, _ in
+        await counter.increment()
+        return successfulReply(request)
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    #expect(await service.refresh().state == .persistenceUnavailable)
+    #expect(await counter.count == 0)
+    if read { #expect(await reader.loads == 0) }
+  }
+
+  @Test("Post-response storage failure does not discard an in-memory provider deadline")
+  func replyCheckpointFailure() async throws {
+    let clock = SyntheticServiceClock()
+    let reader = try SyntheticDesktopReader()
+    let store = SyntheticThrottleStore()
+    store.fail(write: 2)
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store,
+      fetch: { _, _ in
+        await counter.increment()
+        return .response(
+          status: 429, profileOwner: nil, serverDate: nil, cacheAge: nil,
+          retryAfter: serviceNow.addingTimeInterval(1800), body: Data())
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    #expect(await service.refresh().state == .persistenceUnavailable)
+    #expect(try store.load()?.interruptedUntil != nil)
+    clock.advance(by: 60)
+    _ = await service.refresh()
+    #expect(try store.load()?.serviceNotBefore == serviceNow.addingTimeInterval(1800))
+    #expect(await counter.count == 1)
+  }
+
+  @Test("An interrupted request gets a finite quiet period after restart")
+  func interruptedRestart() async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore(
+      DesktopThrottleRecord(
+        recordedAt: serviceNow, lastAttemptAt: serviceNow,
+        localNextAllowedAt: serviceNow.addingTimeInterval(60),
+        interruptedUntil: serviceNow.addingTimeInterval(900)))
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(
+      reader: try SyntheticDesktopReader(), clock: { clock.now() }, throttleStore: store,
+      fetch: { request, _ in
+        await counter.increment()
+        return successfulReply(request)
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    _ = await service.refresh()
+    clock.advance(by: 899)
+    _ = await service.refresh()
+    #expect(await counter.count == 0)
+    clock.advance(by: 1)
+    #expect(await service.refresh().observation != nil)
+    #expect(await counter.count == 1)
+  }
+
+  @Test("Unsupported service waits persist without enormous dates or a shorter retry")
+  func unsupportedWaitRestart() async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let counter = SyntheticFetchCounter()
+    let reader = try SyntheticDesktopReader()
+    let fetch: DesktopUsageCandidateService.Fetch = { _, _ in
+      await counter.increment()
+      return .unsupportedRateLimit
+    }
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await first.setApproval(approval)
+    #expect(await first.refresh().state == .serviceWaitUnavailable)
+    #expect(try store.load()?.unsupportedServiceWait == true)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    try await reader.renew(otherOwner: true)
+    clock.advance(by: 1800)
+    #expect(await restarted.refresh().state == .serviceWaitUnavailable)
+    #expect(await counter.count == 1)
+  }
+
   @Test(arguments: [DesktopCredentialError.changedDuringRead, .keychainLocked, .unavailable])
   func temporaryReadFailureQuarantinesUntilSameOwnerIsVerified(error: DesktopCredentialError)
     async throws

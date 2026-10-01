@@ -62,6 +62,8 @@ enum DesktopUsageState: String, Sendable {
   case invalidResponse
   case identityMismatch
   case invalidClock
+  case serviceWaitUnavailable
+  case persistenceUnavailable
 }
 
 enum DesktopUsageReply: Sendable {
@@ -72,12 +74,48 @@ enum DesktopUsageReply: Sendable {
     cacheAge: TimeInterval?, retryAfter: Date?, body: Data)
   case networkFailure
   case timeout
+  case unsupportedRateLimit
+}
+
+// Restart metadata only. No observation, owner, credential or credential revision.
+struct DesktopThrottleRecord: Codable, Equatable, Sendable {
+  var schemaVersion = 1
+  var recordedAt: Date
+  var lastAttemptAt: Date? = nil
+  var localNextAllowedAt: Date? = nil
+  var successfulNextAllowedAt: Date? = nil
+  var serviceNotBefore: Date? = nil
+  var unsupportedServiceWait = false
+  var failureCount = 0
+  var interruptedUntil: Date? = nil
+
+  var isValid: Bool {
+    let reference = max(recordedAt, lastAttemptAt ?? recordedAt)
+    return schemaVersion == 1 && (0...5).contains(failureCount)
+      && [
+        recordedAt, lastAttemptAt, localNextAllowedAt, successfulNextAllowedAt,
+        serviceNotBefore, interruptedUntil,
+      ].compactMap { $0 }.allSatisfy {
+        $0.timeIntervalSince1970.isFinite && $0.timeIntervalSince1970 > 0
+      }
+      && (interruptedUntil == nil || lastAttemptAt != nil)
+      && (localNextAllowedAt.map { $0.timeIntervalSince(reference) <= 900 } ?? true)
+      && (successfulNextAllowedAt.map { $0.timeIntervalSince(reference) <= 300 } ?? true)
+      && (interruptedUntil.map {
+        guard let lastAttemptAt else { return false }
+        return (0...900).contains($0.timeIntervalSince(lastAttemptAt))
+      } ?? true)
+      && (serviceNotBefore.map {
+        $0.timeIntervalSince(recordedAt) <= DesktopUsageCoordinator.maximumSupportedServiceWait
+      } ?? true)
+  }
 }
 
 struct DesktopUsageCoordinator: Sendable {
   static let requestTimeout: TimeInterval = 30
   static let refreshInterval: TimeInterval = 5 * 60
   static let observationMaximumAge: TimeInterval = 15 * 60
+  static let maximumSupportedServiceWait: TimeInterval = 366 * 86400
 
   private(set) var permission: DesktopUsagePermission = .notRequested
   private(set) var state: DesktopUsageState = .consentRequired
@@ -85,17 +123,70 @@ struct DesktopUsageCoordinator: Sendable {
   private(set) var activeRequest: DesktopUsageRequest?
   private(set) var lastAttemptAt: Date?
   var nextAllowedAt: Date? {
-    [localNextAllowedAt, successfulNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
+    guard !unsupportedServiceWait else { return nil }
+    return [localNextAllowedAt, successfulNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
   }
   private var localNextAllowedAt: Date?
   private var successfulNextAllowedAt: Date?
   private var serviceNotBefore: Date?
+  private var unsupportedServiceWait = false
+  private var interruptedUntil: Date?
   private var context: DesktopUsageContext?
   private var suspendedState: DesktopUsageState?
   private var rejectedGenerations: [(generation: UUID, state: DesktopUsageState)] = []
   private var issuedRequests: [DesktopUsageRequest] = []
   private var failureCount = 0
   private var latestClock: Date?
+
+  mutating func restoreThrottle(_ record: DesktopThrottleRecord, now: Date) -> Bool {
+    guard record.isValid, Self.validDate(now), lastAttemptAt == nil else { return false }
+    lastAttemptAt = record.lastAttemptAt
+    localNextAllowedAt = record.localNextAllowedAt
+    successfulNextAllowedAt = record.successfulNextAllowedAt
+    serviceNotBefore = record.serviceNotBefore
+    unsupportedServiceWait = record.unsupportedServiceWait
+    failureCount = record.failureCount
+    latestClock = record.recordedAt
+    // No observation is restored. An interrupted attempt gets a bounded quiet
+    // period, not an immediate retry or a permanently unrecoverable pending bit.
+    if let pending = record.interruptedUntil { extendDelay(until: pending) }
+    _ = checkClock(now)
+    return true
+  }
+
+  func throttleRecord(now: Date) -> DesktopThrottleRecord {
+    DesktopThrottleRecord(
+      recordedAt: Self.validDate(now)
+        ? max(now, latestClock ?? now) : latestClock ?? Date(timeIntervalSince1970: 1),
+      lastAttemptAt: lastAttemptAt, localNextAllowedAt: localNextAllowedAt,
+      successfulNextAllowedAt: successfulNextAllowedAt, serviceNotBefore: serviceNotBefore,
+      unsupportedServiceWait: unsupportedServiceWait, failureCount: failureCount,
+      interruptedUntil: interruptedUntil)
+  }
+
+  // Called before any suspension after HTTP, so known restrictions can be made
+  // durable even if context verification hangs or consent changes meanwhile.
+  mutating func recordServiceRestriction(
+    _ request: DesktopUsageRequest, reply: DesktopUsageReply, now: Date
+  ) {
+    guard issuedRequests.contains(request) else { return }
+    let receivedClock = Self.validDate(now) ? now : request.startedAt
+    let conservativeClock = max(latestClock ?? request.startedAt, receivedClock)
+    switch reply {
+    case .unsupportedRateLimit:
+      unsupportedServiceWait = true
+    case .response(429, _, _, _, let retryAfter, _):
+      extendServiceDelay(until: conservativeClock.addingTimeInterval(60))
+      if let retryAfter, Self.validDate(retryAfter) {
+        if retryAfter.timeIntervalSince(conservativeClock) > Self.maximumSupportedServiceWait {
+          unsupportedServiceWait = true
+        } else {
+          extendServiceDelay(until: retryAfter)
+        }
+      }
+    default: break
+    }
+  }
 
   // Only explicit user interaction may change this; a polling caller cannot prompt.
   mutating func setPermission(_ permission: DesktopUsagePermission) {
@@ -122,6 +213,10 @@ struct DesktopUsageCoordinator: Sendable {
   mutating func begin(context newContext: DesktopUsageContext?, now: Date) -> DesktopUsageRequest? {
     guard checkClock(now) else { return nil }
     guard synchronize(newContext, now: now) else { return nil }
+    guard !unsupportedServiceWait else {
+      state = .serviceWaitUnavailable
+      return nil
+    }
     if let activeRequest {
       guard now >= activeRequest.deadline else { return nil }
       self.activeRequest = nil
@@ -141,6 +236,7 @@ struct DesktopUsageCoordinator: Sendable {
     issuedRequests = Array(issuedRequests.suffix(8))
     lastAttemptAt = now
     localNextAllowedAt = now.addingTimeInterval(60)
+    interruptedUntil = now.addingTimeInterval(15 * 60)
     state = .requesting
     return request
   }
@@ -152,7 +248,9 @@ struct DesktopUsageCoordinator: Sendable {
     // Cancelled replies cannot replace values. A known 429 may only extend the
     // service-wide delay, even when an account change revoked its request.
     guard let issuedIndex = issuedRequests.firstIndex(of: request) else { return }
+    recordServiceRestriction(request, reply: reply, now: now)
     issuedRequests.remove(at: issuedIndex)
+    if activeRequest == request { interruptedUntil = nil }
     // Authentication refusal belongs to the issued credential, independently of
     // whether current local files can be reread or this request was cancelled.
     if case .response(let status, _, _, _, _, _) = reply, status == 401 || status == 403 {
@@ -160,12 +258,6 @@ struct DesktopUsageCoordinator: Sendable {
         request.context.generation, state: status == 401 ? .waitingForDesktopRenewal : .accessDenied
       )
       if context?.generation == request.context.generation { observation = nil }
-    }
-    if case .response(429, _, _, _, let retryAfter, _) = reply {
-      let receivedClock = Self.validDate(now) ? now : request.startedAt
-      let conservativeClock = max(latestClock ?? request.startedAt, receivedClock)
-      extendServiceDelay(until: conservativeClock.addingTimeInterval(60))
-      if let retryAfter, Self.validDate(retryAfter) { extendServiceDelay(until: retryAfter) }
     }
     guard activeRequest == request else { return }
     if newContext == nil {
@@ -180,6 +272,8 @@ struct DesktopUsageCoordinator: Sendable {
       return
     }
     switch reply {
+    case .unsupportedRateLimit:
+      state = .serviceWaitUnavailable
     case .networkFailure:
       fail(.temporaryFailure, now: now)
     case .timeout:
@@ -192,7 +286,7 @@ struct DesktopUsageCoordinator: Sendable {
         return
       }
       if status == 429 {
-        fail(.rateLimited, now: now)
+        fail(unsupportedServiceWait ? .serviceWaitUnavailable : .rateLimited, now: now)
         return
       }
       guard status == 200 else {

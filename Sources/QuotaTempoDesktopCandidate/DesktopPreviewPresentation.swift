@@ -4,6 +4,13 @@ import QuotaTempoCore
 // Stateless presentation for the local preview only. The service owns account and
 // credential-context validation; neither those identities nor acquisition enter UI state.
 enum DesktopPreviewPresentation {
+  static func schedulingNotice(_ state: DesktopUsageState) -> String? {
+    switch state {
+    case .serviceWaitUnavailable: "Provider wait unsupported; automatic requests stopped."
+    case .persistenceUnavailable: "Local scheduling state could not be saved or verified."
+    default: nil
+    }
+  }
   static func snapshot(_ result: DesktopUsageCandidateResult, now: Date) -> ProviderSnapshot? {
     guard result.disposition == .replaceDisplay else { return nil }
 
@@ -92,6 +99,8 @@ enum DesktopPreviewPresentation {
     switch result.state {
     case .credentialExpired, .waitingForDesktopRenewal: return .authenticationRequired
     case .missingScope, .accessDenied: return .usageRestricted
+    case .serviceWaitUnavailable: return .invalidResponse
+    case .persistenceUnavailable: return .atomicWriteFailed
     case .rateLimited, .temporaryFailure: return .temporaryFailure
     case .timedOut: return .timeout
     case .invalidResponse, .identityMismatch, .invalidClock: return .invalidResponse

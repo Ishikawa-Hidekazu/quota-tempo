@@ -25,13 +25,16 @@ struct DesktopUsageCandidateResult: Sendable {
   let nextAllowedAt: Date?
 }
 
-// Isolated candidate orchestration. No timer, persistence, UI, or shipped caller.
+// Isolated candidate orchestration. No timer, UI, or shipped caller.
 actor DesktopUsageCandidateService {
   typealias Fetch =
     @Sendable (DesktopUsageRequest, DesktopCredentialLease) async -> DesktopUsageReply
   private let reader: any DesktopCredentialReading
   private let fetch: Fetch
   private let clock: @Sendable () -> Date
+  private let throttleStore: (any DesktopThrottleStoring)?
+  private var throttleLoaded = false
+  private var persistenceFailed = false
   private var approval = DesktopAccessApproval()
   private var approvalRevision = UUID()
   private var coordinator = DesktopUsageCoordinator()
@@ -41,6 +44,7 @@ actor DesktopUsageCandidateService {
   init(
     reader: any DesktopCredentialReading = DesktopCredentialReader(),
     clock: @escaping @Sendable () -> Date = Date.init,
+    throttleStore: (any DesktopThrottleStoring)? = nil,
     fetch: @escaping Fetch = { request, lease in
       await DesktopUsageHTTPTransport().fetch(request: request, lease: lease)
     }
@@ -48,6 +52,7 @@ actor DesktopUsageCandidateService {
     self.reader = reader
     self.clock = clock
     self.fetch = fetch
+    self.throttleStore = throttleStore
   }
 
   func setApproval(_ approval: DesktopAccessApproval) async {
@@ -91,6 +96,7 @@ actor DesktopUsageCandidateService {
 
   private func performRefresh(revision: UUID) async -> DesktopUsageCandidateResult {
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
+    guard loadThrottle(), !persistenceFailed || saveThrottle() else { return result() }
     let lease: DesktopCredentialLease
     do { lease = try await reader.load(now: clock()) } catch {
       guard !Task.isCancelled, revision == approvalRevision else { return result() }
@@ -108,11 +114,22 @@ actor DesktopUsageCandidateService {
       return result(
         observation: coordinator.currentObservation(context: lease.context, now: clock()))
     }
+    // Persist the attempt before HTTP. Storage failure must not become a network
+    // retry, including when another refresh, wake or consent change is queued.
+    guard saveThrottle() else {
+      coordinator.complete(request, reply: .networkFailure, context: nil, now: clock())
+      return result()
+    }
     guard !Task.isCancelled else {
       coordinator.complete(request, reply: .networkFailure, context: nil, now: clock())
       return result()
     }
     let reply = await fetch(request, lease)
+    coordinator.recordServiceRestriction(request, reply: reply, now: clock())
+    guard saveThrottle() else {
+      coordinator.complete(request, reply: reply, context: nil, now: clock())
+      return result()
+    }
     var context: DesktopUsageContext?
     if !Task.isCancelled, revision == approvalRevision {
       context = await reader.currentContext(for: lease, now: clock())
@@ -122,9 +139,40 @@ actor DesktopUsageCandidateService {
     if Task.isCancelled || revision != approvalRevision { context = nil }
     // Known 429/auth refusals remain meaningful without admitting any context.
     coordinator.complete(request, reply: reply, context: context, now: clock())
+    guard saveThrottle() else { return result() }
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
     guard let context else { return result() }
     return result(observation: coordinator.currentObservation(context: context, now: clock()))
+  }
+
+  private func loadThrottle() -> Bool {
+    guard let throttleStore, !throttleLoaded else { return true }
+    do {
+      if let record = try throttleStore.load(),
+        !coordinator.restoreThrottle(record, now: clock())
+      {
+        persistenceFailed = true
+        return false
+      }
+      throttleLoaded = true
+      persistenceFailed = false
+      return true
+    } catch {
+      persistenceFailed = true
+      return false
+    }
+  }
+
+  private func saveThrottle() -> Bool {
+    guard let throttleStore else { return true }
+    do {
+      try throttleStore.save(coordinator.throttleRecord(now: clock()))
+      persistenceFailed = false
+      return true
+    } catch {
+      persistenceFailed = true
+      return false
+    }
   }
 
   private func result(
@@ -132,7 +180,9 @@ actor DesktopUsageCandidateService {
     error: DesktopCredentialError? = nil, observation: DesktopUsageObservation? = nil
   ) -> DesktopUsageCandidateResult {
     DesktopUsageCandidateResult(
-      disposition: disposition, state: coordinator.state, observation: observation,
+      disposition: disposition,
+      state: persistenceFailed ? .persistenceUnavailable : coordinator.state,
+      observation: persistenceFailed ? nil : observation,
       credentialError: error,
       nextAllowedAt: coordinator.nextAllowedAt)
   }

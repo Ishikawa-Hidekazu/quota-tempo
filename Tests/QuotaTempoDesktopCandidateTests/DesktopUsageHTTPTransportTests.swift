@@ -241,7 +241,7 @@ struct DesktopUsageHTTPTransportTests {
 
   @Test(
     "Long parsed Retry-After deadlines must not silently become shorter retries",
-    arguments: [false, true], ["86400", "604800", "31536000", "999999999999999"])
+    arguments: [false, true], ["86400", "604800", "31536000"])
   func longRetryAfterIsNotCapped(onUsage: Bool, value: String) async throws {
     let fixture = try fixture()
     let limited = response(
@@ -275,7 +275,7 @@ struct DesktopUsageHTTPTransportTests {
 
   @Test(
     "Malformed Retry-After preserves 429 for coordinator fallback",
-    arguments: ["-1", "1.5", "NaN", "nonsense", "99999999999999999999"])
+    arguments: ["-1", "1.5", "NaN", "nonsense"])
   func invalidRetryAfter(value: String) async throws {
     let fixture = try fixture()
     StubProtocol.state.install([response(status: 429, headers: ["Retry-After": value])])
@@ -285,6 +285,25 @@ struct DesktopUsageHTTPTransportTests {
       return
     }
     #expect(retry == nil)
+  }
+
+  @Test(
+    "Unrepresentable service waits never become a short automatic retry",
+    arguments: [false, true],
+    [
+      "999999999999999", "99999999999999999999", String(repeating: "9", count: 400),
+      "Thu, 01 Jan 2099 00:00:00 GMT",
+    ])
+  func unsupportedRetryAfter(onUsage: Bool, value: String) async throws {
+    let fixture = try fixture()
+    let limited = response(status: 429, headers: ["Retry-After": value])
+    StubProtocol.state.install(onUsage ? [profile(), limited] : [limited])
+    let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    guard case .unsupportedRateLimit = reply else {
+      Issue.record("Expected an explicit unsupported service wait")
+      return
+    }
+    #expect(StubProtocol.state.requests.count == (onUsage ? 2 : 1))
   }
 
   @Test("A 429 without Date still honors a valid delay")

@@ -36,10 +36,19 @@ and organization and obtain usage from the provider. Sensitive values remain in
 process memory; raw bodies, headers, identities, credentials and credential hashes
 are not written to logs or normalized snapshots. The local preview displays
 quota values and records only fixed diagnostic categories, capture/backoff times
-and boolean availability metadata. It does not persist observations. Its
-restart-safe scheduling persistence is not yet implemented and remains a release
-gate. Public integration must include consent, revocation, recovery and an updated
-privacy contract before this path can be shipped.
+and boolean availability metadata. It does not persist observations. The candidate
+now stores a size-bounded `desktop-throttle.json` beside the local helper, with
+owner-only permissions and a process-lifetime lock. The lock contains only a
+one-byte initialization marker to detect checkpoint loss after restart. The
+checkpoint's allowlisted fields are
+schema version, checkpoint/attempt times, local and provider wait deadlines,
+failure count, an interrupted-attempt deadline, and an unsupported-wait flag.
+No identity, ownership fingerprint, credential revision or usage value is stored
+there. Provider requests stop while the checkpoint cannot be validated or saved.
+The crash boundary between an HTTP response and its durable checkpoint still
+needs acceptance, as does recovery from an unsupported service wait. Restart
+safety therefore remains a release gate. Public integration must include consent,
+revocation, recovery and an updated privacy contract before this path can be shipped.
 
 ## Experimental opt-in browser connection
 

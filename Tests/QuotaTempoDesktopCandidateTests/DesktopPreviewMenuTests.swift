@@ -89,6 +89,19 @@ struct DesktopPreviewMenuTests {
     }
   }
 
+  @Test("Scheduling stops show distinct causes and retain exit actions")
+  func schedulingStops() {
+    let preview = makeMenu()
+    for state: DesktopUsageState in [.serviceWaitUnavailable, .persistenceUnavailable] {
+      preview.update(scenario: scenario(available: false), refreshing: false, state: state)
+      #expect(title(.error, preview) == DesktopPreviewPresentation.schedulingNotice(state))
+      #expect(preview.menu.item(withTag: 101)?.isEnabled == true)
+      #expect(preview.menu.item(withTag: 102)?.isEnabled == true)
+    }
+    preview.update(scenario: scenario(), refreshing: false, state: .current)
+    #expect(title(.error, preview) == "Result: observationSucceeded")
+  }
+
   @Test("Updates preserve native item identities and do not invoke actions")
   func stableUpdates() {
     var callbacks = 0

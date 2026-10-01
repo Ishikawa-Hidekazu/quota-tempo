@@ -12,6 +12,99 @@ struct DesktopUsageCoordinatorTests {
     accountFingerprint: String(repeating: "c", count: 64),
     organizationFingerprint: String(repeating: "b", count: 64))
 
+  @Test("Restart metadata contains no observation, owner, generation or response")
+  func boundedRestartRecord() throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(request, reply: try success(), context: context, now: now)
+    let record = coordinator.throttleRecord(now: now)
+    #expect(record.isValid)
+    let bytes = try JSONEncoder().encode(record)
+    let object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+    #expect(
+      Set(object.keys).isSubset(of: [
+        "schemaVersion", "recordedAt", "lastAttemptAt", "localNextAllowedAt",
+        "successfulNextAllowedAt", "serviceNotBefore", "unsupportedServiceWait", "failureCount",
+        "interruptedUntil",
+      ]))
+    var restarted = allowed()
+    #expect(restarted.restoreThrottle(record, now: now) == true)
+    #expect(restarted.observation == nil)
+    #expect(restarted.activeRequest == nil)
+    #expect(restarted.lastAttemptAt == now)
+    #expect(restarted.begin(context: context, now: now.addingTimeInterval(299)) == nil)
+    #expect(restarted.begin(context: context, now: now.addingTimeInterval(300)) != nil)
+  }
+
+  @Test("Restart clock rollback rebases local waits without shortening the service deadline")
+  func restartClockRollback() throws {
+    var first = allowed()
+    let context = context()
+    let request = try requireRequest(&first, context: context, now: now)
+    let retry = now.addingTimeInterval(7200)
+    first.complete(request, reply: response(429, retryAfter: retry), context: context, now: now)
+    var restarted = allowed()
+    #expect(
+      restarted.restoreThrottle(first.throttleRecord(now: now), now: now.addingTimeInterval(-60))
+        == true)
+    #expect(restarted.begin(context: context, now: now.addingTimeInterval(60)) == nil)
+    #expect(restarted.nextAllowedAt == retry)
+    #expect(restarted.begin(context: context, now: retry) != nil)
+  }
+
+  @Test("An extreme injected deadline cannot create an enormous persisted wait")
+  func extremeDeadlineIsExplicitStop() throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    coordinator.complete(
+      request, reply: response(429, retryAfter: now.addingTimeInterval(999_999_999_999_999)),
+      context: context, now: now)
+    #expect(coordinator.state == .serviceWaitUnavailable)
+    #expect(coordinator.nextAllowedAt == nil)
+    #expect(coordinator.throttleRecord(now: now).unsupportedServiceWait)
+    coordinator.setPermission(.denied)
+    coordinator.setPermission(.allowed)
+    #expect(
+      coordinator.begin(context: self.context(owner: otherOwner), now: now.addingTimeInterval(600))
+        == nil)
+    #expect(coordinator.state == .serviceWaitUnavailable)
+  }
+
+  @Test("Post-HTTP checkpoints retain the pre-rollback clock reference")
+  func rollbackBeforeContextReadAndRestart() throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    let rolledBack = now.addingTimeInterval(-3600)
+    coordinator.recordServiceRestriction(request, reply: .networkFailure, now: rolledBack)
+    let saved = coordinator.throttleRecord(now: rolledBack)
+    #expect(saved.recordedAt == now)
+    var restarted = allowed()
+    #expect(restarted.restoreThrottle(saved, now: rolledBack) == true)
+    #expect(restarted.nextAllowedAt == rolledBack.addingTimeInterval(900))
+    #expect(restarted.begin(context: context, now: rolledBack.addingTimeInterval(899)) == nil)
+    #expect(restarted.begin(context: context, now: rolledBack.addingTimeInterval(900)) != nil)
+  }
+
+  @Test("Invalid or unknown-schema restart records are rejected")
+  func invalidRestartRecord() {
+    var record = DesktopThrottleRecord(recordedAt: now)
+    record.schemaVersion = 2
+    var coordinator = allowed()
+    #expect(coordinator.restoreThrottle(record, now: now) == false)
+    record.schemaVersion = 1
+    record.failureCount = -1
+    #expect(!record.isValid)
+    record.failureCount = 0
+    record.recordedAt = Date(timeIntervalSince1970: .nan)
+    #expect(!record.isValid)
+    record.recordedAt = now
+    record.interruptedUntil = now.addingTimeInterval(600)
+    #expect(!record.isValid)
+  }
+
   @Test("Default and denied permission never yield an acquisition request")
   func permissionRequired() {
     var coordinator = DesktopUsageCoordinator()

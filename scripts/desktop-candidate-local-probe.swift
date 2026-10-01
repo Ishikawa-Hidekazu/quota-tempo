@@ -7,6 +7,7 @@ import Security
 
 // Manually linked local diagnostic, never part of a SwiftPM product or app bundle.
 // No raw result/error interpolation, credential output, or observation persistence.
+// Only account-independent request/backoff metadata is persisted beside this helper.
 // One-shot by default; the explicit local preview reuses the guarded service.
 @main
 struct DesktopCandidateLocalProbe {
@@ -35,6 +36,14 @@ struct DesktopCandidateLocalProbe {
       print("{\"status\":\"explicit_local_consent_required\"}")
       return
     }
+    let throttleStore: DesktopThrottleFileStore
+    do {
+      throttleStore = try DesktopThrottleFileStore(
+        directory: URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent())
+    } catch {
+      print("{\"status\":\"throttle_store_unavailable\"}")
+      return
+    }
     if preview || previewQA {
       let instanceLock: DesktopPreviewInstanceLock
       do {
@@ -53,10 +62,12 @@ struct DesktopCandidateLocalProbe {
           exit(2)
         } : nil
       let diagnostics = TransportDiagnostics()
-      let service = DesktopUsageCandidateService(fetch: { request, lease in
-        await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
-          .fetch(request: request, lease: lease)
-      })
+      let service = DesktopUsageCandidateService(
+        throttleStore: throttleStore,
+        fetch: { request, lease in
+          await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
+            .fetch(request: request, lease: lease)
+        })
       DesktopPreviewApplication.run(service: service, qa: previewQA) { result, scenario, trigger in
         // Values stay in the UI; terminal output is bounded, fixed metadata only.
         let plan = scenario.snapshots.first.map { QuotaPlanner.evaluate($0, now: scenario.now) }
@@ -89,13 +100,15 @@ struct DesktopCandidateLocalProbe {
     // AppKit's preview event loop starts synchronously above, never inside an
     // already-running MainActor task. Only the headless one-shot is async.
     Task {
-      await runOneShot(interactive: interactive)
+      await runOneShot(interactive: interactive, throttleStore: throttleStore)
       exit(0)
     }
     dispatchMain()
   }
 
-  @MainActor private static func runOneShot(interactive: Bool) async {
+  @MainActor private static func runOneShot(
+    interactive: Bool, throttleStore: DesktopThrottleFileStore
+  ) async {
     let watchdog = Task.detached {
       try? await Task.sleep(for: .seconds(interactive ? 180 : 45))
       guard !Task.isCancelled else { return }
@@ -120,6 +133,7 @@ struct DesktopCandidateLocalProbe {
     let diagnostics = TransportDiagnostics()
     let service = DesktopUsageCandidateService(
       reader: reader,
+      throttleStore: throttleStore,
       fetch: { request, lease in
         await DesktopUsageHTTPTransport(diagnostic: { diagnostics.append($0) })
           .fetch(request: request, lease: lease)

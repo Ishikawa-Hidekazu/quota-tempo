@@ -49,7 +49,7 @@ final class DesktopPreviewMenu: NSObject {
     add(.quit, title: "Quit Desktop Preview", action: #selector(quit))
   }
 
-  func update(scenario: FixtureScenario, refreshing: Bool) {
+  func update(scenario: FixtureScenario, refreshing: Bool, state: DesktopUsageState? = nil) {
     let plan = scenario.snapshots.first(where: { $0.provider == .claude })
       .map { QuotaPlanner.evaluate($0, now: scenario.now) }
     let copy = MenuCopy(languageCode: "en")
@@ -63,6 +63,9 @@ final class DesktopPreviewMenu: NSObject {
       .error,
       "Result: \(plan?.errorCode?.rawValue ?? (refreshing ? "refreshing" : plan?.sourceState?.rawValue ?? "--"))"
     )
+    if let state, let notice = DesktopPreviewPresentation.schedulingNotice(state) {
+      set(.error, notice)
+    }
     menu.item(withTag: Command.refresh.rawValue)?.isEnabled = !refreshing
     // Close and Quit must remain available even while acquisition is blocked.
     menu.item(withTag: Command.close.rawValue)?.isEnabled = true
