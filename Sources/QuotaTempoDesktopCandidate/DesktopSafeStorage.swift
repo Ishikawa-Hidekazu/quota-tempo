@@ -7,21 +7,6 @@ enum DesktopSafeStorage {
   static let maximumCacheBytes = 1_048_576
 
   static func readKeyWithoutInteraction() throws -> Data {
-    try DesktopKeychainReadGate.perform(state: defaultKeychainState()) {
-      try readUnlockedKeyWithoutInteraction()
-    }
-  }
-
-  private static func defaultKeychainState() -> DesktopKeychainReadGate.State {
-    var keychain: SecKeychain?
-    var status: SecKeychainStatus = 0
-    guard SecKeychainCopyDefault(&keychain) == errSecSuccess,
-      let keychain, SecKeychainGetStatus(keychain, &status) == errSecSuccess
-    else { return .unknown }
-    return status & SecKeychainStatus(kSecUnlockStateStatus) == 0 ? .locked : .unlocked
-  }
-
-  private static func readUnlockedKeyWithoutInteraction() throws -> Data {
     let context = LAContext()
     context.interactionNotAllowed = true
     let query: [String: Any] = [
@@ -29,10 +14,10 @@ enum DesktopSafeStorage {
       kSecAttrService as String: "Claude Safe Storage",
       kSecAttrAccount as String: "Claude Key",
       kSecMatchLimit as String: kSecMatchLimitOne,
-      kSecReturnData as String: true,
+      kSecReturnRef as String: true,
       kSecUseAuthenticationContext as String: context,
     ]
-    let (status, item) = try DesktopLegacyInteractionGuard.perform(
+    let item = try DesktopLegacyInteractionGuard.perform(
       get: {
         var value: DarwinBoolean = false
         guard SecKeychainGetUserInteractionAllowed(&value) == errSecSuccess else {
@@ -46,21 +31,50 @@ enum DesktopSafeStorage {
         }
       },
       operation: {
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        return (status, result)
+        try DesktopKeychainReadGate.read(
+          findTarget: { try findTarget(query: query) },
+          state: { keychainState($0.keychain) },
+          query: { target in
+            var dataQuery = query
+            dataQuery.removeValue(forKey: kSecReturnRef as String)
+            dataQuery[kSecReturnData as String] = true
+            // Keep both the query and its lock evidence tied to the selected item.
+            dataQuery[kSecMatchItemList as String] = [target.item]
+            dataQuery[kSecMatchSearchList as String] = [target.keychain]
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(dataQuery as CFDictionary, &result)
+            return (status, result)
+          })
       })
-    guard status == errSecSuccess else {
-      if [errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled].contains(status) {
-        throw DesktopCredentialError.permissionRequired
-      }
-      throw DesktopCredentialError.unavailable
-    }
     guard var password = item as? Data, !password.isEmpty, password.count <= 4096 else {
       throw DesktopCredentialError.invalidStore
     }
     defer { password.resetBytes(in: password.startIndex..<password.endIndex) }
     return try deriveKey(password: password)
+  }
+
+  private static func findTarget(query: [String: Any]) throws -> (
+    item: SecKeychainItem, keychain: SecKeychain
+  ) {
+    var result: CFTypeRef?
+    // Reference discovery requests no password data. Failure here has no known
+    // owning keychain, so it must not borrow lock evidence from the default one.
+    try DesktopKeychainReadGate.requireSuccess(
+      SecItemCopyMatching(query as CFDictionary, &result))
+    guard let result, CFGetTypeID(result) == SecKeychainItemGetTypeID() else {
+      throw DesktopCredentialError.unavailable
+    }
+    let item = result as! SecKeychainItem
+    var keychain: SecKeychain?
+    try DesktopKeychainReadGate.requireSuccess(SecKeychainItemCopyKeychain(item, &keychain))
+    guard let keychain else { throw DesktopCredentialError.unavailable }
+    return (item, keychain)
+  }
+
+  private static func keychainState(_ keychain: SecKeychain) -> DesktopKeychainReadGate.State {
+    var status: SecKeychainStatus = 0
+    guard SecKeychainGetStatus(keychain, &status) == errSecSuccess else { return .unknown }
+    return status & SecKeychainStatus(kSecUnlockStateStatus) == 0 ? .locked : .unlocked
   }
 
   static func deriveKey(password: Data) throws -> Data {
@@ -119,8 +133,37 @@ enum DesktopSafeStorage {
 enum DesktopKeychainReadGate {
   enum State { case locked, unlocked, unknown }
 
-  // A known lock is checked before the protected query, not inferred from an
-  // ambiguous query failure. Actual ACL failures retain the refusal latch.
+  // Call inside the interaction guard so selection, state checks, and the one
+  // protected query all run with UI suppressed. Never reselect or retry an item.
+  static func read<Target, Value>(
+    findTarget: () throws -> Target, state: (Target) -> State,
+    query: (Target) throws -> (OSStatus, Value)
+  ) throws -> Value {
+    let target = try findTarget()
+    return try perform(state: state(target)) {
+      let (status, value) = try query(target)
+      try requireSuccess(status, targetIsLocked: { state(target) == .locked })
+      return value
+    }
+  }
+
+  // Only an interaction-not-allowed result may use an immediate lock observation
+  // of the queried item's own keychain. Authentication failure and cancellation
+  // remain refusals even if that keychain also became locked.
+  static func requireSuccess(
+    _ status: OSStatus, targetIsLocked: () -> Bool = { false }
+  ) throws {
+    switch status {
+    case errSecSuccess: return
+    case errSecInteractionNotAllowed:
+      throw targetIsLocked()
+        ? DesktopCredentialError.keychainLocked : DesktopCredentialError.permissionRequired
+    case errSecAuthFailed, errSecUserCanceled:
+      throw DesktopCredentialError.permissionRequired
+    default: throw DesktopCredentialError.unavailable
+    }
+  }
+
   static func perform<T>(state: State, operation: () throws -> T) throws -> T {
     switch state {
     case .locked: throw DesktopCredentialError.keychainLocked

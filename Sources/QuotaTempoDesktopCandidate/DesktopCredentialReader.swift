@@ -268,7 +268,9 @@ actor DesktopCredentialReader {
   }
 
   func currentContext(for lease: DesktopCredentialLease, now: Date) -> DesktopUsageContext? {
-    guard let current = try? load(now: now), current === lease else { return nil }
+    // The coordinator compares this freshly verified context with the issued
+    // request. A metadata-only file rewrite need not preserve object identity.
+    guard let current = try? load(now: now) else { return nil }
     return current.context
   }
 

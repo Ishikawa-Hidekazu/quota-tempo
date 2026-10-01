@@ -85,11 +85,13 @@ struct DesktopUsageCoordinator: Sendable {
   private(set) var activeRequest: DesktopUsageRequest?
   private(set) var lastAttemptAt: Date?
   var nextAllowedAt: Date? {
-    [localNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
+    [localNextAllowedAt, successfulNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
   }
   private var localNextAllowedAt: Date?
+  private var successfulNextAllowedAt: Date?
   private var serviceNotBefore: Date?
   private var context: DesktopUsageContext?
+  private var suspendedState: DesktopUsageState?
   private var rejectedGenerations: [(generation: UUID, state: DesktopUsageState)] = []
   private var issuedRequests: [DesktopUsageRequest] = []
   private var failureCount = 0
@@ -101,8 +103,20 @@ struct DesktopUsageCoordinator: Sendable {
     observation = nil
     activeRequest = nil
     context = nil
+    suspendedState = nil
     state = permission == .allowed ? .ready : permissionState
     // Consent is not credential renewal and cannot clear refusals or service backoff.
+  }
+
+  // Keep prior values quarantined in memory, not displayable, until the reader
+  // proves an owner again. This does not accept a response from an unverified read.
+  mutating func suspendContext(now: Date) {
+    guard checkClock(now) else { return }
+    activeRequest = nil
+    if suspendedState == nil {
+      suspendedState = state == .requesting ? .contextChanged : state
+    }
+    state = .identityUnavailable
   }
 
   mutating func begin(context newContext: DesktopUsageContext?, now: Date) -> DesktopUsageRequest? {
@@ -145,6 +159,7 @@ struct DesktopUsageCoordinator: Sendable {
       reject(
         request.context.generation, state: status == 401 ? .waitingForDesktopRenewal : .accessDenied
       )
+      if context?.generation == request.context.generation { observation = nil }
     }
     if case .response(429, _, _, _, let retryAfter, _) = reply {
       let receivedClock = Self.validDate(now) ? now : request.startedAt
@@ -153,6 +168,10 @@ struct DesktopUsageCoordinator: Sendable {
       if let retryAfter, Self.validDate(retryAfter) { extendServiceDelay(until: retryAfter) }
     }
     guard activeRequest == request else { return }
+    if newContext == nil {
+      suspendContext(now: now)
+      return
+    }
     guard checkClock(now), synchronize(newContext, now: now) else { return }
     guard activeRequest == request, context == request.context else { return }
     activeRequest = nil
@@ -193,21 +212,22 @@ struct DesktopUsageCoordinator: Sendable {
       }
       guard let serverDate, Self.validDate(serverDate),
         serverDate >= request.startedAt.addingTimeInterval(-5),
-        serverDate <= now, now.timeIntervalSince(serverDate) <= Self.requestTimeout + 5,
+        serverDate <= now.addingTimeInterval(5),
+        now.timeIntervalSince(serverDate) <= Self.requestTimeout + 5,
         cacheAge.map({ $0.isFinite && $0 == 0 }) ?? true,
-        observation.map({ serverDate > $0.capturedAt }) ?? true,
-        let values = try? DesktopUsagePayloadDecoder.decode(body, observedAt: serverDate),
+        observation.map({ min(serverDate, now) > $0.capturedAt }) ?? true,
+        let values = try? DesktopUsagePayloadDecoder.decode(body, observedAt: min(serverDate, now)),
         let reset = values.weekly.resetAt, reset > now
       else {
         fail(.invalidResponse, now: now)
         return
       }
       observation = DesktopUsageObservation(
-        owner: request.context.owner, capturedAt: serverDate,
+        owner: request.context.owner, capturedAt: min(serverDate, now),
         values: Self.currentWindows(values, now: now))
       failureCount = 0
       state = .current
-      extendDelay(until: min(reset, now.addingTimeInterval(Self.refreshInterval)))
+      successfulNextAllowedAt = min(reset, now.addingTimeInterval(Self.refreshInterval))
     }
   }
 
@@ -238,10 +258,19 @@ struct DesktopUsageCoordinator: Sendable {
       invalidate(.identityUnavailable)
       return false
     }
+    if let suspendedState {
+      self.suspendedState = nil
+      state = suspendedState
+    }
     if newContext != context {
       let sameOwner = newContext.owner == context?.owner
       activeRequest = nil
       if !sameOwner { observation = nil }
+      if sameOwner, newContext.generation != context?.generation {
+        // Renewal can retry after the normal attempt floor, but never bypasses
+        // a failure backoff or a provider's Retry-After deadline.
+        successfulNextAllowedAt = nil
+      }
       context = newContext
       state = .contextChanged
     }
@@ -276,6 +305,7 @@ struct DesktopUsageCoordinator: Sendable {
     observation = nil
     activeRequest = nil
     context = nil
+    suspendedState = nil
     // Preserve generation rejection through a momentarily unavailable context.
     self.state = state
   }
@@ -297,8 +327,11 @@ struct DesktopUsageCoordinator: Sendable {
       if let previousClock, now < previousClock {
         // Rebase only local relative waits. Require a stable minute (or the
         // remaining backoff, up to 15 minutes); never shorten a service deadline.
-        let remaining = localNextAllowedAt?.timeIntervalSince(previousClock) ?? 0
+        let remaining =
+          [localNextAllowedAt, successfulNextAllowedAt].compactMap { $0 }.max()?
+          .timeIntervalSince(previousClock) ?? 0
         localNextAllowedAt = now.addingTimeInterval(max(60, min(remaining, 900)))
+        successfulNextAllowedAt = nil
       } else {
         return true
       }

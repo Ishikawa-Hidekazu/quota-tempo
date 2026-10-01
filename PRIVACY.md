@@ -7,15 +7,39 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 - Codex: rate-limit metadata returned by the installed official `codex app-server` process.
 - Claude: only the recognized usage fields and organization UUID in `~/Library/Application Support/Claude/plan-usage-history.json`, `lastKnownAccountUuid` in the adjacent Desktop `config.json`, plus `cachedUsageUtilization`, `oauthAccount.accountUuid`, and `oauthAccount.organizationUuid` in `~/.claude.json`. The UUIDs are used only to derive one-way SHA-256 account-owner, principal, and organization fingerprints; the raw values are not retained. A Desktop observation inherits an exact cached reset only when the current Desktop account, Claude Code account, organization, and quota window agree. Other fields in those files are not decoded or retained. QuotaTempo can launch the already-installed, already-signed-in Claude Code CLI in a bounded pseudo-terminal, enter `/usage`, and read only the session and all-model weekly percentages and reset times from its rendered panel. It first uses a complete recent local observation. Automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard; explicit **Refresh** invokes it immediately. QuotaTempo does not copy the raw terminal output to its store or diagnostics.
 
-QuotaTempo does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. It disables tools, hooks, MCP configuration, user setting sources, Remote Control startup, and auto-update for the probe, caps its runtime and output, requests a normal CLI exit, and terminates discovered child processes afterward. The provider-owned CLI still uses its existing sign-in, contacts Anthropic for current usage, and may update its own local usage or session metadata; its own privacy terms and network behavior apply.
+The released local/CLI acquisition path does not open browser cookie databases, Keychain items, provider authentication files, prompts, transcripts, or session contents. It disables tools, hooks, MCP configuration, user setting sources, Remote Control startup, and auto-update for the probe, caps its runtime and output, requests a normal CLI exit, and terminates discovered child processes afterward. The provider-owned CLI still uses its existing sign-in, contacts Anthropic for current usage, and may update its own local usage or session metadata; its own privacy terms and network behavior apply.
 
-The unreleased development adapter additionally validates the observation's
+The local/CLI adapter in this source branch additionally validates the observation's
 `cachedUsageUtilization.accountUuid` against the current account before assigning
 ownership. A mismatched cache is excluded; missing ownership cannot justify a
 Desktop reset join. When the browser route is not connected, its minute clock
 also rereads these same allowlisted local sources. This does not introduce a new
 file, permission, provider request, or CLI process, and does not relabel the data
 as newly captured.
+
+## Isolated Desktop acquisition experiment
+
+`QuotaTempoDesktopCandidate` and the manually built `QT Desktop` helper are not
+included in the released application, updater or installer. Running that helper
+requires explicit local-experiment consent. That consent is not a claim of
+provider permission or public-release readiness.
+
+Unlike the released local/CLI path above, the experiment reads Claude Desktop's
+local account configuration and encrypted authentication cache, its selected
+organization from the Desktop cookie store, and the matching Claude Safe Storage
+Keychain item. Reads are bounded and prompt-suppressed during automatic polling.
+It does not modify those stores, export authentication, inspect conversations or
+prompts, launch a browser or CLI, or refresh provider credentials itself.
+
+The helper uses the selected Desktop authentication only to verify the account
+and organization and obtain usage from the provider. Sensitive values remain in
+process memory; raw bodies, headers, identities, credentials and credential hashes
+are not written to logs or normalized snapshots. The local preview displays
+quota values and records only fixed diagnostic categories, capture/backoff times
+and boolean availability metadata. It does not persist observations. Its
+restart-safe scheduling persistence is not yet implemented and remains a release
+gate. Public integration must include consent, revocation, recovery and an updated
+privacy contract before this path can be shipped.
 
 ## Experimental opt-in browser connection
 

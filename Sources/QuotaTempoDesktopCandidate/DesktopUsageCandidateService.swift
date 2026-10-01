@@ -94,8 +94,14 @@ actor DesktopUsageCandidateService {
     let lease: DesktopCredentialLease
     do { lease = try await reader.load(now: clock()) } catch {
       guard !Task.isCancelled, revision == approvalRevision else { return result() }
-      _ = coordinator.begin(context: nil, now: clock())
-      return result(error: error as? DesktopCredentialError ?? .invalidStore)
+      let failure = error as? DesktopCredentialError ?? .invalidStore
+      switch failure {
+      case .changedDuringRead, .unavailable, .keychainLocked:
+        coordinator.suspendContext(now: clock())
+      default:
+        _ = coordinator.begin(context: nil, now: clock())
+      }
+      return result(error: failure)
     }
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
     guard let request = coordinator.begin(context: lease.context, now: clock()) else {
@@ -117,6 +123,7 @@ actor DesktopUsageCandidateService {
     // Known 429/auth refusals remain meaningful without admitting any context.
     coordinator.complete(request, reply: reply, context: context, now: clock())
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
+    guard let context else { return result() }
     return result(observation: coordinator.currentObservation(context: context, now: clock()))
   }
 

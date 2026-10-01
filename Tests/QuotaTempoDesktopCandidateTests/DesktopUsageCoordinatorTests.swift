@@ -344,7 +344,7 @@ struct DesktopUsageCoordinatorTests {
   @Test("Cached, undated, old, and future responses cannot masquerade as a live observation")
   func rejectsFalseFreshness() throws {
     let inputs: [(Date?, TimeInterval?)] = [
-      (nil, nil), (now.addingTimeInterval(-6), nil), (now.addingTimeInterval(1), nil),
+      (nil, nil), (now.addingTimeInterval(-6), nil), (now.addingTimeInterval(6), nil),
       (Date(timeIntervalSince1970: .infinity), nil), (now, 1), (now, -1), (now, .nan),
     ]
     for (date, age) in inputs {
@@ -359,6 +359,52 @@ struct DesktopUsageCoordinatorTests {
       #expect(coordinator.state == .invalidResponse)
       #expect(coordinator.observation == nil)
     }
+  }
+
+  @Test(
+    "Small symmetric clock skew is admitted without future capture times",
+    arguments: [-5.0, -1, 0, 1, 5])
+  func symmetricClockSkew(offset: TimeInterval) throws {
+    var coordinator = allowed()
+    let context = context()
+    let request = try requireRequest(&coordinator, context: context, now: now)
+    let serverDate = now.addingTimeInterval(offset)
+    coordinator.complete(
+      request, reply: try success(serverDate: serverDate), context: context, now: now)
+    #expect(coordinator.state == .current)
+    #expect(coordinator.observation?.capturedAt == min(serverDate, now))
+    #expect(coordinator.currentObservation(context: context, now: now) != nil)
+  }
+
+  @Test("Renewal only removes the success interval, never the attempt floor or provider wait")
+  func renewalScheduling() throws {
+    var coordinator = allowed()
+    let initial = context()
+    let first = try requireRequest(&coordinator, context: initial, now: now)
+    coordinator.complete(first, reply: try success(), context: initial, now: now)
+    let renewed = context()
+    #expect(coordinator.begin(context: renewed, now: now.addingTimeInterval(30)) == nil)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(60))
+    let second = try requireRequest(&coordinator, context: renewed, now: now.addingTimeInterval(60))
+    let retryAt = now.addingTimeInterval(7200)
+    coordinator.complete(
+      second, reply: response(429, retryAfter: retryAt), context: renewed,
+      now: now.addingTimeInterval(60))
+    #expect(coordinator.begin(context: context(), now: now.addingTimeInterval(300)) == nil)
+    #expect(coordinator.nextAllowedAt == retryAt)
+  }
+
+  @Test("Renewal never shortens an existing transient failure backoff")
+  func renewalPreservesFailureBackoff() throws {
+    var coordinator = allowed()
+    let initial = context()
+    let first = try requireRequest(&coordinator, context: initial, now: now)
+    coordinator.complete(first, reply: .networkFailure, context: initial, now: now)
+    let second = try requireRequest(&coordinator, context: initial, now: now.addingTimeInterval(60))
+    coordinator.complete(
+      second, reply: .networkFailure, context: initial, now: now.addingTimeInterval(60))
+    #expect(coordinator.begin(context: context(), now: now.addingTimeInterval(121)) == nil)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(180))
   }
 
   @Test("A reset expiring between server Date and receipt is not accepted")

@@ -101,6 +101,75 @@ test("explicit null five-hour bucket does not invalidate a weekly observation", 
   assert.equal(parsed.fiveHour, null);
 });
 
+test("explicit null five-hour resets preserve weekly data in both schemas", () => {
+  for (const key of ["utilization", "used_percentage", "percent"]) {
+    for (const value of [0, -0, 20.5, 100]) {
+      const session = { [key]: value, resets_at: null };
+      for (const usage of [
+        oldUsage({ five_hour: session }),
+        { limits: [{ kind: "weekly_all", utilization: 27, resets_at: WEEKLY }, { kind: "session", ...session }] },
+        oldUsage({ five_hour: session, limits: [{ kind: "session", ...session }] })
+      ]) {
+        assert.deepEqual(protocol.parseUsage(usage, NOW), {
+          weekly: { remainingPercent: 73, resetAt: WEEKLY }, fiveHour: null
+        });
+      }
+    }
+  }
+});
+
+test("null-reset optional buckets still reject conflicts and duplicates before omission", () => {
+  const inactive = { utilization: 20, resets_at: null };
+  for (const conflict of [
+    { utilization: 21, resets_at: null },
+    { utilization: 20, resets_at: "2026-09-28T23:59:59Z" },
+    { utilization: 20, resets_at: FIVE_HOUR }
+  ]) {
+    for (const [legacy, modern] of [[inactive, conflict], [conflict, inactive]]) {
+      assert.throws(() => protocol.parseUsage(oldUsage({
+        five_hour: legacy, limits: [{ kind: "session", ...modern }]
+      }), NOW));
+    }
+  }
+  for (const legacy of [null, inactive]) {
+    assert.throws(() => protocol.parseUsage(oldUsage({
+      five_hour: legacy, limits: [{ kind: "session", ...inactive }, { kind: "session", ...inactive }]
+    }), NOW));
+  }
+});
+
+test("inactive optional windows cannot hide malformed percentages, reset types or weekly data", () => {
+  const inactive = { utilization: 20, resets_at: null };
+  const elapsed = "2026-09-28T23:59:59Z";
+  const invalid = [
+    { resets_at: null }, { resets_at: elapsed }, { utilization: 20 },
+    ...[undefined, true, false, 42, [], {}, "", "tomorrow"].map(resets_at => ({ ...inactive, resets_at })),
+    ...[null, elapsed].flatMap(resets_at => [
+      ...[null, undefined, true, false, "20", NaN, Infinity, -Infinity, -0.0001, 100.0001]
+        .map(utilization => ({ utilization, resets_at })),
+      { utilization: 20, percent: 20, resets_at }
+    ])
+  ];
+  for (const session of invalid) {
+    for (const usage of [oldUsage({ five_hour: session }),
+      oldUsage({ five_hour: null, limits: [{ kind: "session", ...session }] })]) {
+      assert.throws(() => protocol.parseUsage(usage, NOW));
+    }
+  }
+  for (const resets_at of [null, elapsed, new Date(NOW).toISOString(), "2026-10-07T00:00:00.001Z"]) {
+    const weekly = { utilization: 27, resets_at };
+    for (const session of [inactive, { ...inactive, resets_at: elapsed }]) {
+      for (const usage of [oldUsage({ seven_day: weekly, five_hour: session }),
+        { limits: [{ kind: "weekly_all", ...weekly }, { kind: "session", ...session }] }]) {
+        assert.throws(() => protocol.parseUsage(usage, NOW));
+      }
+    }
+  }
+  for (const weekly of [undefined, null, false, {}, { utilization: -1, resets_at: WEEKLY }]) {
+    assert.throws(() => protocol.parseUsage({ seven_day: weekly, five_hour: inactive }, NOW));
+  }
+});
+
 test("elapsed optional five-hour windows do not discard a current exact weekly observation", () => {
   for (const reset of ["2026-09-28T23:59:59Z", "2026-09-29T09:00:00+09:00"]) {
     const session = { utilization: 80, resets_at: reset };
@@ -133,7 +202,7 @@ test("optional window omission does not hide conflicting or malformed expired bu
   for (const session of [
     { ...elapsed, utilization: NaN }, { ...elapsed, utilization: -1 },
     { ...elapsed, utilization: 101 }, { ...elapsed, utilization: "80" },
-    { ...elapsed, percent: 80 }, { ...elapsed, resets_at: null },
+    { ...elapsed, percent: 80 }, { ...elapsed, resets_at: undefined },
     { ...elapsed, resets_at: "2026-02-30T00:00:00Z" },
     { ...elapsed, resets_at: "2026-09-28T23:59:59+24:00" }
   ]) {
@@ -151,6 +220,7 @@ test("five-hour rollover transitions to absent then a newly observed window, nev
     [NOW - 1, reset, { remainingPercent: 20, resetAt: reset }],
     [NOW, reset, null],
     [NOW + 23_000, reset, null],
+    [NOW + 60_000, null, null],
     [NOW + 5 * 60_000, newReset, { remainingPercent: 20, resetAt: newReset }]
   ]) {
     const source = fetchSequence(response({ uuid: ACCOUNT_A }), response([{ uuid: ORG }]),

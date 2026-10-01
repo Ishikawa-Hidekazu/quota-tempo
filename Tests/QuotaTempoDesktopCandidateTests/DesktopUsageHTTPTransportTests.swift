@@ -28,7 +28,7 @@ struct DesktopUsageHTTPTransportTests {
       expected = [.profileReceived, .profileMetadataInvalid]
     case "usage":
       StubProtocol.state.install([profile(), response(body: Data("private-synthetic-body".utf8))])
-      expected = [.profileReceived, .usageReceived, .usagePayloadInvalid]
+      expected = [.profileReceived, .usageReceived, .usagePayloadMalformed]
     case "foreign":
       StubProtocol.state.install([profile(account: other)])
       expected = [.profileReceived, .profileIdentityMismatch]
@@ -240,6 +240,40 @@ struct DesktopUsageHTTPTransportTests {
   }
 
   @Test(
+    "Long parsed Retry-After deadlines must not silently become shorter retries",
+    arguments: [false, true], ["86400", "604800", "31536000", "999999999999999"])
+  func longRetryAfterIsNotCapped(onUsage: Bool, value: String) async throws {
+    let fixture = try fixture()
+    let limited = response(
+      status: 429, body: Data("private-synthetic-error".utf8), headers: ["Retry-After": value])
+    StubProtocol.state.install(onUsage ? [profile(), limited] : [limited])
+    let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    guard case .response(429, _, _, _, let retry, let body) = reply else {
+      Issue.record("Expected an unshortened rate limit response")
+      return
+    }
+    let seconds = try #require(TimeInterval(value))
+    #expect(retry == now.addingTimeInterval(seconds))
+    #expect(body.isEmpty)
+    #expect(StubProtocol.state.requests.count == (onUsage ? 2 : 1))
+  }
+
+  @Test("Long absolute Retry-After deadlines are preserved", arguments: [false, true])
+  func longAbsoluteRetryAfterIsNotCapped(onUsage: Bool) async throws {
+    let fixture = try fixture()
+    let expected = now.addingTimeInterval(365 * 86400)
+    let limited = response(status: 429, headers: ["Retry-After": httpDate(expected)])
+    StubProtocol.state.install(onUsage ? [profile(), limited] : [limited])
+    let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    guard case .response(429, _, _, _, let retry, let body) = reply else {
+      Issue.record("Expected an unshortened absolute rate limit response")
+      return
+    }
+    #expect(retry == expected)
+    #expect(body.isEmpty)
+  }
+
+  @Test(
     "Malformed Retry-After preserves 429 for coordinator fallback",
     arguments: ["-1", "1.5", "NaN", "nonsense", "99999999999999999999"])
   func invalidRetryAfter(value: String) async throws {
@@ -275,7 +309,7 @@ struct DesktopUsageHTTPTransportTests {
     let fixture = try fixture()
     let headers: [[String: String]] = [
       ["Date": "invalid"],
-      ["Date": httpDate(now.addingTimeInterval(1))],
+      ["Date": httpDate(now.addingTimeInterval(6))],
       ["Date": httpDate(now.addingTimeInterval(-6))],
       ["Age": "1"], ["Age": "-1"], ["Age": "NaN"], ["Age": "0.0"], ["Age": ""],
     ]
@@ -286,6 +320,143 @@ struct DesktopUsageHTTPTransportTests {
       #expect(try status(reply) == 0)
       #expect(try responseBody(reply).isEmpty)
       #expect(StubProtocol.state.requests.count == (onUsage ? 2 : 1))
+    }
+  }
+
+  @Test(
+    "Both endpoints accept exactly five seconds of skew in either direction",
+    arguments: [false, true], [-6.0, -5.0, -1.0, 0.0, 1.0, 5.0, 6.0])
+  func symmetricFreshness(onUsage: Bool, skew: TimeInterval) async throws {
+    let fixture = try fixture()
+    let date = now.addingTimeInterval(skew)
+    let shifted = response(
+      body: onUsage ? usageBody() : profileBody(), headers: ["Date": httpDate(date)])
+    StubProtocol.state.install(
+      onUsage ? [profile(), shifted] : [shifted, response(body: usageBody())])
+    let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    let accepted = abs(skew) <= 5
+    #expect(try status(reply) == (accepted ? 200 : 0))
+    #expect(StubProtocol.state.requests.count == (accepted || onUsage ? 2 : 1))
+    if accepted {
+      guard case .response(200, _, let rawDate, _, _, _) = reply else {
+        Issue.record("Expected accepted raw server Date")
+        return
+      }
+      #expect(rawDate == (onUsage ? date : now))
+    } else {
+      #expect(try responseBody(reply).isEmpty)
+    }
+  }
+
+  @Test(
+    "Accepted future Date uses nonfuture capture for payload validation",
+    arguments: [1.0, 5.0])
+  func futureDateDoesNotAdvanceCapture(skew: TimeInterval) async throws {
+    let fixture = try fixture()
+    var coordinator = DesktopUsageCoordinator()
+    coordinator.setPermission(.allowed)
+    let started = coordinator.begin(context: fixture.request.context, now: now)
+    let request = try #require(started)
+    let date = now.addingTimeInterval(skew)
+    let body = usageBody(resetAt: now.addingTimeInterval(1))
+    StubProtocol.state.install([
+      profile(), response(body: body, headers: ["Date": httpDate(date)]),
+    ])
+    let reply = await transport.fetch(request: request, lease: fixture.lease)
+    guard case .response(200, _, let rawDate, _, _, let received) = reply else {
+      Issue.record("Clock skew must not make an unelapsed reset appear elapsed")
+      return
+    }
+    #expect(rawDate == date)
+    #expect(received == body)
+    coordinator.complete(request, reply: reply, context: request.context, now: now)
+    #expect(coordinator.state == .current)
+    #expect(coordinator.observation?.capturedAt == now)
+    #expect(coordinator.currentObservation(context: request.context, now: now)?.capturedAt == now)
+  }
+
+  @Test("Normalizing capture does not revive an elapsed reset", arguments: [-1.0, 0.0])
+  func futureDateStillRejectsElapsedReset(resetOffset: TimeInterval) async throws {
+    let fixture = try fixture()
+    StubProtocol.state.install([
+      profile(),
+      response(
+        body: usageBody(resetAt: now.addingTimeInterval(resetOffset)),
+        headers: ["Date": httpDate(now.addingTimeInterval(5))]),
+    ])
+    let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+    #expect(try status(reply) == 0)
+    #expect(try responseBody(reply).isEmpty)
+  }
+
+  @Test("Usage metadata failures expose only specific fixed diagnostic stages")
+  func usageMetadataDiagnostics() async throws {
+    let fixture = try fixture()
+    let cases: [(date: String?, age: String?, expected: DesktopUsageHTTPTransport.Diagnostic)] = [
+      (nil, nil, .usageDateMissing),
+      ("private-synthetic-date", nil, .usageDateMalformed),
+      ("", nil, .usageDateMalformed),
+      (httpDate(now), "1", .usageAgePositive),
+      (httpDate(now), "999999999999999", .usageAgePositive),
+      (httpDate(now), "-1", .usageAgeInvalid),
+      (httpDate(now), "NaN", .usageAgeInvalid),
+      (httpDate(now), "0.0", .usageAgeInvalid),
+      (httpDate(now), "", .usageAgeInvalid),
+      (httpDate(now), "private-synthetic-age", .usageAgeInvalid),
+      (httpDate(now.addingTimeInterval(-6)), nil, .usageDateTooOld),
+      (httpDate(now.addingTimeInterval(6)), nil, .usageDateFuture),
+    ]
+    for sample in cases {
+      let recorder = DiagnosticRecorder()
+      let transport = DesktopUsageHTTPTransport(
+        testProtocol: StubProtocol.self, now: { now }, diagnostic: { recorder.append($0) })
+      var metadata = headers(["X-Synthetic-Private": "private-synthetic-header"])
+      metadata["Date"] = sample.date
+      metadata["Age"] = sample.age
+      StubProtocol.state.install([
+        profile(),
+        .response(status: 200, headers: metadata, chunks: [usageBody()], delay: 0, finish: true),
+      ])
+      let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+      #expect(try status(reply) == 0)
+      #expect(try responseBody(reply).isEmpty)
+      #expect(recorder.events == [.profileReceived, .usageReceived, sample.expected])
+      let output = recorder.events.map(\.rawValue).joined()
+      #expect(!output.contains("private-synthetic"))
+      #expect(!output.contains(account))
+      #expect(!output.contains(organization))
+    }
+  }
+
+  @Test("Usage payload failures expose typed fixed stages without payload contents")
+  func usagePayloadDiagnostics() async throws {
+    let fixture = try fixture()
+    let cases: [(body: Data, expected: DesktopUsageHTTPTransport.Diagnostic)] = [
+      (Data("private-synthetic-body".utf8), .usagePayloadMalformed),
+      (Data([0xFF, 0xFE]), .usagePayloadMalformed),
+      (Data("[]".utf8), .usagePayloadMalformed),
+      (Data("{}".utf8), .usageWeeklyUnavailable),
+      (Data("{\"seven_day\":null}".utf8), .usageWeeklyUnavailable),
+      (Data("{\"seven_day\":\"private-synthetic-weekly\"}".utf8), .usageWindowInvalid),
+      (
+        Data("{\"seven_day\":{\"utilization\":10,\"resets_at\":\"private-synthetic-reset\"}}".utf8),
+        .usageWindowInvalid
+      ),
+      (usageBody(resetAt: now), .usageWindowInvalid),
+    ]
+    for sample in cases {
+      let recorder = DiagnosticRecorder()
+      let transport = DesktopUsageHTTPTransport(
+        testProtocol: StubProtocol.self, now: { now }, diagnostic: { recorder.append($0) })
+      StubProtocol.state.install([profile(), response(body: sample.body)])
+      let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
+      #expect(try status(reply) == 0)
+      #expect(try responseBody(reply).isEmpty)
+      #expect(recorder.events == [.profileReceived, .usageReceived, sample.expected])
+      let output = recorder.events.map(\.rawValue).joined()
+      #expect(!output.contains("private-synthetic"))
+      #expect(!output.contains(account))
+      #expect(!output.contains(organization))
     }
   }
 
@@ -521,8 +692,8 @@ struct DesktopUsageHTTPTransportTests {
         .utf8)
   }
 
-  private func usageBody() -> Data {
-    let reset = now.addingTimeInterval(86400).formatted(.iso8601)
+  private func usageBody(resetAt: Date? = nil) -> Data {
+    let reset = (resetAt ?? now.addingTimeInterval(86400)).formatted(.iso8601)
     return Data("{\"seven_day\":{\"utilization\":10,\"resets_at\":\"\(reset)\"}}".utf8)
   }
 

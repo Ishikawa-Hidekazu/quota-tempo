@@ -1,5 +1,6 @@
 import CommonCrypto
 import Foundation
+import Security
 import Testing
 
 @testable import QuotaTempoDesktopCandidate
@@ -57,6 +58,154 @@ struct DesktopCredentialTests {
         throw DesktopCredentialError.permissionRequired
       }
     }
+  }
+
+  @Test func keychainRaceUsesOnlyTheQueriedItemsLockEvidence() {
+    for defaultState: DesktopKeychainReadGate.State in [.locked, .unlocked] {
+      for observedState: DesktopKeychainReadGate.State in [.locked, .unlocked, .unknown] {
+        var states = ["default": defaultState, "alternate": .unlocked]
+        var events: [String] = []
+        let expected: DesktopCredentialError =
+          observedState == .locked ? .keychainLocked : .permissionRequired
+        #expect(throws: expected) {
+          try DesktopKeychainReadGate.read(
+            findTarget: { "alternate" },
+            state: { target in
+              events.append("state:\(target)")
+              return states[target] ?? .unknown
+            },
+            query: { target in
+              events.append("query:\(target)")
+              states["alternate"] = observedState
+              return (errSecInteractionNotAllowed, ())
+            })
+        }
+        #expect(events == ["state:alternate", "query:alternate", "state:alternate"])
+      }
+    }
+  }
+
+  @Test func keychainPreflightUsesTheSelectedItemNotTheDefaultKeychain() throws {
+    for defaultState: DesktopKeychainReadGate.State in [.locked, .unlocked] {
+      for targetState: DesktopKeychainReadGate.State in [.locked, .unknown, .unlocked] {
+        let states = ["default": defaultState, "alternate": targetState]
+        var queries = 0
+        var stateReads = 0
+        let read = {
+          try DesktopKeychainReadGate.read(
+            findTarget: { "alternate" },
+            state: { target in
+              #expect(target == "alternate")
+              stateReads += 1
+              return states[target] ?? .unknown
+            },
+            query: { target in
+              #expect(target == "alternate")
+              queries += 1
+              return (errSecSuccess, "synthetic-only")
+            })
+        }
+        if targetState == .unlocked {
+          #expect(try read() == "synthetic-only")
+          #expect(queries == 1)
+        } else {
+          let expected: DesktopCredentialError =
+            targetState == .locked ? .keychainLocked : .unavailable
+          #expect(throws: expected) { try read() }
+          #expect(queries == 0)
+        }
+        #expect(stateReads == 1)
+      }
+    }
+  }
+
+  @Test func keychainAuthenticationFailuresNeverUseConcurrentLockToDowngradeDenial() {
+    for status in [errSecAuthFailed, errSecUserCanceled] {
+      var state = DesktopKeychainReadGate.State.unlocked
+      var stateReads = 0
+      var queries = 0
+      #expect(throws: DesktopCredentialError.permissionRequired) {
+        try DesktopKeychainReadGate.read(
+          findTarget: { "synthetic-item" },
+          state: { _ in
+            stateReads += 1
+            return state
+          },
+          query: { _ in
+            queries += 1
+            state = .locked
+            return (status, ())
+          })
+      }
+      #expect(stateReads == 1)
+      #expect(queries == 1)
+    }
+  }
+
+  @Test func explicitKeychainDenialIsNeverReclassifiedAsLock() {
+    var state = DesktopKeychainReadGate.State.unlocked
+    var stateReads = 0
+    #expect(throws: DesktopCredentialError.permissionRequired) {
+      try DesktopKeychainReadGate.read(
+        findTarget: { "synthetic-item" },
+        state: { _ in
+          stateReads += 1
+          return state
+        },
+        query: { _ -> (OSStatus, Void) in
+          state = .locked
+          throw DesktopCredentialError.permissionRequired
+        })
+    }
+    #expect(stateReads == 1)
+  }
+
+  @Test func keychainDiscoveryFailureCannotBorrowUnrelatedLockEvidence() {
+    for status in [errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled] {
+      #expect(throws: DesktopCredentialError.permissionRequired) {
+        try DesktopKeychainReadGate.read(
+          findTarget: {
+            try DesktopKeychainReadGate.requireSuccess(status)
+            return "unresolved-item"
+          },
+          state: { _ in
+            Issue.record("Queried state without resolving an item's keychain")
+            return .locked
+          },
+          query: { _ in
+            Issue.record("Protected query after discovery failure")
+            return (errSecSuccess, ())
+          })
+      }
+    }
+  }
+
+  @Test func keychainUnrelatedFailureRemainsUnavailableDespiteLock() {
+    #expect(throws: DesktopCredentialError.unavailable) {
+      try DesktopKeychainReadGate.requireSuccess(errSecItemNotFound) {
+        Issue.record("Unrelated failure probed lock state")
+        return true
+      }
+    }
+  }
+
+  @Test func legacyKeychainGuardRestoresInteractionAfterQueryTimeLock() {
+    var events: [Bool] = []
+    var state = DesktopKeychainReadGate.State.unlocked
+    #expect(throws: DesktopCredentialError.keychainLocked) {
+      try DesktopLegacyInteractionGuard.perform(
+        get: { true }, set: { events.append($0) },
+        operation: {
+          try DesktopKeychainReadGate.read(
+            findTarget: { "synthetic-item" }, state: { _ in state },
+            query: { _ in
+              #expect(events == [false])
+              state = .locked
+              return (errSecInteractionNotAllowed, ())
+            })
+        })
+    }
+    #expect(events == [false, true])
   }
 
   @Test func accessRequiresBothApprovals() throws {

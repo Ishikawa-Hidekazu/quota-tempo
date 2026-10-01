@@ -308,6 +308,26 @@ struct LiveAdapterTests {
     #expect(snapshot.errorCode == .timeout)
   }
 
+  @Test("Codex acquisition failures cannot lift a previously confirmed provider restriction")
+  func codexFailurePreservesRestriction() throws {
+    let previous = try self.codexRestrictedRefresh(bucket: self.codexExhaustionBucket())
+    for failure: BoundedProcessError in [.timeout, .launchFailed, .inputWriteFailed] {
+      let instant = self.now.addingTimeInterval(300)
+      let snapshot = CodexRateLimitAdapter(
+        runner: FakeRunner(result: .failure(failure)),
+        versionRunner: FakeRunner(result: .failure(.launchFailed)),
+        executable: self.codexExecutable
+      ).refresh(previous: previous, now: instant)
+      #expect(snapshot.sourceState == .accessRestricted)
+      #expect(snapshot.errorCode == .usageRestricted)
+      #expect(snapshot.capturedAt == previous.capturedAt)
+      #expect(snapshot.weekly == previous.weekly)
+      #expect(snapshot.lastAttemptAt == instant)
+      let decoded = try NormalizedSnapshotCodec.decode(NormalizedSnapshotCodec.encode(snapshot))
+      #expect(QuotaPlanner.evaluate(decoded, now: instant).availableUntilCheckpoint == nil)
+    }
+  }
+
   @Test("Codex first failure records only attempt time, not a synthetic capture")
   func codexFirstFailureHasNoCaptureTime() {
     let snapshot = CodexRateLimitAdapter(

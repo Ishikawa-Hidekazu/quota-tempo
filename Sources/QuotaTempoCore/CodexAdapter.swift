@@ -888,15 +888,19 @@ public struct CodexRateLimitAdapter: Sendable {
     candidate: CodexExecutableCandidate?,
     version: String?
   ) -> ProviderSnapshot {
-    ProviderSnapshot(
+    // A failed observation cannot prove that a prior provider restriction ended.
+    let retainsRestriction =
+      previous?.provider == .codex && previous?.source == .codexAppServer
+      && previous?.sourceState == .accessRestricted
+    return ProviderSnapshot(
       provider: .codex,
       source: .codexAppServer,
       capturedAt: previous?.capturedAt,
       weekly: previous?.weekly,
       fiveHour: previous?.fiveHour,
       lastAttemptAt: now,
-      sourceState: state,
-      errorCode: error,
+      sourceState: retainsRestriction ? .accessRestricted : state,
+      errorCode: retainsRestriction ? .usageRestricted : error,
       codexExecutableSource: candidate?.source,
       codexExecutableVersion: candidate == nil ? nil : version
     )

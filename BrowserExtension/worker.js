@@ -30,7 +30,7 @@ function serialize(action) {
 function initialState() {
   return {
     enabled: false, blocked: false, profileID: crypto.randomUUID(), tabID: null,
-    pin: null, status: "disconnected", failureCount: 0, nextAt: null,
+    pin: null, status: "disconnected", failureCount: 0, nextAt: null, pollNotBefore: null,
     lastFailureStage: null,
     lastObservedAt: null, inFlight: null, recovering: false, pendingDisconnect: false,
     pendingConnect: false, pendingConnectedMessage: null,
@@ -47,6 +47,7 @@ async function state() {
       pendingConnectedMessage: null,
       connectionID: null, sequence: null, pendingRevocation: null, ...stored
     };
+    value.pollNotBefore = providerDeadline(value);
     return value;
   }
   const fresh = initialState();
@@ -195,8 +196,16 @@ async function nativeSend(message) {
   }
 }
 
+function providerDeadline(value) {
+  // nextAt also schedules native control retries; only provider waits survive consent changes.
+  const deadlines = [value.pollNotBefore, value.pendingRevocation ? null : value.nextAt]
+    .filter(deadline => Number.isFinite(deadline) && deadline > 0);
+  return deadlines.length ? Math.max(...deadlines) : null;
+}
+
 async function schedule(value, delay) {
-  value.nextAt = Date.now() + delay;
+  value.pollNotBefore = Math.max(providerDeadline(value) ?? 0, Date.now() + delay);
+  value.nextAt = value.pollNotBefore;
   await save(value);
   await chrome.alarms.create(ALARM, { when: value.nextAt });
 }
@@ -213,7 +222,7 @@ function pollingDeadline(value) {
       || value.pendingRevocation.retryCount >= REVOCATION_DELAYS.length) return null;
   } else if (value.blocked) return null;
   const deadline = value.pendingRevocation ? value.nextAt
-    : value.inFlight?.expiresAt ?? value.nextAt;
+    : value.inFlight?.expiresAt ?? providerDeadline(value);
   return Number.isFinite(deadline) ? deadline : Date.now();
 }
 
@@ -282,7 +291,10 @@ async function observationIsDeferred(value) {
     }
     return true;
   }
-  if (value.failureCount > 0 && value.nextAt > Date.now()) {
+  const deadline = providerDeadline(value);
+  if (deadline > Date.now()) {
+    value.pollNotBefore = deadline;
+    value.nextAt = deadline;
     await save(value);
     await chrome.alarms.create(ALARM, { when: value.nextAt });
     return true;
@@ -567,7 +579,13 @@ chrome.runtime.onStartup.addListener(() => {
       return;
     }
     value.inFlight = null;
-    if (value.failureCount === 0) value.nextAt = null;
+    // A newly connected generation may still be waiting before its first account pin.
+    if (value.pin === null && value.sequence === 0 && validGeneration(value)) {
+      value.recovering = false;
+      await save(value);
+      await startObservation(value);
+      return;
+    }
     value.recovering = true;
     await rebind(value);
   });

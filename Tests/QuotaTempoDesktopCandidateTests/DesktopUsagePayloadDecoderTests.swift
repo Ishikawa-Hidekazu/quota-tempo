@@ -36,6 +36,35 @@ struct DesktopUsagePayloadDecoderTests {
   }
 
   @Test(
+    "Inactive five-hour windows preserve the exact weekly observation",
+    arguments: [
+      nil, "2026-09-30T00:00:00Z", "2026-09-29T23:59:59.999Z",
+      "2026-09-30T09:00:00+09:00",
+    ])
+  func inactiveSession(_ reset: String?) throws {
+    let weeklyOnly = try self.decode(self.payload())
+    for utilization in ["0", "-0", "20.5", "100"] {
+      let result = try self.decode(
+        self.payload(fiveHour: self.window(utilization: utilization, reset: reset)))
+      #expect(result == weeklyOnly)
+    }
+  }
+
+  @Test("An inactive five-hour window cannot rescue an invalid weekly window")
+  func inactiveSessionInvalidWeekly() {
+    for sessionReset in [nil, "2026-09-30T00:00:00Z"] {
+      let session = self.window(reset: sessionReset)
+      self.expectError(.unavailableWeekly, "{\"five_hour\":\(session)}")
+      self.expectError(.unavailableWeekly, self.payload(weekly: "null", fiveHour: session))
+      for reset in [nil, "2026-09-30T00:00:00Z", "2026-10-08T00:00:00.001Z"] {
+        self.expectError(
+          .invalidWindow,
+          self.payload(weekly: self.window(reset: reset), fiveHour: session))
+      }
+    }
+  }
+
+  @Test(
     "Missing and null weekly windows are unavailable", arguments: ["{}", "{\"seven_day\":null}"])
   func unavailableWeekly(_ payload: String) {
     self.expectError(.unavailableWeekly, payload)
@@ -86,12 +115,19 @@ struct DesktopUsagePayloadDecoderTests {
         field == "seven_day" ? self.payload(weekly: invalid) : self.payload(fiveHour: invalid)
       self.expectError(.invalidWindow, payload)
     }
+    for reset in [nil, "2026-09-30T00:00:00Z", "2026-09-29T23:59:59Z"] {
+      self.expectError(
+        .invalidWindow, self.payload(fiveHour: self.window(utilization: utilization, reset: reset)))
+    }
   }
 
   @Test("Missing utilization is rejected")
   func missingUtilization() {
     self.expectError(
       .invalidWindow, self.payload(weekly: "{\"resets_at\":\"\(self.weeklyReset)\"}"))
+    for reset in ["null", "\"\(self.sessionReset)\"", "\"2026-09-30T00:00:00Z\""] {
+      self.expectError(.invalidWindow, self.payload(fiveHour: "{\"resets_at\":\(reset)}"))
+    }
   }
 
   @Test(
@@ -103,13 +139,15 @@ struct DesktopUsagePayloadDecoderTests {
   }
 
   @Test(
-    "Reset timestamps must be present, nonnull strings",
+    "Reset keys must be present and only optional five-hour resets may be null",
     arguments: [nil, "null", "true", "false", "42", "[]", "{}"])
   func resetTypes(_ reset: String?) {
     let suffix = reset.map { ",\"resets_at\":\($0)" } ?? ""
     let window = "{\"utilization\":20\(suffix)}"
     self.expectError(.invalidWindow, self.payload(weekly: window))
-    self.expectError(.invalidWindow, self.payload(fiveHour: window))
+    if reset != "null" {
+      self.expectError(.invalidWindow, self.payload(fiveHour: window))
+    }
   }
 
   @Test(
@@ -124,9 +162,11 @@ struct DesktopUsagePayloadDecoderTests {
       "2026-10-01T00:00:00+0900", "2026-10-01T00:00:00+09",
       "26-10-01T00:00:00Z", "+002026-10-01T00:00:00Z", "2026-W40-4T00:00:00Z",
       "2026-274T00:00:00Z", "2026-10-01t00:00:00z",
+      "2026-02-30T00:00:00Z", "2026-09-29T24:00:00Z", "2026-09-29T23:59:59",
     ])
   func invalidDates(_ reset: String) {
     self.expectError(.invalidWindow, self.payload(weekly: self.window(reset: reset)))
+    self.expectError(.invalidWindow, self.payload(fiveHour: self.window(reset: reset)))
   }
 
   @Test("Fractional reset precision is preserved", arguments: ["1", "123", "123456", "123456789"])
@@ -184,11 +224,32 @@ struct DesktopUsagePayloadDecoderTests {
   }
 
   @Test(
-    "Equal and past reset times are rejected in both windows",
+    "Equal and past weekly reset times are still rejected",
     arguments: ["2026-09-30T00:00:00Z", "2026-09-29T23:59:59.999Z"])
   func expiredResets(_ reset: String) {
     self.expectError(.invalidWindow, self.payload(weekly: self.window(reset: reset)))
-    self.expectError(.invalidWindow, self.payload(fiveHour: self.window(reset: reset)))
+  }
+
+  @Test("Five-hour rollover omits inactive windows and never infers a replacement reset")
+  func sessionRollover() throws {
+    let weekly = try self.decode(self.payload()).weekly
+    for (offset, reset, active) in [
+      (-0.001, "2026-09-30T00:00:00Z", true),
+      (0.0, "2026-09-30T00:00:00Z", false),
+      (23.0, "2026-09-30T00:00:00Z", false),
+      (300.0, "2026-09-30T05:00:00Z", true),
+    ] {
+      let observedAt = self.now.addingTimeInterval(offset)
+      let result = try DesktopUsagePayloadDecoder.decode(
+        Data(self.payload(fiveHour: self.window(reset: reset)).utf8), observedAt: observedAt)
+      #expect(result.weekly == weekly)
+      if active {
+        #expect(result.fiveHour?.resetAt == ISO8601DateFormatter().date(from: reset))
+        #expect(result.fiveHour?.isResetEstimated == false)
+      } else {
+        #expect(result.fiveHour == nil)
+      }
+    }
   }
 
   @Test("A future reset one millisecond away remains exact")
@@ -213,6 +274,7 @@ struct DesktopUsagePayloadDecoderTests {
   func nonpositiveReset() {
     for reset in ["1970-01-01T00:00:00Z", "1969-12-31T23:59:59Z", "0000-01-01T00:00:00Z"] {
       self.expectError(.invalidWindow, self.payload(weekly: self.window(reset: reset)))
+      self.expectError(.invalidWindow, self.payload(fiveHour: self.window(reset: reset)))
     }
   }
 
@@ -277,13 +339,18 @@ struct DesktopUsagePayloadDecoderTests {
   @Test("Non-JSON nonfinite number literals are rejected")
   func nonfiniteLiterals() {
     for number in ["NaN", "Infinity", "-Infinity", "1e400"] {
-      do {
-        _ = try self.decode(
-          self.payload(weekly: self.window(utilization: number, reset: self.weeklyReset)))
-        Issue.record("Expected a bounded validation error")
-      } catch {
-        let error = error as? DesktopUsagePayloadError
-        #expect(error == .invalidPayload || error == .invalidWindow)
+      for payload in [
+        self.payload(weekly: self.window(utilization: number, reset: self.weeklyReset)),
+        self.payload(fiveHour: self.window(utilization: number, reset: nil)),
+        self.payload(fiveHour: self.window(utilization: number, reset: "2026-09-30T00:00:00Z")),
+      ] {
+        do {
+          _ = try self.decode(payload)
+          Issue.record("Expected a bounded validation error")
+        } catch {
+          let error = error as? DesktopUsagePayloadError
+          #expect(error == .invalidPayload || error == .invalidWindow)
+        }
       }
     }
   }
@@ -349,7 +416,7 @@ struct DesktopUsagePayloadDecoderTests {
     #expect(throws: error) { try self.decode(payload) }
   }
 
-  private func window(utilization: String = "20", reset: String) -> String {
+  private func window(utilization: String = "20", reset: String?) -> String {
     let quotedReset = String(decoding: try! JSONEncoder().encode(reset), as: UTF8.self)
     return "{\"utilization\":\(utilization),\"resets_at\":\(quotedReset)}"
   }

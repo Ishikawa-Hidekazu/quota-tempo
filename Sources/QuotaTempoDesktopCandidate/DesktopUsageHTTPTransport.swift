@@ -3,7 +3,10 @@ import Foundation
 struct DesktopUsageHTTPTransport: Sendable {
   enum Diagnostic: String, Sendable {
     case profileReceived, profileMetadataInvalid, profilePayloadInvalid, profileIdentityInvalid
-    case profileIdentityMismatch, usageReceived, usageMetadataInvalid, usagePayloadInvalid
+    case profileIdentityMismatch, usageReceived, usagePayloadInvalid
+    case usageDateMissing, usageDateMalformed, usageAgePositive, usageAgeInvalid
+    case usageDateTooOld, usageDateFuture, usageClockInvalid
+    case usagePayloadTooLarge, usagePayloadMalformed, usageWeeklyUnavailable, usageWindowInvalid
     case usageResetInvalid, usageAccepted, exchangeFailed
   }
 
@@ -53,7 +56,7 @@ struct DesktopUsageHTTPTransport: Sendable {
     }
     diagnostic(.profileReceived)
     guard profile.status == 200 else { return profile.reply(owner: nil) }
-    guard profile.isFresh(since: request.startedAt) else {
+    guard profile.freshnessFailure(since: request.startedAt) == nil else {
       diagnostic(.profileMetadataInvalid)
       return Self.invalidResponse
     }
@@ -89,16 +92,33 @@ struct DesktopUsageHTTPTransport: Sendable {
     let completedAt = now()
     guard validDate(completedAt), completedAt >= request.startedAt,
       completedAt >= usage.receivedAt
-    else { return Self.invalidResponse }
+    else {
+      diagnostic(.usageClockInvalid)
+      return Self.invalidResponse
+    }
     guard completedAt < request.deadline, ContinuousClock.now < deadline,
       completedAt < request.context.expiresAt
     else { return .timeout }
-    guard usage.isFresh(since: request.startedAt), let serverDate = usage.serverDate else {
-      diagnostic(.usageMetadataInvalid)
+    if let failure = usage.freshnessFailure(since: request.startedAt) {
+      diagnostic(failure.usageDiagnostic)
       return Self.invalidResponse
     }
-    guard let values = try? DesktopUsagePayloadDecoder.decode(usage.body, observedAt: serverDate)
-    else {
+    guard let serverDate = usage.serverDate else { return Self.invalidResponse }
+    // Preserve the raw Date for coordinator validation, but never validate windows
+    // against a future capture time inside the accepted clock-skew allowance.
+    let capturedAt = min(serverDate, completedAt)
+    let values: DesktopUsageValues
+    do {
+      values = try DesktopUsagePayloadDecoder.decode(usage.body, observedAt: capturedAt)
+    } catch let error as DesktopUsagePayloadError {
+      switch error {
+      case .inputTooLarge: diagnostic(.usagePayloadTooLarge)
+      case .invalidPayload: diagnostic(.usagePayloadMalformed)
+      case .unavailableWeekly: diagnostic(.usageWeeklyUnavailable)
+      case .invalidWindow: diagnostic(.usageWindowInvalid)
+      }
+      return Self.invalidResponse
+    } catch {
       diagnostic(.usagePayloadInvalid)
       return Self.invalidResponse
     }
@@ -192,11 +212,29 @@ struct DesktopUsageHTTPTransport: Sendable {
     }
   }
 
+  private enum FreshnessFailure: Sendable {
+    case dateMissing, dateMalformed, agePositive, ageInvalid, dateTooOld, dateFuture, invalidClock
+
+    var usageDiagnostic: Diagnostic {
+      switch self {
+      case .dateMissing: .usageDateMissing
+      case .dateMalformed: .usageDateMalformed
+      case .agePositive: .usageAgePositive
+      case .ageInvalid: .usageAgeInvalid
+      case .dateTooOld: .usageDateTooOld
+      case .dateFuture: .usageDateFuture
+      case .invalidClock: .usageClockInvalid
+      }
+    }
+  }
+
   private struct Response: Sendable {
+    private static let clockSkew: TimeInterval = 5
+
     let status: Int
     let serverDate: Date?
     let cacheAge: TimeInterval?
-    let metadataValid: Bool
+    let metadataFailure: FreshnessFailure?
     let retryAfter: Date?
     var receivedAt: Date
     var body = Data()
@@ -204,22 +242,40 @@ struct DesktopUsageHTTPTransport: Sendable {
     init(_ response: HTTPURLResponse, receivedAt: Date) {
       status = response.statusCode
       self.receivedAt = receivedAt
-      serverDate = HTTPDate.parse(response.value(forHTTPHeaderField: "Date"))
+      let rawDate = response.value(forHTTPHeaderField: "Date")
+      serverDate = HTTPDate.parse(rawDate)
       let rawAge = response.value(forHTTPHeaderField: "Age")
       cacheAge = HTTPDate.deltaSeconds(rawAge)
-      metadataValid =
-        serverDate != nil && (rawAge == nil || cacheAge == 0)
-        && receivedAt.timeIntervalSince1970.isFinite
+      if rawDate == nil {
+        metadataFailure = .dateMissing
+      } else if serverDate == nil {
+        metadataFailure = .dateMalformed
+      } else if rawAge != nil && cacheAge == nil {
+        metadataFailure = .ageInvalid
+      } else if let cacheAge, cacheAge > 0 {
+        metadataFailure = .agePositive
+      } else {
+        metadataFailure = nil
+      }
       retryAfter = HTTPDate.retryAfter(
         response.value(forHTTPHeaderField: "Retry-After"),
         receivedAt: receivedAt, serverDate: serverDate)
     }
 
-    func isFresh(since startedAt: Date) -> Bool {
-      guard metadataValid, let serverDate else { return false }
-      return serverDate >= startedAt.addingTimeInterval(-5)
-        && serverDate <= receivedAt
-        && receivedAt.timeIntervalSince(serverDate) <= DesktopUsageCoordinator.requestTimeout + 5
+    func freshnessFailure(since startedAt: Date) -> FreshnessFailure? {
+      if let metadataFailure { return metadataFailure }
+      guard let serverDate else { return .dateMalformed }
+      guard receivedAt.timeIntervalSince1970.isFinite, receivedAt >= startedAt else {
+        return .invalidClock
+      }
+      guard serverDate >= startedAt.addingTimeInterval(-Self.clockSkew),
+        receivedAt.timeIntervalSince(serverDate)
+          <= DesktopUsageCoordinator.requestTimeout + Self.clockSkew
+      else { return .dateTooOld }
+      guard serverDate <= receivedAt.addingTimeInterval(Self.clockSkew) else {
+        return .dateFuture
+      }
+      return nil
     }
 
     func reply(owner: DesktopUsageOwner?) -> DesktopUsageReply {

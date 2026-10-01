@@ -225,13 +225,16 @@ struct DesktopPreviewPresentationTests {
     }
   }
 
-  @Test("A context change clears even an otherwise valid same-owner observation")
-  func contextChangeClearsValues() throws {
+  @Test("A service-verified same-owner renewal preserves the original observation")
+  func contextChangeRetainsVerifiedValues() throws {
     let input = result(
       observation(capturedAt: now.addingTimeInterval(-300)), state: .contextChanged)
-    let snapshot = try expectUnavailable(input)
+    let snapshot = try #require(DesktopPreviewPresentation.snapshot(input, now: now))
+    #expect(snapshot.weekly?.remainingPercent == 75)
+    #expect(snapshot.capturedAt == now.addingTimeInterval(-300))
     #expect(snapshot.lastAttemptAt == nil)
     #expect(snapshot.errorCode == .sourceUnavailable)
+    try expectUnavailable(result(state: .contextChanged))
   }
 
   @Test("Permission, identity, authentication and expiry states always clear values")

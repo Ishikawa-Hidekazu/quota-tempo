@@ -1,6 +1,7 @@
 import CommonCrypto
 import Foundation
 import SQLite3
+import Security
 import Testing
 
 @testable import QuotaTempoDesktopCandidate
@@ -122,23 +123,33 @@ private final class SyntheticReaderKeychain: @unchecked Sendable {
   private let lock = NSLock()
   private var state = DesktopKeychainReadGate.State.unlocked
   private var denied = false
+  private var queryStatus = errSecSuccess
+  private var stateAfterQuery: DesktopKeychainReadGate.State?
   private var queries = 0
 
-  func set(_ state: DesktopKeychainReadGate.State, denied: Bool = false) {
+  func set(
+    _ state: DesktopKeychainReadGate.State, denied: Bool = false,
+    queryStatus: OSStatus = errSecSuccess, stateAfterQuery: DesktopKeychainReadGate.State? = nil
+  ) {
     lock.lock()
     defer { lock.unlock() }
     self.state = state
     self.denied = denied
+    self.queryStatus = queryStatus
+    self.stateAfterQuery = stateAfterQuery
   }
 
   func read(_ key: Data) throws -> Data {
     lock.lock()
     defer { lock.unlock() }
-    return try DesktopKeychainReadGate.perform(state: state) {
-      queries += 1
-      if denied { throw DesktopCredentialError.permissionRequired }
-      return key
-    }
+    return try DesktopKeychainReadGate.read(
+      findTarget: { "synthetic-item" }, state: { _ in self.state },
+      query: { _ in
+        self.queries += 1
+        if let stateAfterQuery = self.stateAfterQuery { self.state = stateAfterQuery }
+        if self.denied { throw DesktopCredentialError.permissionRequired }
+        return (self.queryStatus, key)
+      })
   }
 
   var queryCount: Int {
@@ -178,8 +189,38 @@ struct DesktopCredentialReaderTests {
     #expect(await reader.lastFailureStage == nil)
   }
 
-  @Test(arguments: [401, 403])
-  func unlockCannotClearProviderAuthenticationRefusal(status: Int) async throws {
+  @Test func queryTimeKeychainLockRecoversWithoutReapprovalOrGenerationChange() async throws {
+    let fixture = try ReaderFixture()
+    let key = fixture.key
+    let keychain = SyntheticReaderKeychain()
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory, keyReader: { try keychain.read(key) })
+    await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    var first: DesktopCredentialLease? = try await reader.load(now: readerNow)
+    let context = try #require(first).context
+    weak var released = first
+    first = nil
+    keychain.set(.unlocked, queryStatus: errSecInteractionNotAllowed, stateAfterQuery: .locked)
+    for _ in 0..<3 {
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Query-time keychain lock unexpectedly read")
+      } catch { #expect(error as? DesktopCredentialError == .keychainLocked) }
+    }
+    #expect(keychain.queryCount == 2)
+    #expect(released == nil)
+    #expect(await reader.lastFailureStage == .keychain)
+    keychain.set(.unlocked)
+    let restored = try await reader.load(now: readerNow)
+    #expect(restored.context == context)
+    #expect(keychain.queryCount == 3)
+    #expect(await reader.lastFailureStage == nil)
+  }
+
+  @Test(arguments: [401, 403], [false, true])
+  func unlockCannotClearProviderAuthenticationRefusal(status: Int, racesWithQuery: Bool)
+    async throws
+  {
     let fixture = try ReaderFixture()
     let key = fixture.key
     let keychain = SyntheticReaderKeychain()
@@ -197,7 +238,11 @@ struct DesktopCredentialReaderTests {
       })
     await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     #expect(await service.refresh().observation == nil)
-    keychain.set(.locked)
+    if racesWithQuery {
+      keychain.set(.unlocked, queryStatus: errSecInteractionNotAllowed, stateAfterQuery: .locked)
+    } else {
+      keychain.set(.locked)
+    }
     clock.advance(by: 61)
     let locked = await service.refresh()
     #expect(locked.credentialError == .keychainLocked)
@@ -229,6 +274,53 @@ struct DesktopCredentialReaderTests {
       } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
     }
     #expect(keychain.queryCount == 1)
+  }
+
+  @Test(arguments: [errSecAuthFailed, errSecUserCanceled])
+  func queryTimeRefusalStaysLatchedEvenWithConcurrentLock(status: OSStatus) async throws {
+    let fixture = try ReaderFixture()
+    let key = fixture.key
+    let keychain = SyntheticReaderKeychain()
+    keychain.set(.unlocked, queryStatus: status, stateAfterQuery: .locked)
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory, keyReader: { try keychain.read(key) })
+    await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    do {
+      _ = try await reader.load(now: readerNow)
+      Issue.record("Query-time refusal unexpectedly read")
+    } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
+    #expect(await reader.lastFailureStage == .keychain)
+    for state: DesktopKeychainReadGate.State in [.locked, .unknown, .unlocked] {
+      keychain.set(state)
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Query-time refusal unexpectedly retried")
+      } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
+    }
+    #expect(keychain.queryCount == 1)
+  }
+
+  @Test func ambiguousInteractionFailureStaysLatchedWithoutTargetLockEvidence() async throws {
+    for observedState: DesktopKeychainReadGate.State in [.unknown, .unlocked] {
+      let fixture = try ReaderFixture()
+      let key = fixture.key
+      let keychain = SyntheticReaderKeychain()
+      keychain.set(
+        .unlocked, queryStatus: errSecInteractionNotAllowed, stateAfterQuery: observedState)
+      let reader = DesktopCredentialReader(
+        directory: fixture.directory, keyReader: { try keychain.read(key) })
+      await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Ambiguous interaction failure unexpectedly read")
+      } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
+      keychain.set(.unlocked)
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Ambiguous refusal unexpectedly retried")
+      } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
+      #expect(keychain.queryCount == 1)
+    }
   }
 
   @Test(arguments: [401, 403])
@@ -324,7 +416,7 @@ struct DesktopCredentialReaderTests {
     #expect(count.count > readCount)
   }
 
-  @Test func reapprovalNeverRevalidatesAnOldLeaseObject() async throws {
+  @Test func reapprovalRevalidatesContextWithoutReusingAnOldLeaseObject() async throws {
     let fixture = try ReaderFixture()
     let reader = fixture.reader()
     let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
@@ -333,7 +425,7 @@ struct DesktopCredentialReaderTests {
     await reader.setApproval(DesktopAccessApproval())
     #expect(await reader.currentContext(for: original, now: readerNow) == nil)
     await reader.setApproval(approval)
-    #expect(await reader.currentContext(for: original, now: readerNow) == nil)
+    #expect(await reader.currentContext(for: original, now: readerNow) == original.context)
     let reacquired = try await reader.load(now: readerNow)
     #expect(reacquired !== original)
     #expect(reacquired.context.generation == original.context.generation)
@@ -348,22 +440,25 @@ struct DesktopCredentialReaderTests {
     let second = try await reader.load(now: readerNow)
     #expect(first === second)
     try fixture.write(token: "synthetic-renewed-token")
+    let current = await reader.currentContext(for: first, now: readerNow)
     let renewed = try await reader.load(now: readerNow)
     #expect(renewed.context.generation != first.context.generation)
-    #expect(await reader.currentContext(for: first, now: readerNow) == nil)
+    #expect(current == renewed.context)
+    #expect(current != first.context)
     #expect(await reader.currentContext(for: renewed, now: readerNow) == renewed.context)
   }
 
-  @Test func unrelatedWriteRejectsInFlightButDoesNotBypassAuthenticationBlock() async throws {
+  @Test func unrelatedWritePreservesCurrentContextAndCredentialGeneration() async throws {
     let fixture = try ReaderFixture()
     let reader = fixture.reader()
     await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     let first = try await reader.load(now: readerNow)
     try fixture.write(extra: true)
+    #expect(await reader.currentContext(for: first, now: readerNow) == first.context)
     let changed = try await reader.load(now: readerNow)
     #expect(changed !== first)
     #expect(changed.context.generation == first.context.generation)
-    #expect(await reader.currentContext(for: first, now: readerNow) == nil)
+    #expect(await reader.currentContext(for: first, now: readerNow) == changed.context)
   }
 
   @Test func v2DeletionDoesNotResurrectLegacyCredential() async throws {
@@ -439,7 +534,10 @@ struct DesktopCredentialReaderTests {
     await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
     let first = try await reader.load(now: readerNow)
     try fixture.write(account: "33333333-3333-4333-8333-333333333333")
+    let current = await reader.currentContext(for: first, now: readerNow)
     let alternate = try await reader.load(now: readerNow)
+    #expect(current == alternate.context)
+    #expect(current != first.context)
     try fixture.write()
     let returned = try await reader.load(now: readerNow)
     #expect(first.context.owner != alternate.context.owner)

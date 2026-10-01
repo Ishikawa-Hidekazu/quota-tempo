@@ -44,7 +44,7 @@ enum DesktopPreviewPresentation {
   ) -> DesktopUsageObservation? {
     guard result.credentialError == nil, validDate(now) else { return nil }
     switch result.state {
-    case .current, .requesting, .rateLimited, .temporaryFailure, .timedOut,
+    case .current, .contextChanged, .requesting, .rateLimited, .temporaryFailure, .timedOut,
       .invalidResponse:
       break
     default:

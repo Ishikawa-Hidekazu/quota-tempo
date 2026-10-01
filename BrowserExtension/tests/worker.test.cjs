@@ -116,7 +116,7 @@ function harness({ nativeHandler } = {}) {
     listener.alarm({ name: "quotaTempoPoll" });
   };
   const fireDueAlarm = () => {
-    stored.nextAt = WorkerDate.now();
+    now = Math.max(WorkerDate.now(), stored.inFlight?.expiresAt ?? stored.nextAt ?? 0);
     fireAlarm();
   };
   const reload = ({ keepAlarm = false } = {}) => {
@@ -136,6 +136,7 @@ function harness({ nativeHandler } = {}) {
       stored = structuredClone(snapshot);
     },
     advanceTo: timestamp => { now = timestamp; },
+    get now() { return WorkerDate.now(); },
     get alarm() { return activeAlarm; },
     get stored() { return structuredClone(stored); } };
 }
@@ -1295,8 +1296,8 @@ test("expired or forged completion times cannot deliver late usage", async () =>
   assert.notEqual(freshID, oldID);
   assert.equal((await h.message({ type: "observation", requestID: oldID,
     observedAt: new Date().toISOString(), result: h.result(HASH_A) }, h.content(7))).accepted, false);
-  await new Promise(resolve => setTimeout(resolve, 10));
-  const completedAt = new Date(Date.now() - 1).toISOString();
+  const completedAt = new Date(h.now).toISOString();
+  h.advanceTo(h.now + 10);
   await h.observe(h.result(HASH_A), 7, completedAt);
   assert.equal(h.native[2].observedAt, completedAt);
 });
@@ -1322,16 +1323,14 @@ test("missing content replies back off to a bounded hour without retaining an in
   const h = harness();
   await h.message({ type: "connect" });
   for (const minutes of [5, 10, 20, 40, 60, 60]) {
-    h.editStored(value => { value.inFlight.expiresAt = Date.now() - 1; });
-    const before = Date.now();
+    const expiredAt = h.stored.inFlight.expiresAt;
     h.fireDueAlarm();
     await h.flush();
     assert.equal(h.stored.inFlight, null);
     assert.equal(h.stored.lastFailureStage, "responseTimeout");
     assert.equal(h.native.at(-1).status, "unavailable");
     assert.equal(h.native.at(-1).weekly, null);
-    assert.ok(h.stored.nextAt >= before + minutes * 60_000);
-    assert.ok(h.stored.nextAt <= Date.now() + minutes * 60_000);
+    assert.equal(h.stored.nextAt, expiredAt + minutes * 60_000);
     h.fireDueAlarm();
     await h.flush();
   }
@@ -1343,6 +1342,7 @@ test("startup preserves the generation and pin and waits for an existing tab", a
   await h.observe(h.result(HASH_A));
   const generation = h.stored.connectionID;
   h.tabs.splice(0);
+  h.advanceTo(h.stored.nextAt);
   h.listener.startup();
   await h.flush();
   assert.equal(h.stored.enabled, true);
@@ -1352,6 +1352,10 @@ test("startup preserves the generation and pin and waits for an existing tab", a
   assert.equal(h.native.length, 2);
   h.tabs.push({ id: 8, url: URL_ON_TAB, active: true });
   h.listener.updated(8, { status: "complete" }, h.tabs[0]);
+  await h.flush();
+  assert.equal(h.stored.inFlight, null);
+  assert.equal(h.requests.length, 1);
+  h.fireDueAlarm();
   await h.flush();
   assert.equal(h.stored.inFlight.tabID, 8);
   await h.observe(h.result(HASH_A), 8);
@@ -1364,9 +1368,10 @@ test("recovery tab events cannot skip timeout diagnosis or retry backoff", async
   const h = harness();
   await h.message({ type: "connect" });
   await h.observe(h.result(HASH_A));
+  h.advanceTo(h.stored.nextAt);
   h.listener.startup();
   await h.flush();
-  h.editStored(value => { value.inFlight.expiresAt = Date.now() - 1; });
+  h.advanceTo(h.stored.inFlight.expiresAt);
   h.listener.updated(7, { status: "complete" }, h.tabs[0]);
   await h.flush();
   const deadline = h.stored.nextAt;
@@ -1428,6 +1433,7 @@ test("restored tab with a different account revokes without replacing the pin", 
   const h = harness();
   await h.message({ type: "connect" });
   await h.observe(h.result(HASH_A));
+  h.advanceTo(h.stored.nextAt);
   h.listener.startup();
   await h.flush();
   await h.observe(h.result(HASH_B));
@@ -1450,4 +1456,159 @@ test("429 backs off at least 15 minutes and Disconnect sends a value-free envelo
   assert.equal(h.stored.nextAt, null);
   assert.equal(h.native[2].status, "disconnected");
   assert.equal(h.native[2].weekly, null);
+});
+
+test("reconnect and consent toggles preserve provider polling deadlines", async t => {
+  const start = Date.parse("2026-10-01T00:00:00.000Z");
+  for (const status of ["ok", "rateLimited", "unavailable"]) {
+    for (const toggleConsent of [false, true]) {
+      await t.test(`${status}: ${toggleConsent ? "Disconnect/Connect" : "Reconnect"}`, async () => {
+        const h = harness();
+        h.advanceTo(start);
+        await h.message({ type: "connect" });
+        await h.observe(status === "ok" ? h.result(HASH_A) : { status });
+        const original = h.stored;
+        const deadline = start + (status === "rateLimited" ? 900_000 : 300_000);
+        assert.equal(original.nextAt, deadline);
+        h.advanceTo(start + 1_000);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (toggleConsent) {
+            await h.message({ type: "disconnect" });
+            assert.equal(h.stored.enabled, false);
+            assert.equal(h.stored.nextAt, null);
+            assert.equal(h.alarm, undefined);
+            h.reload();
+            h.listener.startup();
+            h.fireAlarm();
+            await h.flush();
+            assert.equal(h.alarm, undefined);
+          }
+          await h.message({ type: toggleConsent ? "connect" : "reconnect" });
+          assert.equal(h.stored.enabled, true);
+          assert.notEqual(h.stored.connectionID, original.connectionID);
+          assert.equal(h.stored.pin, null);
+          assert.equal(h.requests.length, 1);
+          assert.equal(h.scripts.length, 1);
+          assert.equal(h.stored.inFlight, null);
+          assert.equal(h.stored.pollNotBefore, deadline);
+          assert.equal(h.stored.nextAt, deadline);
+          assert.equal(h.alarm.scheduledTime, deadline);
+          for (const message of h.native.slice(2)) {
+            assert.ok(["connected", "disconnected"].includes(message.status));
+            for (const key of ["weekly", "fiveHour", "accountFingerprint", "organizationFingerprint", "principalFingerprint"]) {
+              assert.equal(message[key], null);
+            }
+            assert.equal(Object.hasOwn(message, "pollNotBefore"), false);
+          }
+        }
+        h.advanceTo(deadline - 1);
+        h.reload();
+        h.listener.startup();
+        h.listener.updated(7, { status: "complete" }, h.tabs[0]);
+        h.fireAlarm();
+        await h.flush();
+        assert.equal(h.requests.length, 1);
+        assert.equal(h.stored.nextAt, deadline);
+        assert.equal(h.alarm.scheduledTime, deadline);
+        h.advanceTo(deadline);
+        h.fireAlarm();
+        await h.flush();
+        assert.equal(h.requests.length, 2);
+        await h.observe(h.result(HASH_B));
+        assert.equal(h.stored.pin.accountFingerprint, HASH_B);
+        assert.equal(h.stored.nextAt, deadline + 300_000);
+        for (const snapshot of h.writes) {
+          assert.equal(Object.hasOwn(snapshot, "weekly"), false);
+          assert.equal(Object.hasOwn(snapshot, "fiveHour"), false);
+        }
+      });
+    }
+  }
+});
+
+test("a persisted provider deadline beyond local backoff survives consent, reconnect and clock rollback", async () => {
+  const start = Date.parse("2026-10-01T00:00:00.000Z");
+  const deadline = start + 24 * 60 * 60 * 1000;
+  const h = harness();
+  h.advanceTo(start);
+  await h.message({ type: "connect" });
+  await h.observe({ status: "rateLimited" });
+  // Legacy storage contains only nextAt; do not clamp a valid provider minimum to MAX_BACKOFF.
+  h.editStored(value => { delete value.pollNotBefore; value.nextAt = deadline; });
+  h.reload();
+  await h.flush();
+  h.advanceTo(start - 60_000);
+  await h.message({ type: "disconnect" });
+  assert.equal(h.stored.pollNotBefore, deadline);
+  assert.equal(h.alarm, undefined);
+  h.reload();
+  await h.message({ type: "connect" });
+  await h.message({ type: "reconnect" });
+  assert.equal(h.stored.nextAt, deadline);
+  assert.equal(h.alarm.scheduledTime, deadline);
+  assert.equal(h.requests.length, 1);
+  h.advanceTo(deadline - 1);
+  h.fireAlarm();
+  await h.flush();
+  assert.equal(h.requests.length, 1);
+  h.advanceTo(deadline);
+  h.fireAlarm();
+  await h.flush();
+  assert.equal(h.requests.length, 2);
+});
+
+test("failed disconnect and Connect ACKs cannot erase provider backoff", async () => {
+  const h = harness();
+  const start = Date.parse("2026-10-01T00:00:00.000Z");
+  h.advanceTo(start);
+  await h.message({ type: "connect" });
+  await h.observe({ status: "rateLimited" });
+  const deadline = h.stored.nextAt;
+  h.acks.push({ ok: false, error: "unavailable" });
+  await h.message({ type: "reconnect" });
+  assert.equal(h.stored.pendingDisconnect, true);
+  const disconnected = h.native.at(-1);
+  h.reload();
+  h.acks.push({ ok: true }, { ok: false, error: "unavailable" });
+  await h.message({ type: "connect" });
+  assert.deepEqual(h.native.at(-2), disconnected);
+  assert.equal(h.stored.pendingConnect, true);
+  assert.equal(h.alarm, undefined);
+  h.reload();
+  h.advanceTo(start + 1_000);
+  await h.message({ type: "connect" });
+  assert.equal(h.stored.pendingConnect, false);
+  assert.equal(h.stored.nextAt, deadline);
+  assert.equal(h.stored.pollNotBefore, deadline);
+  assert.equal(h.alarm.scheduledTime, deadline);
+  assert.equal(h.requests.length, 1);
+});
+
+test("startup and tab recovery cannot shorten the successful five-minute poll interval", async () => {
+  const h = await connectedHarness();
+  const original = h.stored;
+  const deadline = original.nextAt;
+  h.advanceTo(deadline - 1);
+  h.listener.startup();
+  h.tabs.splice(0);
+  h.listener.removed(7);
+  await h.flush();
+  h.tabs.push({ id: 8, url: URL_ON_TAB, active: true });
+  h.listener.updated(8, { status: "complete" }, h.tabs[0]);
+  h.fireAlarm();
+  await h.flush();
+  assert.equal(h.stored.nextAt, deadline);
+  assert.equal(h.alarm.scheduledTime, deadline);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.native.length, 2);
+  assert.deepEqual(h.stored.pin, original.pin);
+  assert.equal(h.stored.connectionID, original.connectionID);
+  h.advanceTo(deadline);
+  h.fireAlarm();
+  await h.flush();
+  assert.equal(h.stored.inFlight.tabID, 8);
+  assert.equal(h.requests.length, 2);
+  await h.observe(h.result(HASH_A), 8);
+  assert.equal(h.stored.status, "ok");
+  assert.equal(h.stored.connectionID, original.connectionID);
 });

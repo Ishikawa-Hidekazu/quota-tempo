@@ -34,23 +34,38 @@ enum DesktopUsagePayloadDecoder {
       throw DesktopUsagePayloadError.invalidPayload
     }
 
-    let weekly = try self.window(
-      payload.weekly, observedAt: observedAt, duration: 604_800, maximumFuture: 691_200)
-    let fiveHour = try payload.fiveHour.map {
-      try self.window($0, observedAt: observedAt, duration: 18_000, maximumFuture: 21_600)
+    guard
+      let weekly = try self.window(
+        payload.weekly, observedAt: observedAt, duration: 604_800, maximumFuture: 691_200)
+    else { throw DesktopUsagePayloadError.invalidWindow }
+    let fiveHour = try payload.fiveHour.flatMap {
+      try self.window(
+        $0, observedAt: observedAt, duration: 18_000, maximumFuture: 21_600, optional: true)
     }
     return DesktopUsageValues(weekly: weekly, fiveHour: fiveHour)
   }
 
   private static func window(
-    _ input: Window, observedAt: Date, duration: TimeInterval, maximumFuture: TimeInterval
-  ) throws -> QuotaWindow {
-    guard input.utilization.isFinite, (0...100).contains(input.utilization),
-      let resetAt = self.parseReset(input.resetsAt),
+    _ input: Window, observedAt: Date, duration: TimeInterval, maximumFuture: TimeInterval,
+    optional: Bool = false
+  ) throws -> QuotaWindow? {
+    guard input.utilization.isFinite, (0...100).contains(input.utilization) else {
+      throw DesktopUsagePayloadError.invalidWindow
+    }
+    guard let reset = input.resetsAt else {
+      if optional { return nil }
+      throw DesktopUsagePayloadError.invalidWindow
+    }
+    guard let resetAt = self.parseReset(reset),
       resetAt.timeIntervalSince1970.isFinite, resetAt.timeIntervalSince1970 > 0
     else { throw DesktopUsagePayloadError.invalidWindow }
     let remainingTime = resetAt.timeIntervalSince(observedAt)
-    guard remainingTime.isFinite, remainingTime > 0, remainingTime <= maximumFuture else {
+    guard remainingTime.isFinite, remainingTime <= maximumFuture else {
+      throw DesktopUsagePayloadError.invalidWindow
+    }
+    // Omit only validated inactive optional windows; never infer a replacement reset.
+    guard remainingTime > 0 else {
+      if optional { return nil }
       throw DesktopUsagePayloadError.invalidWindow
     }
     return QuotaWindow(
@@ -100,11 +115,18 @@ enum DesktopUsagePayloadDecoder {
 
   private struct Window: Decodable {
     let utilization: Double
-    let resetsAt: String
+    let resetsAt: String?
 
     enum CodingKeys: String, CodingKey {
       case utilization
       case resetsAt = "resets_at"
+    }
+
+    init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      self.utilization = try container.decode(Double.self, forKey: .utilization)
+      // An explicit null is distinguishable from a malformed missing reset key.
+      self.resetsAt = try container.decode(String?.self, forKey: .resetsAt)
     }
   }
 }

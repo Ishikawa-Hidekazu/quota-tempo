@@ -87,7 +87,7 @@
     return new Date(parsed).toISOString();
   }
 
-  function windowValue(row, nowMs, maximumMs) {
+  function windowValue(row, nowMs, maximumMs, optional) {
     if (!row || typeof row !== "object" || Array.isArray(row)) {
       throw new ObservationError("unavailable");
     }
@@ -99,20 +99,23 @@
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100) {
       throw new ObservationError("unavailable");
     }
-    return { remainingPercent: 100 - raw, resetAt: resetAt(row.resets_at, nowMs, maximumMs) };
+    return {
+      remainingPercent: 100 - raw,
+      resetAt: optional && row.resets_at === null ? null : resetAt(row.resets_at, nowMs, maximumMs)
+    };
   }
 
   function mergedWindow(legacy, limits, nowMs, maximumMs, optional = false) {
     if (limits.length > 1) throw new ObservationError("unavailable");
-    const oldWindow = legacy == null ? null : windowValue(legacy, nowMs, maximumMs);
-    const newWindow = limits.length === 0 ? null : windowValue(limits[0], nowMs, maximumMs);
+    const oldWindow = legacy == null ? null : windowValue(legacy, nowMs, maximumMs, optional);
+    const newWindow = limits.length === 0 ? null : windowValue(limits[0], nowMs, maximumMs, optional);
     if (oldWindow && newWindow
       && (oldWindow.remainingPercent !== newWindow.remainingPercent || oldWindow.resetAt !== newWindow.resetAt)) {
       throw new ObservationError("unavailable");
     }
     const window = oldWindow ?? newWindow;
-    // Validate both schemas before omitting an elapsed optional window. Never extend its reset.
-    if (window && Date.parse(window.resetAt) <= nowMs) {
+    // Validate both schemas before omitting an inactive optional window. Never infer its reset.
+    if (window && (window.resetAt === null || Date.parse(window.resetAt) <= nowMs)) {
       if (optional) return null;
       throw new ObservationError("unavailable");
     }

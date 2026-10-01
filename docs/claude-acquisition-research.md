@@ -934,6 +934,78 @@ changed. After this correction, the local full suite again passed all 549 tests
 in 22 suites and strict formatting passed. The earlier local PASS did not imply
 CI compatibility; the corrected head still needs its own successful CI result.
 
+#### Independent-review rework checkpoint, October 1
+
+The independent review of `27d14a9` classified the candidate as **REWORK** and
+the public release as **NOT_READY**. The existing preview was left running;
+neither its signed executable nor the installed public app was replaced during
+this checkpoint. The validation build below is a separate, unexecuted output.
+
+The reported blank preview coincided with repeated value-free diagnostic stages
+`profileReceived`, `usageReceived`, and `usagePayloadInvalid`. This establishes
+a payload-validation failure, not a login failure. It does **not** establish
+which field in the live response failed: response bodies and protected source
+contents were not inspected. H1 below is a reproduced defect and a plausible
+explanation, not yet a confirmed diagnosis of the live failure.
+
+| Review item | Changes and evidence | Remaining boundary |
+| --- | --- | --- |
+| H1, optional five-hour window | A finite, valid usage value with an explicit null or already elapsed reset omits that window only. Weekly validation stays strict. Desktop and browser fixtures cover null, elapsed, malformed, conflicting and duplicated fields. | The live blank display has not been retested with this build. Missing reset keys and malformed values still fail validation. |
+| M1, temporary read failures and renewal | Prior values are quarantined while identity is unavailable, then restored only after owner, context, expiry and freshness checks. Metadata-only rewrites no longer fail on lease object identity. Same-owner renewal removes only the successful five-minute wait, retaining the one-minute attempt floor and failure/provider waits. | Unknown owners are never displayed. A response from an actually changed context remains rejected. |
+| M2, clock skew | Transport and coordinator allow five seconds in either direction. Accepted capture time is the earlier of server and local completion time. | Larger skew, replay, cached responses and elapsed resets still fail. |
+| M3, diagnostics | Fixed, value-free codes now distinguish missing/malformed Date, positive/invalid Age, old/future Date, clock failure and payload validation categories. | The earlier intermittent metadata failures are not diagnosed by synthetic tests. |
+| M4, extreme Retry-After | The existing service deadline is still honored. | Open: an excessive deadline needs an explicit safe-stop/recovery policy before persistence. It is not silently truncated to retry earlier. |
+| M5, Keychain classification | Reference discovery and the protected query select the same item and its owning Keychain. An interaction-not-allowed result is treated as a lock only with immediate lock evidence for that Keychain. Authentication failure/cancellation remain refusals. Synthetic tests cover lock races and preserved 401/403 refusals. | Discovery failures before an owning Keychain is known remain conservative refusals. Alternate-Keychain and actual lock/unlock acceptance are unverified. |
+| M6, Desktop restart state | Unchanged. | Open: last attempt, provider deadline and refusal state are still in memory only. |
+| Browser reconnect | A metadata-only polling deadline survives reconnect, consent OFF/ON and worker restart. Disconnect stops alarms. Synthetic clock tests cover ordinary cadence, 429, ACK failure and clock rollback. | Browser protocol still does not forward the provider Retry-After header; this fix preserves its existing computed waits, not an unimplemented header contract. |
+| Codex restriction | A subsequent failed acquisition no longer changes an existing provider restriction into an ordinary failure. A successful observation is still required to resolve it. | Synthetic coverage is not a new live provider-restriction test. |
+| Privacy | `PRIVACY.md` now distinguishes the released local/CLI path from the isolated Desktop experiment and describes protected reads, consent, no raw diagnostic data and pending persistence. | Product integration still needs its final user-facing contract. |
+
+An additional independent source review found that recovery from quarantine
+could erase an unresolved acquisition error without performing a new request.
+The regression failed before the fix for 429, 500 and invalid-200 responses.
+Suspension now retains the preceding state even through repeated local failures;
+identity recovery restores that state, not a fabricated success. The new cases
+also check the original observation timestamp, unchanged wait and HTTP count.
+The follow-up source review found no further required finding in this patch.
+
+The prior Keychain checkpoint describes the implementation at that time. Its
+default-Keychain preflight and refusal handling are superseded by M5 above.
+No Keychain was locked/unlocked, ACL changed, or new permission dialog requested
+for this checkpoint. Legacy Keychain deprecation warnings remain.
+
+Retry-After is a minimum service wait, not permission to retry at a client-chosen
+cap; see [RFC 9110, section 10.2.3](https://www.rfc-editor.org/rfc/rfc9110.html#name-retry-after).
+A future bounded-storage design must distinguish an unsupported deadline from a
+normal wait and stop automatically rather than evade a provider restriction.
+
+| Check | Result |
+| --- | --- |
+| Full Swift suite | PASS, 577 tests / 22 suites |
+| Same suite with outbound network denied | PASS, 577 tests / 22 suites |
+| Browser extension fixtures | PASS, 229 tests |
+| Browser installer fixtures | PASS, 81 tests with isolated synthetic HOME |
+| Native-host integration fixtures | PASS, 7 tests |
+| Strict Swift formatting | PASS |
+| Candidate dependency isolation | PASS, manifest and four intentional leak fixtures |
+| Release and distribution policies | PASS |
+| Validation-only helper compilation and inert arguments | PASS, 17 cases; no authorized provider mode executed |
+| Bundle verification | PASS; launch, window and provider-trigger tests explicitly skipped; temporary bundles removed |
+| Live revised helper, real renewal, sleep/wake, rollover and second Mac | NOT RUN |
+
+These results are not release approval. Outstanding work includes M4/M6,
+explicit application-side disconnect when the extension disappears, consent and
+reapproval UI, acquisition priority, owner-aware persistence, and signed-package
+installation/update/removal QA. The review's lower-priority fingerprint
+description, diagnostic-mode consent and account-transition concerns remain
+open unless separately evidenced. Provider permission remains unconfirmed; no
+inquiry was sent or permission represented as obtained.
+
+The next live step is a supervised replacement of **only** the isolated preview,
+preserving its signing identity and any currently known not-before deadline.
+Until that step and new acceptance evidence, the visible running preview must
+not be described as fixed. No new branch or worktree was created for this rework.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before
