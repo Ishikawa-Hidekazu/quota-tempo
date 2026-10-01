@@ -118,8 +118,119 @@ private final class ReaderClock: @unchecked Sendable {
   }
 }
 
+private final class SyntheticReaderKeychain: @unchecked Sendable {
+  private let lock = NSLock()
+  private var state = DesktopKeychainReadGate.State.unlocked
+  private var denied = false
+  private var queries = 0
+
+  func set(_ state: DesktopKeychainReadGate.State, denied: Bool = false) {
+    lock.lock()
+    defer { lock.unlock() }
+    self.state = state
+    self.denied = denied
+  }
+
+  func read(_ key: Data) throws -> Data {
+    lock.lock()
+    defer { lock.unlock() }
+    return try DesktopKeychainReadGate.perform(state: state) {
+      queries += 1
+      if denied { throw DesktopCredentialError.permissionRequired }
+      return key
+    }
+  }
+
+  var queryCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return queries
+  }
+}
+
 @Suite("Desktop protected reader synthetic integration")
 struct DesktopCredentialReaderTests {
+  @Test func temporaryKeychainLockRecoversWithoutReapprovalOrGenerationChange() async throws {
+    let fixture = try ReaderFixture()
+    let key = fixture.key
+    let keychain = SyntheticReaderKeychain()
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory, keyReader: { try keychain.read(key) })
+    await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    var first: DesktopCredentialLease? = try await reader.load(now: readerNow)
+    let context = try #require(first).context
+    weak let released = first
+    first = nil
+    keychain.set(.locked)
+    for _ in 0..<3 {
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Locked keychain unexpectedly read")
+      } catch { #expect(error as? DesktopCredentialError == .keychainLocked) }
+    }
+    #expect(keychain.queryCount == 1)
+    #expect(released == nil)
+    #expect(await reader.lastFailureStage == .keychain)
+    keychain.set(.unlocked)
+    let restored = try await reader.load(now: readerNow)
+    #expect(restored.context == context)
+    #expect(keychain.queryCount == 2)
+    #expect(await reader.lastFailureStage == nil)
+  }
+
+  @Test(arguments: [401, 403])
+  func unlockCannotClearProviderAuthenticationRefusal(status: Int) async throws {
+    let fixture = try ReaderFixture()
+    let key = fixture.key
+    let keychain = SyntheticReaderKeychain()
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory, keyReader: { try keychain.read(key) })
+    let clock = ReaderClock()
+    let calls = ReaderCounter()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() },
+      fetch: { _, _ in
+        calls.increment()
+        return .response(
+          status: status, profileOwner: nil, serverDate: nil, cacheAge: nil, retryAfter: nil,
+          body: Data())
+      })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    #expect(await service.refresh().observation == nil)
+    keychain.set(.locked)
+    clock.advance(by: 61)
+    let locked = await service.refresh()
+    #expect(locked.credentialError == .keychainLocked)
+    #expect(locked.observation == nil)
+    #expect(calls.count == 1)
+    keychain.set(.unlocked)
+    clock.advance(by: 61)
+    let restored = await service.refresh()
+    #expect(restored.credentialError == nil)
+    #expect(restored.observation == nil)
+    #expect(restored.state == (status == 401 ? .waitingForDesktopRenewal : .accessDenied))
+    #expect(calls.count == 1)
+  }
+
+  @Test func actualKeychainDenialIsNotRetriedAfterLockAndUnlock() async throws {
+    let fixture = try ReaderFixture()
+    let key = fixture.key
+    let keychain = SyntheticReaderKeychain()
+    keychain.set(.unlocked, denied: true)
+    let reader = DesktopCredentialReader(
+      directory: fixture.directory, keyReader: { try keychain.read(key) })
+    await reader.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    _ = try? await reader.load(now: readerNow)
+    for state: DesktopKeychainReadGate.State in [.locked, .unknown, .unlocked] {
+      keychain.set(state)
+      do {
+        _ = try await reader.load(now: readerNow)
+        Issue.record("Refused access unexpectedly retried")
+      } catch { #expect(error as? DesktopCredentialError == .permissionRequired) }
+    }
+    #expect(keychain.queryCount == 1)
+  }
+
   @Test(arguments: [401, 403])
   func approvalChangesDoNotRenewRefusedCredentials(status: Int) async throws {
     let fixture = try ReaderFixture()

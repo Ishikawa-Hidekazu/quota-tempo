@@ -7,6 +7,21 @@ enum DesktopSafeStorage {
   static let maximumCacheBytes = 1_048_576
 
   static func readKeyWithoutInteraction() throws -> Data {
+    try DesktopKeychainReadGate.perform(state: defaultKeychainState()) {
+      try readUnlockedKeyWithoutInteraction()
+    }
+  }
+
+  private static func defaultKeychainState() -> DesktopKeychainReadGate.State {
+    var keychain: SecKeychain?
+    var status: SecKeychainStatus = 0
+    guard SecKeychainCopyDefault(&keychain) == errSecSuccess,
+      let keychain, SecKeychainGetStatus(keychain, &status) == errSecSuccess
+    else { return .unknown }
+    return status & SecKeychainStatus(kSecUnlockStateStatus) == 0 ? .locked : .unlocked
+  }
+
+  private static func readUnlockedKeyWithoutInteraction() throws -> Data {
     let context = LAContext()
     context.interactionNotAllowed = true
     let query: [String: Any] = [
@@ -98,6 +113,20 @@ enum DesktopSafeStorage {
     }
     output.count = count
     return output
+  }
+}
+
+enum DesktopKeychainReadGate {
+  enum State { case locked, unlocked, unknown }
+
+  // A known lock is checked before the protected query, not inferred from an
+  // ambiguous query failure. Actual ACL failures retain the refusal latch.
+  static func perform<T>(state: State, operation: () throws -> T) throws -> T {
+    switch state {
+    case .locked: throw DesktopCredentialError.keychainLocked
+    case .unknown: throw DesktopCredentialError.unavailable
+    case .unlocked: return try operation()
+    }
   }
 }
 

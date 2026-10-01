@@ -848,6 +848,83 @@ six native-menu tests. No public release, installed-app replacement, provider
 request, credential renewal or interactive permission request occurred during
 this incident fix.
 
+#### Continued observation and lifecycle hardening, October 1
+
+The native-menu build remained running while the next changes were developed.
+Metadata-only inspection found four distinct accepted Desktop captures at
+**00:15:31**, **00:20:38**, **00:26:46**, and **00:31:54 UTC**. Each had a current observation
+with planning available. This is sustained post-host-change retrieval evidence,
+not proof of natural rollover, renewal or restart recovery. The normal-preview
+log does not identify manual/wake/timer triggers, so these records alone are not
+an exclusively timer-origin acceptance test. No browser/CLI action or manual
+refresh was performed by the agent.
+
+The next isolated patch addresses two known lifecycle weaknesses:
+
+- A metadata-only default-keychain preflight distinguishes a **known locked**
+  keychain from an actual access refusal. A known lock returns `keychainLocked`
+  before any protected item query; unknown status also skips that query.
+  Normal polling may recheck availability without a permission dialog. Once
+  unlocked, the usual prompt-suppressed query runs, and actual query refusals
+  still latch. A lock/unlock cycle cannot clear a 401/403 generation refusal.
+- Preview termination now has an independently scheduled three-second deadline
+  and a single exit decision. Duplicate Quit requests cannot start duplicate
+  cleanup. A timeout requests exit before cancelling cleanup because a task
+  cancellation handler can itself block. Normal cleanup cancels its deadline.
+
+Apple documents [keychain status inspection](https://developer.apple.com/documentation/security/seckeychaingetstatus(_:_:))
+and the [unlocked status bit](https://developer.apple.com/documentation/security/ksecunlockstatestatus).
+It also warns that lock state can change after inspection. Therefore a lock
+racing with the actual query is **not** retroactively classified as harmless;
+ambiguous query failures retain the conservative permission refusal. This patch
+does not claim coverage for every alternate-keychain configuration. It does not
+unlock a keychain, change an ACL, relax accessibility or request a new dialog.
+The legacy macOS APIs still emit deprecation warnings.
+
+Synthetic tests cover known lock/unknown-state query suppression, recovery
+without reapproval, discarded leases, preserved credential generation, and
+unchanged access/provider refusals. No real keychain was locked or unlocked for
+QA. Termination tests use fake cleanup, deadlines and exit callbacks; they are
+not a live Quit acceptance result.
+
+The builder now refuses its normal output when that exact helper is running.
+An isolated validation output permits compile and inert argument checks without
+replacing the signed helper used for observation:
+
+```bash
+env DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+  node scripts/build-desktop-candidate-local-probe.mjs --validation-only
+node scripts/test-desktop-local-probe.mjs --validation-only
+```
+
+Checkpoint QA:
+
+| Check | Result |
+| --- | --- |
+| Full Swift test suite | PASS, 549 tests in 22 suites |
+| Same suite with outbound network denied | PASS, 549 tests in 22 suites |
+| Strict Swift formatting | PASS |
+| Desktop candidate dependency isolation and four leak fixtures | PASS |
+| Release and distribution policy checks | PASS |
+| Validation-only helper compilation | PASS, known legacy Keychain deprecation warnings remain |
+| Inert helper arguments | PASS, 17 cases; no authorized provider mode executed |
+| Active-helper build guard | PASS, expected refusal and unchanged live binary hash |
+| Independent review of lock/refusal and validation-output boundaries | No required findings |
+| Working-tree whitespace check | PASS |
+
+The synthetic termination cases include duplicate requests, cleanup blocking on
+the main actor, a blocking cancellation handler, timeout/completion races, and
+controller deallocation. An initial focused test invocation omitted the runtime
+search path; it was corrected and the focused and full suites passed. These
+checks do not substitute for supervised UI or real authentication lifecycle QA.
+
+The normal-output guard was exercised against the active helper and its binary
+hash remained unchanged. The new lifecycle patch has **not** been installed into
+the running preview or released publicly. Remaining gates include durable
+restart-safe provider backoff/refusal handling, supervised Quit/Escape/outside
+click, real renewal, sleep/wake, natural reset, and a second Mac. In particular,
+this patch must not be presented as solving persistence across process restarts.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before

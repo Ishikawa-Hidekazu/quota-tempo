@@ -6,7 +6,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const binary = `${root}dist/desktop-local-probe/QuotaTempoDesktopLocalProbe`;
+const args = process.argv.slice(2);
+assert.ok(args.length === 0 || (args.length === 1 && args[0] === "--validation-only"));
+const binary = `${root}dist/desktop-local-probe/${args.length ? "validation/" : ""}QuotaTempoDesktopLocalProbe`;
 const required = [
   "--consent-desktop-read-only", "--acknowledge-provider-permission-unconfirmed",
 ];

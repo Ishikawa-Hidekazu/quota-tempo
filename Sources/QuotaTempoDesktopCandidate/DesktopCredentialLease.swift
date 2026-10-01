@@ -5,6 +5,7 @@ enum DesktopCredentialError: Error, Equatable {
   case consentRequired
   case providerApprovalRequired
   case permissionRequired
+  case keychainLocked
   case unavailable
   case unsafePath
   case inputTooLarge

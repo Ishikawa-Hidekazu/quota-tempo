@@ -163,6 +163,7 @@ struct DesktopCandidateLocalProbe {
     case .consentRequired: "consentRequired"
     case .providerApprovalRequired: "providerApprovalRequired"
     case .permissionRequired: "permissionRequired"
+    case .keychainLocked: "keychainLocked"
     case .unavailable: "unavailable"
     case .unsafePath: "unsafePath"
     case .inputTooLarge: "inputTooLarge"

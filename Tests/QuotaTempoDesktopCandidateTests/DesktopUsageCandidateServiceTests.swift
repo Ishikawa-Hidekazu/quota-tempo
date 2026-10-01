@@ -300,7 +300,8 @@ struct DesktopUsageCandidateServiceTests {
 
   @Test func credentialErrorsNeverStartHTTP() async throws {
     for error in [
-      DesktopCredentialError.permissionRequired, .unsafePath, .expired, .ambiguousIdentity,
+      DesktopCredentialError.permissionRequired, .keychainLocked, .unsafePath, .expired,
+      .ambiguousIdentity,
     ] {
       let reader = try SyntheticDesktopReader()
       await reader.fail(error)

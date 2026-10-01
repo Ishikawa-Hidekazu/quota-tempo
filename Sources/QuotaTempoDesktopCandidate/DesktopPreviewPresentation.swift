@@ -83,6 +83,7 @@ enum DesktopPreviewPresentation {
       case .unsafePath: return .unsafePath
       case .inputTooLarge: return .inputTooLarge
       case .invalidStore: return .invalidResponse
+      case .keychainLocked: return .temporaryFailure
       case .consentRequired, .providerApprovalRequired, .permissionRequired, .unavailable,
         .identityUnavailable, .ambiguousIdentity, .changedDuringRead:
         return .sourceUnavailable

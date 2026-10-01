@@ -14,7 +14,9 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
   private var wakeObserver: NSObjectProtocol?
   private var observedDates = Set<Date>()
   private let qa: Bool
-  private var finishing = false
+  private let termination = DesktopPreviewTermination(
+    onTimeout: { print("{\"previewQA\":\"cleanup_deadline_exceeded\"}") },
+    requestExit: { exit($0) })
 
   init(
     service: any DesktopPreviewServing,
@@ -83,21 +85,16 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
   }
 
   private func finish(code: Int32) {
-    guard !finishing else { return }
-    finishing = true
-    previewMenu?.dismiss()
     // A synchronous system Keychain call cannot be cancelled by a Swift task.
     // Do not let an unresponsive reader prevent process termination.
-    Task.detached {
-      try? await Task.sleep(for: .seconds(3))
-      print("{\"previewQA\":\"cleanup_deadline_exceeded\"}")
-      exit(2)
-    }
-    Task {
+    termination.finish(code: code) { @MainActor [weak self, model] in
+      self?.previewMenu?.dismiss()
       await model.stop()
-      if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
-      if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
-      exit(code)
+      guard !Task.isCancelled else { return }
+      if let wakeObserver = self?.wakeObserver {
+        NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+      }
+      if let statusItem = self?.statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
     }
   }
 }

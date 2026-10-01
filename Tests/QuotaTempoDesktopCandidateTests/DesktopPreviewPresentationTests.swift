@@ -257,6 +257,7 @@ struct DesktopPreviewPresentationTests {
     let cases: [(DesktopCredentialError, AcquisitionErrorCode)] = [
       (.consentRequired, .sourceUnavailable), (.providerApprovalRequired, .sourceUnavailable),
       (.permissionRequired, .sourceUnavailable), (.unavailable, .sourceUnavailable),
+      (.keychainLocked, .temporaryFailure),
       (.unsafePath, .unsafePath), (.inputTooLarge, .inputTooLarge),
       (.invalidStore, .invalidResponse),
       (.identityUnavailable, .sourceUnavailable), (.ambiguousIdentity, .sourceUnavailable),

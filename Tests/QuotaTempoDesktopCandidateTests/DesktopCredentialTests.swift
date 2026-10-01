@@ -29,6 +29,36 @@ private func selection(_ entries: [String: Any]) throws -> DesktopSelectedCreden
 
 @Suite("Desktop credential boundary")
 struct DesktopCredentialTests {
+  @Test func keychainGateNeverQueriesKnownLockedOrUnknownStorage() {
+    for (state, error): (DesktopKeychainReadGate.State, DesktopCredentialError) in [
+      (.locked, .keychainLocked), (.unknown, .unavailable),
+    ] {
+      var queried = false
+      #expect(throws: error) {
+        try DesktopKeychainReadGate.perform(state: state) { queried = true }
+      }
+      #expect(!queried)
+    }
+  }
+
+  @Test func keychainGateAllowsOneReadOnlyAfterUnlock() throws {
+    var queried = 0
+    let value = try DesktopKeychainReadGate.perform(state: .unlocked) {
+      queried += 1
+      return "synthetic-only"
+    }
+    #expect(value == "synthetic-only")
+    #expect(queried == 1)
+  }
+
+  @Test func keychainGateDoesNotDowngradeActualAccessDenial() {
+    #expect(throws: DesktopCredentialError.permissionRequired) {
+      try DesktopKeychainReadGate.perform(state: .unlocked) {
+        throw DesktopCredentialError.permissionRequired
+      }
+    }
+  }
+
   @Test func accessRequiresBothApprovals() throws {
     #expect(throws: DesktopCredentialError.consentRequired) {
       try DesktopAccessApproval().requireAccess()
