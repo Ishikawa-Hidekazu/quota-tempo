@@ -697,8 +697,9 @@ installer or updater feed. It does not replace the installed QuotaTempo app.
 The preview adds a separately labelled `QT Desktop` menu-bar item and displays
 only Claude's Desktop-connected observation. It never falls back to a browser
 or CLI. **The first custom-popover build was withdrawn after a user-reported
-interaction failure; the helper is stopped.** The replacement uses a compact
-native `NSMenu`, not the released app's SwiftUI view. See the incident below.
+interaction failure.** The compact native `NSMenu` replacement was subsequently
+started at the owner's explicit request; opening and Close Menu dismissal are
+owner-confirmed. It does not use the released app's SwiftUI view. See below.
 
 A single long-lived service handles startup, a 30-second context/acquisition tick,
 wake and manual refresh. Opening the native menu does not trigger acquisition.
@@ -809,12 +810,18 @@ The mitigation removes that custom host entirely from the local preview:
   Tests dispatch selectors directly without opening a menu, starting AppKit,
   constructing a real acquisition service or reading protected data.
 
-The helper remains stopped and has not been relaunched after this change.
-Actual click, Escape, outside-click, screen-edge positioning and Quit acceptance
-are **pending**, as is post-change live acquisition acceptance. Do not describe
-the preview as interaction-tested, restart it automatically, or promote it to a
-public release on the strength of headless tests. The next UI gate is one
-supervised open/close/Quit check, followed by the separate acquisition gates.
+The helper was held stopped until the owner explicitly requested a restart.
+After the signed replacement started, metadata reported a current Desktop-only
+observation with planning available, captured at **2026-10-01 00:15:31 UTC**.
+The owner supplied a screenshot showing the compact native menu within the
+display and then confirmed that Close Menu dismissed it successfully.
+This verifies opening and explicit menu dismissal on this Mac; it does not
+establish Escape, outside-click, other screen-edge placement, process-level Quit
+or automatic-update acceptance after the host change. At this checkpoint the
+helper is still running, with one distinct post-change successful capture.
+Do not promote it to a public release on this limited evidence. The remaining
+UI gate is Escape/outside-click/Quit, followed by repeated acquisition and the
+existing lifecycle gates.
 
 Post-change validation:
 
@@ -822,12 +829,15 @@ Post-change validation:
 | --- | --- |
 | Full Swift suite | PASS, 537 tests / 21 suites; repeated with network denied |
 | Native menu structural/action tests | PASS, 6 tests; no displayed menu or OS input |
-| Local helper build and designated signature | PASS; not launched in authorized acquisition/preview mode |
+| Local helper build and designated signature | PASS; subsequently launched at explicit owner request |
 | Inert argument validation | PASS, 17 cases, including retired renderer rejection |
 | Strict formatting, whitespace, release/distribution policies | PASS |
 | Product dependency isolation | PASS, actual graph and four leak fixtures |
 | Independent read-only follow-up review | No new actionable hang or permission-expansion finding |
-| Live menu positioning, Escape, outside-click, Quit and post-change acquisition | NOT RUN; preview remains stopped |
+| Live menu opening and placement on the owner's current display | PASS, owner-supplied screenshot |
+| Close Menu action | PASS, owner-confirmed dismissal |
+| Post-change Desktop acquisition | PASS for one current capture with planning available; repeated update not yet verified |
+| Escape, outside-click, other display edges and process-level Quit | NOT RUN |
 
 One isolation-check invocation initially selected an unlicensed Xcode and failed
 before inspecting the package. Repeating it with the existing Command Line Tools
