@@ -17,7 +17,8 @@ public final class DesktopConnectionController: ObservableObject {
     case waitingForNextRefresh, waitingForProvider, renewalRequired, accessDenied
     case sourceUnavailable, temporaryFailure, invalidResponse, invalidClock
     case serviceWaitUnavailable, storageUnavailable, storeInUse, waitingForIdle
-    case repairing, repaired, repairUnsupported, restartRequired
+    case repairing, repaired, repairUnsupported, restartRequired, consentStorageUnavailable
+    case keychainPermissionRequired, requestingKeychainAccess
 
     public var text: String {
       switch self {
@@ -44,6 +45,11 @@ public final class DesktopConnectionController: ObservableObject {
       case .repaired: "Local scheduling state checked; provider limits still apply."
       case .repairUnsupported: "Local scheduling state uses an unsupported version."
       case .restartRequired: "Scheduling storage is still owned; restart is required."
+      case .consentStorageUnavailable:
+        "Connection stopped; consent preference could not be saved or verified."
+      case .keychainPermissionRequired:
+        "macOS permission is needed to access Claude Desktop authentication."
+      case .requestingKeychainAccess: "Waiting for your response to macOS access permission."
       }
     }
   }
@@ -60,6 +66,14 @@ public final class DesktopConnectionController: ObservableObject {
   @Published public private(set) var isConnected = false
   @Published public private(set) var isRefreshing = false
   @Published public private(set) var isRepairing = false
+  @Published public private(set) var consentPersistenceFailed = false
+  @Published public private(set) var isRequestingKeychainAccess = false
+
+  public var canRequestKeychainAccess: Bool {
+    isConnected && !isRepairing && !isRefreshing && !isRequestingKeychainAccess
+      && approvalTask == nil && refreshTask == nil
+      && lastResult?.credentialError == .permissionRequired
+  }
 
   public var statusText: String { status.text }
 
@@ -67,6 +81,9 @@ public final class DesktopConnectionController: ObservableObject {
   private let makeService: @MainActor () throws -> any DesktopConnectionServing
   private let repairStore: @MainActor (Date) throws -> DesktopThrottleRecoveryResult
   private let displayInterval: Duration
+  private let authorizeKeychainAccess: @Sendable () async -> Bool
+  private var consentStore: (any DesktopConnectionConsentStoring)?
+  private var attemptedResume = false
   private var service: (any DesktopConnectionServing)?
   private var serviceApproved = false
   private var generation = UUID()
@@ -75,15 +92,17 @@ public final class DesktopConnectionController: ObservableObject {
   private var refreshID: UUID?
   private var refreshTask: Task<DesktopUsageCandidateResult, Never>?
   private var displayTask: Task<Void, Never>?
+  private var keychainTask: Task<Bool, Never>?
   private var lastResult: DesktopUsageCandidateResult?
 
   /// `directory` is a private scheduling directory, not the credential directory.
   /// Explicit connection may create its last two missing directories below a
   /// validated owner-controlled parent. Initialization opens nothing.
   /// Offline repair of a not-yet-created directory is a no-op.
-  /// Consent is memory-only and must never be restored automatically at launch.
+  /// Without consent preferences, consent remains limited to this process.
   public convenience init(
-    directory: URL, clock: @escaping @Sendable () -> Date = Date.init
+    directory: URL, clock: @escaping @Sendable () -> Date = Date.init,
+    consentDefaults: UserDefaults? = nil
   ) {
     self.init(
       clock: clock,
@@ -104,19 +123,42 @@ public final class DesktopConnectionController: ObservableObject {
           return .notNeeded
         }
         return try DesktopThrottleFileStore.recover(directory: directory, now: now)
-      })
+      },
+      consentStore: consentDefaults.map { DesktopConnectionConsentPreferences(defaults: $0) },
+      authorizeKeychainAccess: { await DesktopKeychainAuthorization.request() })
   }
 
   init(
     clock: @escaping @Sendable () -> Date = Date.init,
     displayInterval: Duration = .seconds(1),
     makeService: @escaping @MainActor () throws -> any DesktopConnectionServing,
-    repairStore: @escaping @MainActor (Date) throws -> DesktopThrottleRecoveryResult
+    repairStore: @escaping @MainActor (Date) throws -> DesktopThrottleRecoveryResult,
+    consentStore: (any DesktopConnectionConsentStoring)? = nil,
+    authorizeKeychainAccess: @escaping @Sendable () async -> Bool = { false }
   ) {
     self.clock = clock
     self.displayInterval = displayInterval
     self.makeService = makeService
     self.repairStore = repairStore
+    self.consentStore = consentStore
+    self.authorizeKeychainAccess = authorizeKeychainAccess
+  }
+
+  /// Called once at app startup, only with acquisition enabled. Restored consent
+  /// uses the normal service/store and cannot shorten an existing provider wait.
+  /// No snapshots, credentials, account identity or approval objects are restored.
+  public func resumeIfConsented(acquisitionAllowed: Bool) async {
+    guard !attemptedResume, !Task.isCancelled else { return }
+    attemptedResume = true
+    guard acquisitionAllowed, !isConnected, let consentStore else { return }
+    do {
+      guard try consentStore.isAccepted() else { return }
+    } catch {
+      consentPersistenceFailed = true
+      status = .consentStorageUnavailable
+      return
+    }
+    await startConnection()
   }
 
   /// Calling with true is the explicit consent action for this local experiment;
@@ -124,14 +166,22 @@ public final class DesktopConnectionController: ObservableObject {
   public func connect(localExperimentAuthorized: Bool) async {
     guard localExperimentAuthorized else {
       await disconnect()
-      if !isConnected { status = .consentRequired }
+      if !isConnected && !consentPersistenceFailed { status = .consentRequired }
       return
     }
     guard !Task.isCancelled, !isConnected else { return }
-    guard !isRepairing, approvalTask == nil, refreshTask == nil else {
+    guard !isRepairing, !isRequestingKeychainAccess, approvalTask == nil, refreshTask == nil else {
       status = .waitingForIdle
       return
     }
+    guard persistConsent(true) else { return }
+    await startConnection()
+  }
+
+  private func startConnection() async {
+    guard !Task.isCancelled, !isConnected, !isRepairing, !isRequestingKeychainAccess,
+      approvalTask == nil, refreshTask == nil
+    else { return }
     generation = UUID()
     let expected = generation
     isConnected = true
@@ -161,24 +211,47 @@ public final class DesktopConnectionController: ObservableObject {
   /// Clears display before the first suspension. A cancelled, non-cooperative
   /// refresh retains its service/lock until it finishes, but cannot publish.
   public func disconnect() async {
+    revokeConsent()
+    await approvalTask?.value
+  }
+
+  /// Synchronous revocation fences queued startup work and clears remembered
+  /// consent before a provider toggle or UI action can return to the event loop.
+  public func revokeConsent() {
+    attemptedResume = true
+    let persisted = persistConsent(false)
     generation = UUID()
     isConnected = false
     serviceApproved = false
     refreshTask?.cancel()
+    keychainTask?.cancel()
     displayTask?.cancel()
     displayTask = nil
     isRefreshing = false
     lastResult = nil
     snapshot = nil
     nextAllowedAt = nil
-    status = .disconnected
-    await setApproval(DesktopAccessApproval())
+    status = persisted ? .disconnected : .consentStorageUnavailable
+    _ = scheduleApproval(DesktopAccessApproval())
+  }
+
+  private func persistConsent(_ accepted: Bool) -> Bool {
+    do {
+      try consentStore?.setAccepted(accepted)
+      consentPersistenceFailed = false
+      return true
+    } catch {
+      consentPersistenceFailed = true
+      status = .consentStorageUnavailable
+      return false
+    }
   }
 
   /// No acquisition timer or source fallback. Recheck uses the service's durable
   /// admission rules; neither reconnect nor recheck replaces its throttle store.
   public func refresh(recheck: Bool = false) async {
-    guard isConnected, serviceApproved, !isRepairing, !Task.isCancelled else { return }
+    guard isConnected, serviceApproved, !isRepairing, !isRequestingKeychainAccess, !Task.isCancelled
+    else { return }
     updateDisplay()
     guard approvalTask == nil, refreshTask == nil, let service else { return }
     let expected = generation
@@ -211,6 +284,46 @@ public final class DesktopConnectionController: ObservableObject {
     updateDisplay()
   }
 
+  /// User-action-only OS permission flow. Startup, timers, wake and Recheck must
+  /// never call this. A local permission grant is not a provider recheck permit.
+  public func requestKeychainAccess() async {
+    guard !Task.isCancelled, canRequestKeychainAccess else { return }
+    isRequestingKeychainAccess = true
+    status = .requestingKeychainAccess
+    let expected = generation
+    let authorize = authorizeKeychainAccess
+    let task = Task { await authorize() }
+    keychainTask = task
+    defer {
+      keychainTask = nil
+      isRequestingKeychainAccess = false
+    }
+    let granted = await withTaskCancellationHandler {
+      await task.value
+    } onCancel: {
+      task.cancel()
+    }
+    guard generation == expected, isConnected else { return }
+    guard !task.isCancelled, !Task.isCancelled else {
+      await disconnect()
+      return
+    }
+    guard granted else {
+      status = .keychainPermissionRequired
+      return
+    }
+    await setApproval(DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true))
+    guard generation == expected, isConnected else { return }
+    guard !Task.isCancelled else {
+      await disconnect()
+      return
+    }
+    lastResult = nil
+    status = .ready
+    isRequestingKeychainAccess = false
+    await refresh()
+  }
+
   /// Explicit offline repair is allowed without acquisition consent. It revokes
   /// any prior consent and stays disconnected until a new explicit connect call.
   /// Busy work is refused: cancellation is not proof a store owner has exited.
@@ -218,9 +331,13 @@ public final class DesktopConnectionController: ObservableObject {
   @discardableResult
   public func repair() async -> RepairResult {
     guard !Task.isCancelled else { return .cancelled }
-    guard !isRepairing, approvalTask == nil, refreshTask == nil else {
+    guard !isRepairing, !isRequestingKeychainAccess, approvalTask == nil, refreshTask == nil else {
       status = .waitingForIdle
       return .busy
+    }
+    guard persistConsent(false) else {
+      await disconnect()
+      return .failed
     }
     isRepairing = true
     defer { isRepairing = false }
@@ -282,20 +399,24 @@ public final class DesktopConnectionController: ObservableObject {
   // Serialize approval changes even across actor suspension. A disconnect queued
   // during connect/repair must be the final reader approval, never overtaken.
   private func setApproval(_ approval: DesktopAccessApproval) async {
-    guard let service else { return }
+    await scheduleApproval(approval)?.value
+  }
+
+  private func scheduleApproval(_ approval: DesktopAccessApproval) -> Task<Void, Never>? {
+    guard let service else { return nil }
     let previous = approvalTask
     let id = UUID()
-    let task = Task {
+    let task = Task { [weak self] in
       await previous?.value
       await service.setApproval(approval)
+      if self?.approvalID == id {
+        self?.approvalID = nil
+        self?.approvalTask = nil
+      }
     }
     approvalID = id
     approvalTask = task
-    await task.value
-    if approvalID == id {
-      approvalID = nil
-      approvalTask = nil
-    }
+    return task
   }
 
   private func startDisplayUpdates() {
@@ -314,7 +435,7 @@ public final class DesktopConnectionController: ObservableObject {
   /// Re-evaluates only the in-memory result at the current clock. This never
   /// reads protected storage, changes approval, or makes a network request.
   public func updateDisplay() {
-    guard isConnected, !isRepairing, let lastResult,
+    guard isConnected, !isRepairing, !isRequestingKeychainAccess, let lastResult,
       let projected = DesktopPreviewPresentation.snapshot(lastResult, now: clock())
     else { return }
     if snapshot != projected { snapshot = projected }
@@ -329,7 +450,8 @@ public final class DesktopConnectionController: ObservableObject {
     if let error = result.credentialError {
       switch error {
       case .consentRequired, .providerApprovalRequired: return .consentRequired
-      case .permissionRequired, .missingScope: return .accessDenied
+      case .permissionRequired: return .keychainPermissionRequired
+      case .missingScope: return .accessDenied
       case .expired: return .renewalRequired
       case .keychainLocked, .changedDuringRead: return .temporaryFailure
       case .invalidStore, .unsafePath, .inputTooLarge: return .invalidResponse
@@ -357,6 +479,7 @@ public final class DesktopConnectionController: ObservableObject {
 
   deinit {
     refreshTask?.cancel()
+    keychainTask?.cancel()
     displayTask?.cancel()
   }
 }

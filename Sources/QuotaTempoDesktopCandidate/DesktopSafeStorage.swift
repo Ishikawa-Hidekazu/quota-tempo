@@ -179,13 +179,18 @@ enum DesktopLegacyInteractionGuard {
   // Legacy ACL dialogs ignore LAContext. This process-local setting must be
   // serialized and restored on both success and failure; no async work occurs.
   static func perform<T>(
+    allowInteraction: Bool = false,
     get: () throws -> Bool, set: (Bool) throws -> Void, operation: () throws -> T
   ) throws -> T {
     lock.lock()
     defer { lock.unlock() }
     let original: Bool
     do { original = try get() } catch { throw DesktopCredentialError.permissionRequired }
-    do { try set(false) } catch { throw DesktopCredentialError.permissionRequired }
+    do { try set(allowInteraction) } catch {
+      // A failing setter may have changed state before reporting the failure.
+      try? set(original)
+      throw DesktopCredentialError.permissionRequired
+    }
     let result = Result { try operation() }
     do { try set(original) } catch { throw DesktopCredentialError.permissionRequired }
     return try result.get()

@@ -50,8 +50,12 @@ installed app. Desktop scheduling deliberately shares the existing helper's
 when switching UIs and rejecting simultaneous owners. A custom storage-directory
 argument in the integration app disables all provider acquisition for synthetic QA.
 
-The integration starts disconnected. Explicit per-launch consent creates a
-controller with a required durable scheduling store. App code receives only a
+The integration starts disconnected until explicit consent. The accepted scope
+revision is stored in local application preferences, enabling one startup resume
+through the same controller and required durable scheduling store. Earlier
+per-launch consent, unknown revisions and missing preferences never grant access.
+Synthetic/provider-disabled launches do not read real consent preferences.
+App code receives only a
 normalized snapshot, fixed status and next-update deadline, never credential or
 account identity objects. Disconnect clears values before awaiting revocation,
 cancels in-flight work and rejects late results. Reconnect cannot reset provider
@@ -63,16 +67,40 @@ Claude in this preview is exclusively Desktop-sourced, including its disconnecte
 state. It does not fall back to a browser/CLI account or merge their reset times.
 The app's 30-second scheduling tick consults the existing service admission rules;
 it is not a 30-second provider poll. Display expiry is independent of HTTP.
-Desktop observations and consent are not restored from disk; the scheduling
-checkpoint remains durable. This conservative preview contract is not a promise
-of unattended reconnection across application restarts in a released product.
+Desktop observations are not restored from disk; the scheduling checkpoint
+remains durable. Disconnect and turning Claude off synchronously revoke the
+remembered consent before returning to the UI. Repair also revokes it, even if
+repair fails. Failed consent reads/writes stop acquisition and report unconfirmed
+persistence, rather than claiming revocation survived a failed write. A scope
+revision change requires new consent. Auto-resume does not recheck a refused
+credential or shorten any provider deadline. Stored Codex-only observations cannot
+silently disable the memory-only Desktop source; explicit provider selections
+remain authoritative. This is still an unreleased preview, not live acceptance
+of unattended reconnection.
+
+The integration also distinguishes missing macOS Keychain permission from a
+provider-side refusal. Only a separate user-clicked access action may open the
+targeted system dialog. No automatic acquisition path can call it. The app
+verifies noninteractive access afterwards, without claiming that the OS grant
+will survive a restart. Missing permission still requires an explicit user action.
+It exposes no key material,
+does not mutate ACLs, and fences a late grant after disconnect. A successful OS
+grant reuses the same service and normal refresh admission, not the provider
+recheck override. A new signing identity is not assumed to inherit the old
+helper's Keychain access: signed-app acceptance still has to establish it.
+
+The dedicated builder now supports an explicit Developer ID identity/team pair
+for local signed acceptance. It signs nested Sparkle components inside-out,
+uses hardened runtime and timestamping, and verifies the actual certificate
+chain, team and preview identifier. Default signing remains ad-hoc. It never
+launches, installs, notarizes, or publishes the application.
 
 Remaining acceptance includes native consent/cancel/dismissal flows, the final
 signed build with Desktop authentication, sleep/wake, Keychain lock, natural
 credential renewal and weekly rollover, and another Mac. Provider permission
 remains unconfirmed; technical success does not settle it.
 
-Integration QA: the default graph passed **715 tests / 26 suites**; the opt-in
+Baseline integration QA (`8e80e77`): the default graph passed **715 tests / 26 suites**; the opt-in
 graph passed **719 / 27**, both normally and with outbound networking denied for
 the opt-in run. SwiftPM's nested manifest sandbox could not start inside the
 outer network-denying sandbox, so that run used `--disable-sandbox` for the inner
@@ -87,9 +115,39 @@ repair and stale retained-window presentation/action permissions. Repair now
 requires a successful offline checkpoint flush before releasing its service;
 failed persistence retains the owner and known wait. Retained hosting-root tests
 cover quota updates, disconnect clearing and live provider-toggle authorization.
-The revised reviewed scope has no outstanding P0/P1/P2 findings. Offscreen
+That baseline's revised reviewed scope had no outstanding P0/P1/P2 findings. Offscreen
 Japanese/English disconnected controls were rendered without overlap; these are
 not evidence of native clicks, consent dialogs or live acquisition.
+
+### Persistent connection and signed-preview QA
+
+The follow-up adds versioned consent persistence, one startup resume, synchronous
+revocation on disconnect/provider OFF, and an explicit macOS-access action. It
+also fixes preview startup incorrectly inferring a Codex-only selection from
+disk: Desktop observations are intentionally memory-only. Existing explicit
+provider choices still win.
+
+Synthetic checks cover restart with real isolated scheduling stores (including
+multi-year provider waits), consent write failure, OFF/ON without reacquisition,
+late OS permission completion and cancellation during approval. The targeted
+Keychain helper has 14 synthetic tests; they never call the live Security query.
+Independent static review identified a cancellation path after OS permission
+which could leave the connection enabled. It now disconnects before returning,
+with a regression test; the reviewed scope has no remaining P0/P1/P2 findings.
+
+Final runs passed 743 tests / 28 suites in the default graph and 749 / 29 in the
+preview graph, including 749 / 29 with outbound networking denied. The signed
+builder's 64 synthetic checks passed. A local Developer ID build passed deep,
+strict signature verification, but was not launched, installed or notarized.
+Japanese/English permission controls were rendered offscreen without overlap.
+
+One earlier default run caught `locked` in
+`corruptKnownSchemaRetainsReadableWaitsAndRefusal(invalidExpiry: false)`.
+The same scheduling-store suite then passed 20 consecutive runs (57 tests each),
+and the full default and network-denied preview runs passed. The cause of that
+single failure remains unconfirmed. It is retained as an open QA finding, not
+described as repaired; no lock bypass, retry-until-success assertion or release
+gate relaxation was introduced.
 
 ### Test helper crash prevention
 
@@ -101,6 +159,13 @@ for filtered runs and temporary checkouts too. It preserves test failures and
 does not disable crash reporting, accept an Xcode license, or change the global
 developer selection. Missing runtimes stop before invoking Swift, and CLT
 `--skip-build` is rejected so an old bundle cannot bypass the runtime-path build.
+
+A separate Swift 6.3.2 `swift-frontend` SILGen abort occurred while compiling a
+new synthetic Keychain test with a `CFTypeRef` identity comparison inside
+`#expect`. Computing the identity comparison into a local Boolean before the
+macro avoids that observed compiler path. All such new comparisons were updated;
+subsequent full default, preview and network-denied preview builds completed.
+This is a test-source workaround, not a claim to have repaired the compiler.
 
 ## Five shipped competitors
 

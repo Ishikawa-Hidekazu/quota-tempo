@@ -33,7 +33,8 @@ struct ApplicationContentObservationTests {
     #if DESKTOP_INTEGRATION_PREVIEW
       let desktop = DesktopConnectionController(
         clock: { hostingInstant }, makeService: { HostingDesktopStub() },
-        repairStore: { _ in .notNeeded })
+        repairStore: { _ in .notNeeded },
+        consentStore: DesktopConnectionConsentPreferences(defaults: defaults))
       let root = QuotaTempoApplicationContent(
         model: model, settings: settings, presentation: presentation, desktopConnection: desktop,
         appDelegate: delegate, productVersion: "synthetic", updater: updater,
@@ -76,11 +77,18 @@ struct ApplicationContentObservationTests {
       await desktop.disconnect()
       #expect(
         hosting.rootView.scenario.snapshots.first(where: { $0.provider == .claude })?.weekly == nil)
-      model.setProviderEnabled(.claude, enabled: false)
+      await desktop.connect(localExperimentAuthorized: true)
+      #expect(try DesktopConnectionConsentPreferences(defaults: defaults).isAccepted())
+      hosting.rootView.setProviderEnabled(.claude, enabled: false)
+      #expect(!desktop.isConnected && desktop.snapshot == nil)
+      #expect(try !DesktopConnectionConsentPreferences(defaults: defaults).isAccepted())
       #expect(!heldControls.allowsConnection())
       #expect(!hosting.rootView.scenario.snapshots.contains(where: { $0.provider == .claude }))
-      model.setProviderEnabled(.claude, enabled: true)
+      hosting.rootView.setProviderEnabled(.claude, enabled: true)
       #expect(heldControls.allowsConnection())
+      await desktop.resumeIfConsented(acquisitionAllowed: true)
+      #expect(!desktop.isConnected)
+      await desktop.disconnect()
     #endif
   }
 }

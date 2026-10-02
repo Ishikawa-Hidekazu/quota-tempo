@@ -129,8 +129,15 @@ The wrapper supplies both Swift Testing runtime search paths; use it for filtere
 tests and temporary checkouts too. It does not change the global Xcode selection.
 
 The unreleased Desktop integration can be built locally with
-`bash scripts/build-desktop-integration-preview.sh`. It starts disconnected and
-requires consent per launch. It does not replace or launch the installed app.
+`bash scripts/build-desktop-integration-preview.sh`. It starts disconnected until
+explicit consent. That versioned consent preference enables reconnection after
+app restarts; Disconnect, turning Claude off, or scheduling repair revokes it.
+It does not replace or launch the installed app.
+If macOS access is missing, the preview provides an explicit **Allow macOS access**
+action. Startup, timers and ordinary refreshes never open a Keychain dialog.
+For local signed acceptance builds, the preview builder accepts the paired
+`--sign-identity "Developer ID Application: Name (TEAMID)" --team-id TEAMID`
+options. This signs the preview only; it does not notarize or approve a release.
 Default builds and distribution packaging exclude this path. See
 [acquisition research and release gates](docs/claude-acquisition-research.md)
 before interpreting synthetic QA as release readiness.

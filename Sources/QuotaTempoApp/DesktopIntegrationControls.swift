@@ -74,6 +74,9 @@
       case .repaired: return "取得記録を確認しました。再接続には同意が必要です。"
       case .repairUnsupported: return "取得記録がこのバージョンに対応していません。"
       case .restartRequired: return "取得記録が使用中です。アプリの再起動が必要です。"
+      case .consentStorageUnavailable: return "接続を停止しました。同意設定を保存または確認できません。"
+      case .keychainPermissionRequired: return "Claude Desktopの認証を使用するにはmacOSの許可が必要です。"
+      case .requestingKeychainAccess: return "macOSのアクセス許可への応答を待っています。"
       }
     }
 
@@ -86,6 +89,17 @@
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
+        if connection.consentPersistenceFailed {
+          Text(
+            text(
+              "同意設定を保存できていません。再起動後の接続状態は保証できません。",
+              "The consent preference was not saved. Connection state after restart is not guaranteed."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+        }
         if let next = connection.nextAllowedAt {
           HStack {
             Text(text("次回取得可能", "Next allowed update"))
@@ -93,10 +107,29 @@
             Text(next, style: .time)
           }.font(.caption)
         }
+        if connection.canRequestKeychainAccess {
+          Button {
+            Task {
+              guard allowsConnection() else { return }
+              await connection.requestKeychainAccess()
+            }
+          } label: {
+            Label(text("macOSアクセスを許可", "Allow macOS access"), systemImage: "lock.open")
+          }.disabled(!allowsConnection())
+          Text(
+            text(
+              "macOSの確認画面で「常に許可」を選ぶと、以後の取得をバックグラウンドで行えます。キャンセルすると接続は再開しません。",
+              "Choose Always Allow in the macOS dialog to enable background access. Cancelling does not resume the connection."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
         HStack(spacing: 12) {
           if connection.isConnected {
             Button {
-              Task { await connection.disconnect() }
+              connection.revokeConsent()
             } label: {
               Label(text("接続解除", "Disconnect"), systemImage: "xmark.circle")
             }
@@ -108,19 +141,25 @@
             } label: {
               Label(text("接続を再確認", "Recheck connection"), systemImage: "arrow.clockwise")
             }
-            .disabled(connection.isRefreshing || connection.isRepairing || !allowsConnection())
+            .disabled(
+              connection.isRefreshing || connection.isRepairing
+                || connection.isRequestingKeychainAccess || !allowsConnection())
           } else {
             Button {
               confirmsConnection = true
             } label: {
               Label(text("Desktopへ接続", "Connect Desktop"), systemImage: "link")
-            }.disabled(connection.isRepairing || !allowsConnection())
+            }.disabled(
+              connection.isRepairing || connection.isRequestingKeychainAccess || !allowsConnection()
+            )
           }
           Button {
             confirmsRepair = true
           } label: {
             Label(text("取得記録を修復", "Repair scheduling state"), systemImage: "wrench")
-          }.disabled(connection.isRefreshing || connection.isRepairing || !allowsConnection())
+          }.disabled(
+            connection.isRefreshing || connection.isRepairing
+              || connection.isRequestingKeychainAccess || !allowsConnection())
         }
         Divider()
       }
@@ -138,8 +177,8 @@
       } message: {
         Text(
           text(
-            "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意はこの起動中のみ有効で、いつでも解除できます。",
-            "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Consent lasts for this launch and can be revoked at any time."
+            "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回のアプリ起動後も自動接続します。接続解除またはClaudeをOFFにすると同意を取り消します。",
+            "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off revokes consent."
           ))
       }
       .confirmationDialog(

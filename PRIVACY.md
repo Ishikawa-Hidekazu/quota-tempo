@@ -69,8 +69,24 @@ The opt-in **Desktop integration preview** compiles this same candidate into the
 application only when `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1`. Default product
 builds exclude it, and distribution packaging rejects this switch. The preview
 has a separate app identifier, preferences and `QuotaTempoIntegrationPreview`
-directory for non-Desktop app state. It starts disconnected, requires explicit consent on each
-launch, and provides disconnect, bounded recheck and offline repair controls.
+directory for non-Desktop app state. It starts disconnected until explicit consent,
+then stores only the accepted consent revision in its local preferences so the
+same connection scope can resume after application restarts. Earlier per-launch
+consent is not upgraded automatically; a changed scope requires new consent.
+The preference contains no credential, account identifier, observation, or reset.
+It provides disconnect, bounded recheck and offline repair controls. Disconnect,
+turning Claude off, and repair revoke remembered consent. Storage failures stop
+the connection and visibly report that persistence could not be confirmed.
+When noninteractive access reports that macOS permission is missing, the app
+offers a separate, explicit **Allow macOS access** action. Only that user action
+may show the system Keychain dialog for the specific Claude Safe Storage item.
+No ACL is changed programmatically. Background startup, timers, wake and Recheck
+never prompt. The local permission action exposes only success/failure, discards
+key material and verifies that a subsequent noninteractive read works at that
+moment. This does not prove a permanent OS grant or access after a restart;
+missing permission still requires a new explicit user action. Cancellation
+or connection revocation cannot approve a late result. OS approval never clears
+provider refusal or retry deadlines and is not provider permission.
 Disconnect clears in-memory observations; repair disconnects first and never
 erases a known provider deadline. The preview does not silently fall back from
 Desktop to a CLI or browser account, persist Desktop observations, register a

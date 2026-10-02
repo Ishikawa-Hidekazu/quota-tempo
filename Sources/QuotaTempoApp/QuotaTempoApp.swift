@@ -96,7 +96,9 @@ final class LiveQuotaModel: ObservableObject {
     if let configured = preferences?.load() {
       self.selection = configured
       self.initialDetectionPending = false
-    } else if let detected = ProviderSelection.detected(in: storedScenario.snapshots) {
+    } else if localClaudeAcquisitionEnabled,
+      let detected = ProviderSelection.detected(in: storedScenario.snapshots)
+    {
       self.selection = detected
       self.initialDetectionPending = false
       preferences?.save(detected)
@@ -678,6 +680,15 @@ struct QuotaTempoApplicationContent: View {
     !providerDisabled && model.enabledProviders.contains(.claude)
   }
 
+  func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
+    model.setProviderEnabled(provider, enabled: enabled)
+    #if DESKTOP_INTEGRATION_PREVIEW
+      if !model.enabledProviders.contains(.claude) {
+        desktopConnection.revokeConsent()
+      }
+    #endif
+  }
+
   private var connectionControls: AnyView? {
     #if DESKTOP_INTEGRATION_PREVIEW
       return AnyView(desktopConnectionControls)
@@ -727,9 +738,7 @@ struct QuotaTempoApplicationContent: View {
       browserDisconnectCleanupFailed: self.model.browserDisconnectCleanupFailed,
       connectionControls: self.connectionControls,
       onboardingPrivacyText: self.desktopPrivacyText,
-      onSetProviderEnabled: { provider, enabled in
-        self.model.setProviderEnabled(provider, enabled: enabled)
-      },
+      onSetProviderEnabled: self.setProviderEnabled,
       onRefresh: self.onRefresh,
       onDisconnectBrowser: { Task { await self.model.disconnectClaudeBrowser() } },
       onCheckForUpdates: self.updater.isEnabled ? { self.updater.checkForUpdates() } : nil,
@@ -840,7 +849,8 @@ struct QuotaTempoApp: App {
       // not create a fresh identity-independent provider backoff namespace.
       self._desktopConnection = StateObject(
         wrappedValue: DesktopConnectionController(
-          directory: previewConfiguration.schedulingDirectory))
+          directory: previewConfiguration.schedulingDirectory,
+          consentDefaults: providerDisabled ? nil : defaults))
     #endif
     self._presentation = StateObject(wrappedValue: QuotaTempoPresentationModel(defaults: defaults))
     let loginItemService: any LoginItemServicing =
@@ -884,11 +894,16 @@ struct QuotaTempoApp: App {
       .onReceive(self.scheduledRefreshClock) { _ in self.model.scheduledRefresh() }
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
       #if DESKTOP_INTEGRATION_PREVIEW
+        .task {
+          await self.desktopConnection.resumeIfConsented(
+            acquisitionAllowed: !self.providerDisabled
+              && self.model.enabledProviders.contains(.claude))
+        }
         .onReceive(self.desktopClock) { _ in self.refreshDesktop() }
         .onReceive(self.wakeNotifications) { _ in self.refreshDesktop() }
         .onChange(of: self.model.enabledProviders) { _, providers in
           if !providers.contains(.claude) {
-            Task { await self.desktopConnection.disconnect() }
+            self.desktopConnection.revokeConsent()
           }
         }
       #endif

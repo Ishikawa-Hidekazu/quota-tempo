@@ -24,6 +24,8 @@ jobs:
         run: node scripts/test-desktop-candidate-isolation.mjs
       - name: Swift test runner regression checks
         run: node scripts/test-swift-runner.mjs
+      - name: Local Desktop preview packaging (synthetic only)
+        run: node scripts/test-desktop-integration-builder.mjs
       - name: Local Desktop integration tests (synthetic only)
         run: QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1 bash scripts/test-swift.sh
       - name: Browser bridge fixtures (no browser or provider access)

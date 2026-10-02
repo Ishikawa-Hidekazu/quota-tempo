@@ -78,6 +78,7 @@ private actor ConnectionServiceStub: DesktopConnectionServing {
   }
 
   func blockRefresh(_ gate: ConnectionGate) { refreshGate = gate }
+  func blockApproval(_ gate: ConnectionGate) { approvalGate = gate }
   func blockRevocation(_ gate: ConnectionGate) { revocationGate = gate }
   func prepareForOfflineRepair() -> Bool { approvals.last?.allowsAccess == false }
 
@@ -184,6 +185,24 @@ private final class ConnectionDirectory {
   deinit { try? FileManager.default.removeItem(at: url) }
 }
 
+@MainActor
+private final class ConnectionConsentStub: DesktopConnectionConsentStoring {
+  var accepted = false
+  var fails = false
+  var reads = 0
+  var writes: [Bool] = []
+  func isAccepted() throws -> Bool {
+    reads += 1
+    if fails { throw DesktopConnectionConsentError.persistenceFailed }
+    return accepted
+  }
+  func setAccepted(_ accepted: Bool) throws {
+    writes.append(accepted)
+    if fails { throw DesktopConnectionConsentError.persistenceFailed }
+    self.accepted = accepted
+  }
+}
+
 @Suite("Public Desktop connection controller")
 @MainActor
 struct DesktopConnectionControllerTests {
@@ -191,6 +210,275 @@ struct DesktopConnectionControllerTests {
     DesktopConnectionController(
       clock: { connectionNow }, displayInterval: .seconds(3600),
       makeService: { service }, repairStore: { _ in .notNeeded })
+  }
+
+  @Test func restartRequiresSavedConsentAndResumesOnlyOnce() async {
+    let consent = ConnectionConsentStub()
+    var creations = 0
+    func make() -> DesktopConnectionController {
+      DesktopConnectionController(
+        clock: { connectionNow },
+        makeService: {
+          creations += 1
+          return ConnectionServiceStub()
+        }, repairStore: { _ in .notNeeded }, consentStore: consent)
+    }
+    let first = make()
+    #expect(consent.reads == 0 && creations == 0)
+    await first.resumeIfConsented(acquisitionAllowed: true)
+    #expect(creations == 0)
+    await first.connect(localExperimentAuthorized: true)
+    #expect(consent.accepted && creations == 1)
+    let second = make()
+    #expect(second.snapshot == nil)
+    await second.resumeIfConsented(acquisitionAllowed: true)
+    await second.resumeIfConsented(acquisitionAllowed: true)
+    #expect(second.isConnected && creations == 2)
+    #expect(consent.writes == [true])
+    await first.disconnect()
+    await second.disconnect()
+    let third = make()
+    await third.resumeIfConsented(acquisitionAllowed: true)
+    #expect(!third.isConnected && creations == 2)
+  }
+
+  @Test func disabledStartupAndRevocationBeforeStartupDoNotReadConsentOrCreateService() async {
+    let consent = ConnectionConsentStub()
+    consent.accepted = true
+    var creations = 0
+    func make() -> DesktopConnectionController {
+      DesktopConnectionController(
+        makeService: {
+          creations += 1
+          return ConnectionServiceStub()
+        },
+        repairStore: { _ in .notNeeded }, consentStore: consent)
+    }
+    let disabled = make()
+    await disabled.resumeIfConsented(acquisitionAllowed: false)
+    await disabled.resumeIfConsented(acquisitionAllowed: true)
+    #expect(consent.reads == 0 && creations == 0)
+    let revoked = make()
+    revoked.revokeConsent()
+    await revoked.resumeIfConsented(acquisitionAllowed: true)
+    #expect(!consent.accepted && consent.reads == 0 && creations == 0)
+  }
+
+  @Test func consentPersistenceFailureStopsAcquisitionAndReportsRevocationFailure() async {
+    let consent = ConnectionConsentStub()
+    consent.fails = true
+    let service = ConnectionServiceStub()
+    var creations = 0
+    let model = DesktopConnectionController(
+      makeService: {
+        creations += 1
+        return service
+      }, repairStore: { _ in .notNeeded },
+      consentStore: consent)
+    await model.resumeIfConsented(acquisitionAllowed: true)
+    #expect(model.status == .consentStorageUnavailable && creations == 0)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(creations == 0 && !model.isConnected && model.consentPersistenceFailed)
+    consent.fails = false
+    await model.connect(localExperimentAuthorized: true)
+    #expect(model.isConnected && !model.consentPersistenceFailed)
+    consent.fails = true
+    model.revokeConsent()
+    #expect(!model.isConnected && model.snapshot == nil && model.consentPersistenceFailed)
+    #expect(model.status == .consentStorageUnavailable)
+    await model.refresh(recheck: true)
+    #expect(await service.refreshes == 1)
+    #expect(await service.rechecks == 0)
+    consent.fails = false
+    await model.disconnect()
+  }
+
+  @Test func repairRevokesRememberedConsentBeforeAnyRepairEvenWhenRepairFails() async {
+    let consent = ConnectionConsentStub()
+    consent.accepted = true
+    let model = DesktopConnectionController(
+      makeService: { ConnectionServiceStub() },
+      repairStore: { _ in
+        #expect(!consent.accepted)
+        throw DesktopThrottleStoreError.ioFailure
+      }, consentStore: consent)
+    #expect(await model.repair() == .failed)
+    #expect(!consent.accepted && !model.isConnected)
+    await model.resumeIfConsented(acquisitionAllowed: true)
+    #expect(!model.isConnected)
+  }
+
+  @Test func revocationDuringAutomaticResumeRejectsDelayedSuccess() async {
+    let consent = ConnectionConsentStub()
+    consent.accepted = true
+    let gate = ConnectionGate()
+    let service = ConnectionServiceStub()
+    await service.blockRefresh(gate)
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, makeService: { service }, repairStore: { _ in .notNeeded },
+      consentStore: consent)
+    let resume = Task { await model.resumeIfConsented(acquisitionAllowed: true) }
+    await gate.waitForEntry()
+    model.revokeConsent()
+    #expect(!consent.accepted && !model.isConnected && model.snapshot == nil)
+    await gate.release()
+    await resume.value
+    await model.disconnect()
+    #expect(model.snapshot == nil && !model.isConnected)
+    #expect(await service.approvals.last?.allowsAccess == false)
+  }
+
+  @Test(arguments: [300.0, 2 * 366 * 86_400.0])
+  func automaticResumePreservesPersistedProviderWaitWithoutNetwork(wait: TimeInterval) async throws
+  {
+    let fixture = try ConnectionDirectory()
+    let deadline = connectionNow.addingTimeInterval(wait)
+    do {
+      let store = try DesktopThrottleFileStore(directory: fixture.url)
+      try store.save(DesktopThrottleRecord(recordedAt: connectionNow, serviceNotBefore: deadline))
+    }
+    let consent = ConnectionConsentStub()
+    consent.accepted = true
+    let reader = try ConnectionSyntheticReader()
+    let counter = ConnectionFetchCounter()
+    let model = DesktopConnectionController(
+      clock: { connectionNow },
+      makeService: {
+        DesktopUsageCandidateService(
+          reader: reader, clock: { connectionNow },
+          throttleStore: try DesktopThrottleFileStore(directory: fixture.url)
+        ) { _, _ in
+          await counter.increment()
+          return .networkFailure
+        }
+      }, repairStore: { _ in .notNeeded }, consentStore: consent)
+    await model.resumeIfConsented(acquisitionAllowed: true)
+    #expect(model.isConnected && model.status == .waitingForProvider)
+    #expect(model.nextAllowedAt == deadline && model.snapshot?.weekly == nil)
+    await model.refresh(recheck: true)
+    #expect(model.nextAllowedAt == deadline)
+    #expect(await counter.calls == 0)
+    #expect(consent.writes.isEmpty)
+    await model.disconnect()
+  }
+
+  @Test func osPermissionIsRequestedOnlyByExplicitActionAndNeverByRecheck() async {
+    let prompts = ConnectionFetchCounter()
+    let service = ConnectionServiceStub(replies: [
+      connectionResult(state: .permissionDenied, error: .permissionRequired)
+    ])
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, makeService: { service }, repairStore: { _ in .notNeeded },
+      authorizeKeychainAccess: {
+        await prompts.increment()
+        return false
+      })
+    await model.requestKeychainAccess()
+    #expect(await prompts.calls == 0)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(model.status == .keychainPermissionRequired && model.canRequestKeychainAccess)
+    await model.refresh()
+    await model.refresh(recheck: true)
+    model.updateDisplay()
+    #expect(await prompts.calls == 0)
+    let refreshes = await service.refreshes
+    await model.requestKeychainAccess()
+    #expect(await prompts.calls == 1)
+    #expect(await service.refreshes == refreshes)
+    #expect(model.status == .keychainPermissionRequired && !model.isRequestingKeychainAccess)
+    await model.disconnect()
+  }
+
+  @Test func providerRefusalIsNotMistakenForMissingOSPermission() async {
+    let prompts = ConnectionFetchCounter()
+    let service = ConnectionServiceStub(replies: [connectionResult(state: .accessDenied)])
+    let model = DesktopConnectionController(
+      makeService: { service }, repairStore: { _ in .notNeeded },
+      authorizeKeychainAccess: {
+        await prompts.increment()
+        return true
+      })
+    await model.connect(localExperimentAuthorized: true)
+    await model.requestKeychainAccess()
+    #expect(!model.canRequestKeychainAccess && model.status == .accessDenied)
+    #expect(await prompts.calls == 0)
+    await model.disconnect()
+  }
+
+  @Test func grantingOSPermissionUsesNormalRefreshNotProviderRecheck() async {
+    let service = ConnectionServiceStub(replies: [
+      connectionResult(state: .permissionDenied, error: .permissionRequired),
+      connectionResult(state: .waitingForProvider),
+    ])
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, makeService: { service }, repairStore: { _ in .notNeeded },
+      authorizeKeychainAccess: { true })
+    await model.connect(localExperimentAuthorized: true)
+    await model.requestKeychainAccess()
+    #expect(await service.refreshes == 2)
+    #expect(await service.rechecks == 0)
+    #expect(model.nextAllowedAt == connectionNow.addingTimeInterval(300))
+    #expect(model.status == .waitingForProvider && !model.isRequestingKeychainAccess)
+    await model.disconnect()
+  }
+
+  @Test func revocationDuringOSPermissionPromptCannotReapproveOrAcquire() async {
+    let consent = ConnectionConsentStub()
+    let gate = ConnectionGate()
+    let prompts = ConnectionFetchCounter()
+    let service = ConnectionServiceStub(replies: [
+      connectionResult(state: .permissionDenied, error: .permissionRequired)
+    ])
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, makeService: { service }, repairStore: { _ in .notNeeded },
+      consentStore: consent,
+      authorizeKeychainAccess: {
+        await prompts.increment()
+        await gate.pause()
+        return true
+      })
+    await model.connect(localExperimentAuthorized: true)
+    let request = Task { await model.requestKeychainAccess() }
+    await gate.waitForEntry()
+    #expect(model.isRequestingKeychainAccess && !model.canRequestKeychainAccess)
+    await model.requestKeychainAccess()
+    await model.refresh(recheck: true)
+    #expect(await model.repair() == .busy)
+    model.revokeConsent()
+    #expect(!consent.accepted && !model.isConnected && model.snapshot == nil)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(!model.isConnected && !consent.accepted)
+    await gate.release()
+    await request.value
+    await model.disconnect()
+    #expect(await prompts.calls == 1)
+    #expect(await service.refreshes == 1)
+    #expect(await service.rechecks == 0)
+    #expect(await service.approvals.last?.allowsAccess == false)
+    #expect(!model.isRequestingKeychainAccess && model.snapshot == nil)
+  }
+
+  @Test func cancelledOSAccessReapprovalRevokesBeforeTimerCanResume() async {
+    let consent = ConnectionConsentStub()
+    let gate = ConnectionGate()
+    let service = ConnectionServiceStub(replies: [
+      connectionResult(state: .permissionDenied, error: .permissionRequired)
+    ])
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, makeService: { service }, repairStore: { _ in .notNeeded },
+      consentStore: consent, authorizeKeychainAccess: { true })
+    await model.connect(localExperimentAuthorized: true)
+    await service.blockApproval(gate)
+    let request = Task { await model.requestKeychainAccess() }
+    await gate.waitForEntry()
+    request.cancel()
+    await gate.release()
+    await request.value
+    #expect(!model.isConnected && !consent.accepted && !model.isRequestingKeychainAccess)
+    #expect(model.snapshot == nil)
+    #expect(await service.approvals.last?.allowsAccess == false)
+    await model.refresh()
+    #expect(await service.refreshes == 1)
   }
 
   @Test func disconnectedInitializationAndUnapprovedActionsAreInert() async {
