@@ -190,7 +190,8 @@ public final class DesktopConnectionController: ObservableObject {
       if service == nil { service = try makeService() }
     } catch DesktopThrottleStoreError.locked {
       isConnected = false
-      status = .storeInUse
+      // The disconnected UI must not retain an invisible startup approval.
+      if persistConsent(false) { status = .storeInUse }
       return
     } catch {
       status = .storageUnavailable

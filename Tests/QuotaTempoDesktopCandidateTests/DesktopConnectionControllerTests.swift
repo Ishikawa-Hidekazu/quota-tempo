@@ -212,6 +212,27 @@ struct DesktopConnectionControllerTests {
       makeService: { service }, repairStore: { _ in .notNeeded })
   }
 
+  @Test("Lock failure does not leave hidden automatic-resume consent")
+  func lockFailureRevokesPersistedConsent() async {
+    let consent = ConnectionConsentStub()
+    let locked = DesktopConnectionController(
+      makeService: { throw DesktopThrottleStoreError.locked },
+      repairStore: { _ in .notNeeded }, consentStore: consent)
+    await locked.connect(localExperimentAuthorized: true)
+    #expect(locked.status == .storeInUse && !locked.isConnected)
+    #expect(!consent.accepted)
+    var starts = 0
+    let restarted = DesktopConnectionController(
+      makeService: {
+        starts += 1
+        return ConnectionServiceStub()
+      },
+      repairStore: { _ in .notNeeded }, consentStore: consent)
+    await restarted.resumeIfConsented(acquisitionAllowed: true)
+    #expect(starts == 0 && !restarted.isConnected)
+    await restarted.disconnect()
+  }
+
   @Test func restartRequiresSavedConsentAndResumesOnlyOnce() async {
     let consent = ConnectionConsentStub()
     var creations = 0
@@ -509,6 +530,27 @@ struct DesktopConnectionControllerTests {
     #expect(await service.rechecks == 0)
     #expect(model.snapshot == nil && model.nextAllowedAt == nil)
     #expect(model.status == .consentRequired)
+  }
+
+  @Test("A failed consent rollback after lock failure is not reported as revoked")
+  func lockFailureWithFailedConsentRollbackIsExplicit() async {
+    let consent = ConnectionConsentStub()
+    var starts = 0
+    let model = DesktopConnectionController(
+      makeService: {
+        starts += 1
+        consent.fails = true
+        throw DesktopThrottleStoreError.locked
+      }, repairStore: { _ in .notNeeded }, consentStore: consent)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(consent.writes == [true, false] && consent.accepted)
+    #expect(model.status == .consentStorageUnavailable && model.consentPersistenceFailed)
+    #expect(!model.isConnected && model.snapshot == nil)
+    await model.refresh()
+    #expect(starts == 1)
+    consent.fails = false
+    await model.disconnect()
+    #expect(!consent.accepted && !model.consentPersistenceFailed)
   }
 
   @Test func publicInitializerDoesNotOpenTheDirectoryWithoutConsent() async throws {

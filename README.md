@@ -142,6 +142,27 @@ Default builds and distribution packaging exclude this path. See
 [acquisition research and release gates](docs/claude-acquisition-research.md)
 before interpreting synthetic QA as release readiness.
 
+For explicitly authorized live QA, the signed preview executable accepts only
+the following exact argument sequence:
+
+```sh
+/absolute/path/preview.app/Contents/MacOS/QuotaTempo \
+  --desktop-acceptance --consent-desktop-read-only \
+  --acknowledge-provider-permission-unconfirmed
+```
+
+This bounded headless check uses the application's Desktop connection controller
+and its existing scheduling store. It does not initialize the UI, start Codex or
+the Claude CLI, open a browser, request macOS permission, or save connection
+consent. Close an existing Desktop preview first; never delete its scheduling
+record to avoid a wait. Two new exact observations at least five minutes apart
+are required, within eleven minutes. The independent process watchdog stops
+unresponsive work after eleven and a half minutes. Permission, authentication,
+provider-wait and storage errors stop the check. Its output contains only fixed
+statuses and normalized quota/timing metadata; keep personal quota reports out
+of public issues. A successful check does not certify native UI interactions,
+restart consent, sleep/wake, natural credential renewal or weekly rollover.
+
 `test-menu-bar-refresh.sh` launches a provider-disabled, isolated QA bundle and verifies through macOS accessibility metadata that a closed menu-bar label adopts a newly available reset time through its one-minute clock. It does not click the menu or read the installed app's storage.
 
 Build a local menu-bar-only macOS app bundle with a deterministic file inventory:
@@ -230,7 +251,13 @@ The development app provides **Disconnect browser** in Claude details, including
 
 ## Safety boundary
 
-QuotaTempo must not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.
+The released local/CLI acquisition path does not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded from that path. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.
+
+The isolated Desktop integration preview has a different, explicit consent scope:
+it uses Desktop authentication in process memory to verify the account and read
+usage, without exporting or persisting credentials. It is excluded from default
+product builds. See [Privacy](PRIVACY.md#isolated-desktop-acquisition-experiment)
+for its exact protected reads, scheduling persistence and revocation behavior.
 
 QuotaTempo does not route prompts, switch accounts, bypass quotas, record sessions, or silently infer unavailable provider data. Its only timing estimate is the visibly marked, non-chainable one-window Claude reset projection described above.
 

@@ -38,6 +38,38 @@ changing QuotaTempo's privacy contract:
 
 ## Local application integration (2026-10-02)
 
+### Acceptance follow-up
+
+Independent review found two integration defects, both reproduced before fixing:
+
+- Desktop captures newer than the Codex/local model clock were temporarily
+  rejected as future observations. Both menu-bar and retained-window composition
+  now supply their current presentation clock explicitly. Regressions cover an
+  older base clock, a newer Desktop capture and immediate W/P/difference display.
+- A failed exclusive-store acquisition left persistent consent behind while the
+  UI appeared disconnected. Lock failure now revokes remembered consent; a failed
+  rollback is reported explicitly rather than claiming revocation was saved.
+  Restart and failed-rollback fixtures cover both cases.
+
+The signed preview has a bounded headless acceptance entry point, invoked before
+constructing SwiftUI or other-provider acquisition. All three explicit consent
+arguments must match exactly. It uses the application controller and the existing
+durable scheduling store, with process-only consent, no macOS prompt, no repair
+or refused-credential recheck, and no browser/CLI fallback. It requires two new
+exact captures separated by at least 300 seconds on both capture and monotonic
+clocks, within 660 seconds; a separate 690-second process watchdog bounds stalled
+work. Only normalized quota/timing metadata and fixed statuses are reported.
+Default builds reject this mode without starting the UI.
+
+A signed local execution rejected an existing store owner as `storeInUse`.
+After the old isolated helper exited, the final signed app returned
+`permissionRequired`, with zero accepted captures and no automatic retry or
+interactive Keychain request. This establishes a missing OS grant for that
+binary, not a provider failure or a successful live acquisition. The old helper's
+successful observations do not clear the new app's native acceptance gates.
+Product promotion remains blocked on native consent/access, actual acquisition,
+lifecycle and final-distribution acceptance. No release switch was enabled.
+
 The Desktop candidate now has an opt-in application integration, not a public
 release. `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1` adds the candidate only to the
 application and its tests. Default product graphs still exclude it; the normal

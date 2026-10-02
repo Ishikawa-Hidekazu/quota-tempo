@@ -26,7 +26,9 @@
   }
 
   enum DesktopIntegrationPresentation {
-    static func scenario(base: FixtureScenario, desktop: ProviderSnapshot?, enabled: Bool)
+    static func scenario(
+      base: FixtureScenario, desktop: ProviderSnapshot?, enabled: Bool, now: Date
+    )
       -> FixtureScenario
     {
       var snapshots = base.snapshots.filter { $0.provider != .claude }
@@ -37,7 +39,8 @@
               provider: .claude, source: .claudeDesktopDirect, capturedAt: nil, weekly: nil,
               sourceState: .neverObserved))
       }
-      return FixtureScenario(id: base.id, now: base.now, snapshots: snapshots)
+      // Desktop updates independently of the local/Codex model's clock.
+      return FixtureScenario(id: base.id, now: now, snapshots: snapshots)
     }
   }
 
@@ -118,8 +121,8 @@
           }.disabled(!allowsConnection())
           Text(
             text(
-              "macOSの確認画面で「常に許可」を選ぶと、以後の取得をバックグラウンドで行えます。キャンセルすると接続は再開しません。",
-              "Choose Always Allow in the macOS dialog to enable background access. Cancelling does not resume the connection."
+              "macOSの確認画面でアクセスを許可してください。許可後にバックグラウンド取得を確認します。macOSから再度許可を求められる場合があります。キャンセルすると接続は再開しません。",
+              "Allow access in the macOS dialog. Background access is checked afterwards; macOS may require permission again. Cancelling does not resume the connection."
             )
           )
           .font(.caption)

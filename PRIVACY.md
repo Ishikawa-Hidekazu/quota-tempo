@@ -98,6 +98,16 @@ acquisition in this preview and is reserved for synthetic QA. The same allowlist
 and locking rules above apply. This is a local acceptance build, not a public
 release or a statement of provider permission.
 
+The signed integration preview also has an explicit, bounded headless acceptance
+mode. It requires the exact command-line consent and unconfirmed-permission
+acknowledgement, uses the same controller and scheduling namespace, and never
+initializes the application UI or persists that process-only consent. It does not
+request Keychain permission, recheck a refused credential, repair state, start
+the CLI/browser or fall back to another account. Output is limited to fixed
+statuses, validated quota/plan values, exact reset and capture times, next-update
+time and counters. It stops on permission/provider/storage failures. This is
+private acceptance evidence, not telemetry or a public-release approval.
+
 ## Experimental opt-in browser connection
 
 The development browser bridge is separate from the released local/CLI acquisition path. Installing its Chrome extension and native-host registration does not sign you in. After you explicitly connect a Claude tab, an isolated content script requests account, organization, and aggregate usage metadata from the same `https://claude.ai` origin. Chrome supplies its existing session normally; the extension does not access cookie values, cookie databases, authentication storage, or Keychain. No page text, conversation, prompt, or transcript is inspected.

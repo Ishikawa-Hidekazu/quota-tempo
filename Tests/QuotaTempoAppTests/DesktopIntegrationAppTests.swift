@@ -126,14 +126,16 @@
       let codex = ProviderSnapshot(
         provider: .codex, source: .codexAppServer, capturedAt: now, weekly: nil)
       let base = FixtureScenario(id: "synthetic", now: now, snapshots: [codex, old])
-      let result = DesktopIntegrationPresentation.scenario(base: base, desktop: nil, enabled: true)
+      let result = DesktopIntegrationPresentation.scenario(
+        base: base, desktop: nil, enabled: true, now: now)
       #expect(result.snapshots.first == codex)
       #expect(result.snapshots.last?.source == .claudeDesktopDirect)
       #expect(result.snapshots.last?.weekly == nil)
       #expect(result.snapshots.last?.capturedAt == nil)
       #expect(QuotaPlanner.evaluate(result.snapshots.last!, now: now).targetNow == nil)
       #expect(
-        DesktopIntegrationPresentation.scenario(base: base, desktop: old, enabled: false).snapshots
+        DesktopIntegrationPresentation.scenario(base: base, desktop: old, enabled: false, now: now)
+          .snapshots
           == [codex])
     }
 
@@ -146,12 +148,28 @@
           resetAt: now.addingTimeInterval(302_400)), sourceState: .observationSucceeded)
       let base = FixtureScenario(id: "synthetic", now: now, snapshots: [])
       let result = DesktopIntegrationPresentation.scenario(
-        base: base, desktop: desktop, enabled: true)
+        base: base, desktop: desktop, enabled: true, now: now)
       #expect(result.snapshots == [desktop])
       let plan = QuotaPlanner.evaluate(desktop, now: now)
       #expect(plan.targetNow == 50)
       #expect(plan.vsTarget == 30)
       #expect(!plan.targetIsEstimated)
+    }
+
+    @Test("A Desktop capture newer than the Codex model clock remains visible immediately")
+    func desktopRefreshDoesNotUseOlderBaseClock() throws {
+      let capturedAt = now.addingTimeInterval(10)
+      let desktop = ProviderSnapshot(
+        provider: .claude, source: .claudeDesktopDirect, capturedAt: capturedAt,
+        weekly: QuotaWindow(
+          remainingPercent: 80, durationSeconds: 604_800,
+          resetAt: now.addingTimeInterval(302_400)), sourceState: .observationSucceeded)
+      let result = DesktopIntegrationPresentation.scenario(
+        base: FixtureScenario(id: "old-clock", now: now, snapshots: []),
+        desktop: desktop, enabled: true, now: now.addingTimeInterval(11))
+      let plan = QuotaPlanner.evaluate(try #require(result.snapshots.first), now: result.now)
+      #expect(plan.weeklyRemaining == 80)
+      #expect(plan.targetNow != nil && plan.vsTarget != nil)
     }
   }
 

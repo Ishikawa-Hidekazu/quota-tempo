@@ -665,12 +665,13 @@ struct QuotaTempoApplicationContent: View {
   let providerDisabled: Bool
   let onRefresh: () -> Void
   let onQuit: () -> Void
+  var renderNow: () -> Date = Date.init
 
   var scenario: FixtureScenario {
     #if DESKTOP_INTEGRATION_PREVIEW
       return DesktopIntegrationPresentation.scenario(
         base: model.scenario, desktop: desktopConnection.snapshot,
-        enabled: model.enabledProviders.contains(.claude))
+        enabled: model.enabledProviders.contains(.claude), now: renderNow())
     #else
       return model.scenario
     #endif
@@ -785,7 +786,6 @@ struct QuotaTempoApplicationContent: View {
   }
 }
 
-@main
 struct QuotaTempoApp: App {
   @NSApplicationDelegateAdaptor(QuotaTempoApplicationDelegate.self) private var appDelegate
   @StateObject private var model: LiveQuotaModel
@@ -969,7 +969,7 @@ struct QuotaTempoApp: App {
     #if DESKTOP_INTEGRATION_PREVIEW
       return DesktopIntegrationPresentation.scenario(
         base: self.model.scenario, desktop: self.desktopConnection.snapshot,
-        enabled: self.model.enabledProviders.contains(.claude))
+        enabled: self.model.enabledProviders.contains(.claude), now: Date())
     #else
       return self.model.scenario
     #endif

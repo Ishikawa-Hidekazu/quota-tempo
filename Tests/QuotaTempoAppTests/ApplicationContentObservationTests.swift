@@ -32,13 +32,14 @@ struct ApplicationContentObservationTests {
     let updater = QuotaTempoUpdater(enabled: false)
     #if DESKTOP_INTEGRATION_PREVIEW
       let desktop = DesktopConnectionController(
-        clock: { hostingInstant }, makeService: { HostingDesktopStub() },
+        clock: { hostingInstant.addingTimeInterval(11) }, makeService: { HostingDesktopStub() },
         repairStore: { _ in .notNeeded },
         consentStore: DesktopConnectionConsentPreferences(defaults: defaults))
       let root = QuotaTempoApplicationContent(
         model: model, settings: settings, presentation: presentation, desktopConnection: desktop,
         appDelegate: delegate, productVersion: "synthetic", updater: updater,
-        maximumViewportHeight: nil, providerDisabled: false, onRefresh: {}, onQuit: {})
+        maximumViewportHeight: nil, providerDisabled: false, onRefresh: {}, onQuit: {},
+        renderNow: { hostingInstant.addingTimeInterval(11) })
     #else
       let root = QuotaTempoApplicationContent(
         model: model, settings: settings, presentation: presentation,
@@ -74,6 +75,12 @@ struct ApplicationContentObservationTests {
       #expect(
         hosting.rootView.scenario.snapshots.first(where: { $0.provider == .claude })?.weekly?
           .remainingPercent == 81)
+      let current = hosting.rootView.scenario
+      let snapshot = try #require(current.snapshots.first(where: { $0.provider == .claude }))
+      #expect(model.scenario.now == hostingInstant)
+      #expect(snapshot.capturedAt == hostingInstant.addingTimeInterval(10))
+      let plan = QuotaPlanner.evaluate(snapshot, now: current.now)
+      #expect(plan.weeklyRemaining == 81 && plan.targetNow != nil && plan.vsTarget != nil)
       await desktop.disconnect()
       #expect(
         hosting.rootView.scenario.snapshots.first(where: { $0.provider == .claude })?.weekly == nil)
@@ -105,7 +112,7 @@ struct ApplicationContentObservationTests {
           owner: DesktopUsageOwner(
             accountFingerprint: String(repeating: "a", count: 64),
             organizationFingerprint: String(repeating: "b", count: 64)),
-          capturedAt: hostingInstant,
+          capturedAt: hostingInstant.addingTimeInterval(10),
           values: DesktopUsageValues(
             weekly: QuotaWindow(
               remainingPercent: 81, durationSeconds: 604_800,
