@@ -12,7 +12,7 @@
 
     @Test("Only the exact consent array runs; malformed reserved flags create nothing")
     func invalidArgumentsDoNotConstructConnection() async {
-      let invalid = [
+      let invalid: [[String]] = [
         [String](), ["--desktop-acceptance"], Array(arguments.dropLast()),
         Array(arguments.reversed()), arguments + ["--request-keychain-access"],
         arguments + ["--recheck-connection-once"], arguments + ["--repair-scheduling-state"],
