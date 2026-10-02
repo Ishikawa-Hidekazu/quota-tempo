@@ -137,3 +137,8 @@ Normalized observations remain in the QuotaTempo Application Support directory u
 5. To erase QuotaTempo's display mode, provider selection, and onboarding preferences, remove the `co.ishikawa.QuotaTempo` preference domain as described in [Privacy](../PRIVACY.md).
 
 Removing QuotaTempo does not alter Codex or Claude authentication. Use the in-app **Legal** menu to open the bundled license, privacy policy, update policy, third-party notices, and support route. See [Security](../SECURITY.md) for the complete technical boundary.
+
+If you separately tested the unreleased Desktop connection preview, follow its
+[permission-removal guide](../PRIVACY.md#desktop-preview-removal) as well. Its macOS
+Keychain grant is separate from the public build's local data and is not removed
+by deleting the app.

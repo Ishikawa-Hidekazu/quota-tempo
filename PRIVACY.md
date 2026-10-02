@@ -95,6 +95,10 @@ does not complete this connection because it does not authorize the subsequent
 noninteractive read. Always Allow grants this app ongoing access to the Claude
 Safe Storage protection key. Disconnecting or turning Claude off stops usage
 acquisition and automatic reconnection but does not revoke that macOS grant.
+The [Desktop preview removal section](#desktop-preview-removal) below explains
+how to remove only the preview's trusted-app entry through Keychain Access
+without revealing or deleting Claude's protection key. QuotaTempo does not
+perform this operating-system permission change on the user's behalf.
 Disconnect clears in-memory observations; repair disconnects first and never
 erases a known provider deadline. The preview does not silently fall back from
 Desktop to a CLI or browser account, persist Desktop observations, register a
@@ -150,6 +154,58 @@ Turn off **Launch at login** if enabled, quit QuotaTempo, remove `QuotaTempo.app
 For the experimental browser bridge, **Disconnect browser** in QuotaTempo's Claude details revokes the local connection even if the extension was removed. After confirmation, it clears browser quota/ownership fields and rejects late messages under the same lock used by the native host. Local metadata can then be displayed as a separate source, without inheriting browser resets or triggering a live request. Claude sign-in is unchanged. If the extension is still running, it stops when the host next rejects that connection; an in-flight or next scheduled observation can still run because the app cannot push a notification to Chrome. Disable/disconnect the extension directly to stop it there immediately. Reconnect preserves its saved provider wait.
 
 To remove the bridge installation, disable or remove the extension and use `node scripts/install-browser-bridge.mjs --remove --apply` from the source checkout. This removes only its recognized native-messaging manifest, host configuration, and normalized browser observation. It does not erase local Codex/Claude observations or change either provider's sign-in. `--remove` without `--apply` is a dry run. Stop browser-bridge activity before removal; the script refuses unsafe paths and reports an incomplete rollback or cleanup explicitly.
+
+### Desktop preview removal
+
+These steps apply only to the unreleased, opt-in Desktop integration preview
+and its local test helper. The released local/CLI build does not request this
+Keychain access. Do not perform removal during an ongoing acceptance test
+unless revocation is the specific test being performed.
+
+Choose **Disconnect** in the preview, then **Quit QuotaTempo**. The preview does
+not register a login item. Quit any older `QT Desktop` test helper as well.
+Disconnect clears the preview's in-memory observation and remembered connection
+consent, not macOS permissions.
+
+A scheduling-store initialization failure also revokes remembered consent,
+including a temporary failure during startup. After the underlying storage
+problem is resolved, use **Connect Desktop** and consent again. Do not delete
+the scheduling record or lock to bypass a wait or an active preview.
+
+macOS permission is separate from the preview's consent. **Always Allow** can
+leave a trusted-app entry after you disconnect or remove the app. Apple describes
+the per-item controls in
+[Allow apps to access your keychain](https://support.apple.com/guide/mac-help/allow-apps-to-access-your-keychain-kychn002/mac).
+The steps below target the preview's grant only; macOS labels can vary.
+
+1. Open **Keychain Access** yourself and select the **login** keychain. Locate
+   the item named **Claude Safe Storage**. Do not select **Show password**.
+2. Open the item's information and its **Access Control** tab.
+3. In the trusted-app list, select only an entry you can identify as your
+   QuotaTempo Desktop preview or old `QT Desktop` helper. Remove it using the
+   list's remove control (usually a minus button). Repeat for other copies of
+   these test apps that you have authorized. Leave Claude and other apps intact.
+4. Keep **Confirm before allowing access** selected and save the change. If
+   macOS asks for authentication, enter it only in the system dialog, never in
+   a chat, command, screenshot, or support report.
+
+If the item, app entry, or removal control cannot be identified, stop instead
+of deleting an item or changing unrelated entries. If **Allow all applications
+to access this item** is selected, removing an individual entry is not sufficient;
+stop and review that broader permission separately. Do not enable that setting.
+Do not delete **Claude Safe Storage**, reset a keychain, change its password,
+or remove Claude's authentication files as part of uninstalling QuotaTempo.
+
+After quitting all preview copies and reviewing their grants, move only the
+QuotaTempo preview app bundles you installed to the Trash. Leave Claude itself
+installed. App deletion alone does not revoke a saved macOS grant.
+
+The preview's bounded scheduling records and preferences described above
+contain no credentials. Retain scheduling records if you plan to reconnect or
+reinstall; deleting them is not a supported way to clear a provider's wait
+deadline. A future installation is not guaranteed to inherit or lose a
+particular macOS permission: verify the new copy's state explicitly before
+allowing background use.
 
 ## Upstream compatibility
 

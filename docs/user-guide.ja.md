@@ -139,3 +139,6 @@ brew trust --cask ishikawa-hidekazu/quotatempo/quotatempo && brew tap ishikawa-h
 5. 表示形式、provider選択、初回ガイドの設定も消す場合は、[Privacy](../PRIVACY.md)に記載した`co.ishikawa.QuotaTempo` preference domainを削除します。
 
 QuotaTempoを削除しても、CodexやClaudeの認証は変更されません。アプリ内の**規約・情報**から、bundle内のライセンス、プライバシー、更新方針、第三者表記、サポートを開けます。技術上の境界は[Security](../SECURITY.md)を確認してください。
+
+未公開のDesktop接続プレビューを別途試した場合は、[プレビューの許可取消手順（英語）](../PRIVACY.md#desktop-preview-removal)も確認してください。
+macOSのキーチェーンアクセス許可は、公開版の保存データとは別で、アプリを削除するだけでは取り消されません。

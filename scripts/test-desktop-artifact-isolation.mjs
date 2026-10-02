@@ -23,6 +23,8 @@ const forbidden = [
   "DesktopAcceptanceCommand", "DesktopUsageHTTPTransport", "DesktopCredentialLease",
   "desktopConnection.consentRevision", "QuotaTempo-DesktopCandidate/",
   "quotatempo.desktop.account.v1:",
+  "Claude Safe Storage", "https://api.anthropic.com/api/oauth/profile",
+  "https://api.anthropic.com/api/oauth/usage",
 ];
 const allowed = [
   "Claude Desktop", "claudeDesktopHistory", "Library/Application Support/Claude",

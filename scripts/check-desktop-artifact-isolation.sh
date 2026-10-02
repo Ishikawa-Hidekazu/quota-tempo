@@ -53,6 +53,9 @@ forbidden=(
   -e 'desktopConnection.consentRevision'
   -e 'QuotaTempo-DesktopCandidate/'
   -e 'quotatempo.desktop.account.v1:'
+  -e 'Claude Safe Storage'
+  -e 'https://api.anthropic.com/api/oauth/profile'
+  -e 'https://api.anthropic.com/api/oauth/usage'
 )
 
 files="$(mktemp "${TMPDIR:-/tmp}/quota-tempo-artifact-isolation.XXXXXX")"

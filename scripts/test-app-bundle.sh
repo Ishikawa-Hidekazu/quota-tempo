@@ -28,6 +28,12 @@ node "$repo_root/scripts/test-desktop-artifact-isolation.mjs"
 bash "$repo_root/scripts/check-desktop-artifact-isolation.sh" "$first"
 bash "$repo_root/scripts/check-desktop-artifact-isolation.sh" "$second"
 
+# The in-app Privacy copy must include the complete offline revocation steps.
+for app in "$first" "$second"; do
+  cmp "$repo_root/PRIVACY.md" "$app/Contents/Resources/PRIVACY.md"
+  grep -F '### Desktop preview removal' "$app/Contents/Resources/PRIVACY.md" >/dev/null
+done
+
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$first/Contents/Info.plist")" = true
 test -x "$first/Contents/MacOS/QuotaTempo"
 test -x "$first/Contents/MacOS/QuotaTempoBrowserHost"

@@ -139,6 +139,8 @@ Choose **Always Allow**, not the one-time **Allow**, to complete background acce
 This grants the app ongoing access to Claude Desktop's protected storage key.
 Disconnect stops acquisition and automatic reconnection; it does not revoke the
 macOS grant. Permission after restart or a later macOS change is not guaranteed.
+For removal, follow [Desktop preview removal](PRIVACY.md#desktop-preview-removal),
+including the separate, manual removal of this app's ongoing Keychain permission.
 If scheduling storage cannot be opened, the preview disconnects and revokes its
 remembered consent. Resolve the storage problem, then use **Connect Desktop** again.
 For local signed acceptance builds, the preview builder accepts the paired
@@ -234,6 +236,10 @@ The app reads its own schema-versioned normalized Application Support records an
 The first launch focuses an independent application window so opening QuotaTempo has an immediate visible result even when its menu-bar item is hidden behind a notch. The guide explains provider selection, `W`, `P`, `P≈`, and the comparison arrows, previews Full, Compact, and Icon only, and lets the user choose among them without requiring provider credentials. Opening QuotaTempo again from Applications brings the window forward; opt-in login launch remains silent after onboarding. Reopen the guide with **How to read**. In Compact mode, an estimated plan is shown as `75↑25 P≈`, so the marker cannot be mistaken for an estimate of the measured weekly balance. **Copy diagnostics** places only the app version, operating-system version, enabled providers, source kinds, freshness, and acquisition states on the clipboard; quota percentages, reset times, paths, credentials, and session content are excluded. The **Legal** menu opens the bundled license, privacy policy, update policy, third-party notices, and support route.
 
 Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninstall, first turn off **Launch at login** if enabled, quit the app, and remove `QuotaTempo.app`. Its normalized local snapshot directory is documented in [PRIVACY.md](PRIVACY.md) and may be removed separately if the user wants to erase the last displayed observations. The same policy documents the `co.ishikawa.QuotaTempo` preference domain for erasing display, provider-selection, and onboarding preferences.
+
+If you separately tested the unreleased Desktop connection preview, also follow
+its [permission-removal steps](PRIVACY.md#desktop-preview-removal). Removing the app
+does not remove its macOS Keychain grant.
 
 ## Fixture-only visual proof
 
