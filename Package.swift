@@ -3,7 +3,8 @@
 import Foundation
 import PackageDescription
 
-// Opt-in local integration only. Distribution scripts reject this environment.
+// Normal Desktop connection is opt-in at runtime. This environment adds only
+// isolated preview/headless entry points; distribution scripts reject it.
 let desktopIntegrationPreview =
   ProcessInfo.processInfo.environment["QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW"] == "1"
 
@@ -26,18 +27,26 @@ let package = Package(
       name: "QuotaTempoCore",
       exclude: ["Resources"]
     ),
-    // Excluded from all default product graphs; local integration is opt-in.
+    // Internal implementation for App/AppTests only; never a public product.
     .target(
       name: "QuotaTempoDesktopCandidate",
-      dependencies: ["QuotaTempoCore"]
+      dependencies: ["QuotaTempoCore"],
+      exclude: desktopIntegrationPreview ? [] : [
+        "DesktopPreviewModel.swift",
+        "DesktopPreviewMenu.swift",
+        "DesktopPreviewInstanceLock.swift",
+        "DesktopPreviewTermination.swift",
+      ]
     ),
     .executableTarget(
       name: "QuotaTempoApp",
       dependencies: [
         "QuotaTempoCore",
         .product(name: "Sparkle", package: "Sparkle"),
-      ] + (desktopIntegrationPreview ? [.target(name: "QuotaTempoDesktopCandidate")] : []),
-      swiftSettings: desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : []
+        .target(name: "QuotaTempoDesktopCandidate"),
+      ],
+      swiftSettings: [.define("DESKTOP_CONNECTION")]
+        + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .executableTarget(
       name: "QuotaTempoFixtureRenderer",
@@ -58,13 +67,21 @@ let package = Package(
     ),
     .testTarget(
       name: "QuotaTempoAppTests",
-      dependencies: ["QuotaTempoApp", "QuotaTempoCore"]
-        + (desktopIntegrationPreview ? [.target(name: "QuotaTempoDesktopCandidate")] : []),
-      swiftSettings: desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : []
+      dependencies: [
+        "QuotaTempoApp", "QuotaTempoCore", .target(name: "QuotaTempoDesktopCandidate"),
+      ],
+      swiftSettings: [.define("DESKTOP_CONNECTION")]
+        + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .testTarget(
       name: "QuotaTempoDesktopCandidateTests",
-      dependencies: ["QuotaTempoDesktopCandidate", "QuotaTempoCore"]
+      dependencies: ["QuotaTempoDesktopCandidate", "QuotaTempoCore"],
+      exclude: desktopIntegrationPreview ? [] : [
+        "DesktopPreviewModelTests.swift",
+        "DesktopPreviewMenuTests.swift",
+        "DesktopPreviewInstanceLockTests.swift",
+        "DesktopPreviewTerminationTests.swift",
+      ]
     ),
   ]
 )

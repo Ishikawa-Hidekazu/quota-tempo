@@ -77,11 +77,50 @@ QuotaTempo does not add itself to Login Items automatically. Move it to `/Applic
 
 ## Choose providers
 
+Desktop connection is an exception to local observation retention: turning
+Claude off revokes its consent and clears its memory-only values.
+
 Under **Providers**, enable Codex, Claude, or both. At least one remains enabled. A disabled provider is removed from the popover and menu-bar label and is not refreshed. Its last normalized observation is retained locally, so re-enabling it can refresh from the last safe state. QuotaTempo never disables a provider merely because a refresh failed.
 
 On first launch, QuotaTempo selects providers for which it can find an existing valid observation. If neither provider can be detected, both remain visible until you choose. This selection changes only QuotaTempo; it does not sign out of or reconfigure a provider.
 
+## Claude Desktop connection (Beta)
+
+This connection is available in version 0.1.10. Older releases do not display
+these controls. It does not require a Claude Code login or an
+open Chrome tab, but Claude Desktop must already be installed and signed in.
+
+1. In Claude's connection controls, change its source from **Automatic** to
+   **Claude Desktop (Beta)**. Read the access notice and choose **Connect Desktop**.
+2. Confirm consent. If the app reports missing macOS permission, choose
+   **Allow macOS access**. In the system dialog choose **Always Allow**, not
+   one-time **Allow**. Enter any system password only in that dialog.
+3. Wait until **Next allowed update**. A restart may initially show no values:
+   Desktop observations are kept in memory only. A successful update displays
+   **Claude Desktop connection**, its actual capture time, weekly balance and reset.
+
+This grants QuotaTempo ongoing access to Claude Desktop's protection key, used
+locally to read its existing authentication for usage retrieval. QuotaTempo does
+not save the credentials or read conversations. The connection uses unofficial
+interfaces and can become unavailable if they change. Review [Privacy](../PRIVACY.md)
+before enabling it.
+
+Desktop is an exclusive source: failures do not silently switch to another
+account in the CLI or browser. **Disconnect**, turning Claude off, or switching
+back to Automatic revokes consent and clears the Desktop values. Turning Claude
+on again does not reconnect without consent. These actions do not remove the
+macOS permission; use the [permission-removal steps](../PRIVACY.md#desktop-connection-removal).
+
+Successful polling normally waits five minutes. Refresh does not bypass a
+provider wait. **Recheck connection** is a bounded recovery action, not a forced
+refresh; **Repair scheduling state** disconnects and preserves known provider
+deadlines. If storage cannot be opened, resolve the storage issue and connect
+again. Do not delete scheduling files to bypass a wait.
+
 ## Refresh and freshness
+
+The following 15-minute schedule applies to Codex and Claude Automatic. Desktop
+connection uses the separate five-minute schedule described above.
 
 QuotaTempo performs a bounded refresh for enabled providers when it starts, every 15 minutes while it remains running, and after the Mac wakes. Menu-open refreshes respect each provider's last-attempt guard (five minutes for Codex and 14 minutes for Claude; the shorter Claude guard prevents timer jitter from skipping a scheduled cycle). Automatic and menu-open refreshes never start a second request while the same provider is already in flight. Choose **Refresh** to request every enabled provider immediately. While an enabled provider is being checked, the control reads **Refreshing…** and is disabled.
 
@@ -138,7 +177,8 @@ Normalized observations remain in the QuotaTempo Application Support directory u
 
 Removing QuotaTempo does not alter Codex or Claude authentication. Use the in-app **Legal** menu to open the bundled license, privacy policy, update policy, third-party notices, and support route. See [Security](../SECURITY.md) for the complete technical boundary.
 
-If you separately tested the unreleased Desktop connection preview, follow its
-[permission-removal guide](../PRIVACY.md#desktop-preview-removal) as well. Its macOS
-Keychain grant is separate from the public build's local data and is not removed
-by deleting the app.
+If you enabled Desktop connection or tested a separate preview, follow the
+[permission-removal guide](../PRIVACY.md#desktop-connection-removal) as well. Its
+macOS Keychain grant is separate from QuotaTempo's local data and is not removed
+by deleting the app. Desktop quota observations are not saved; keep scheduling
+records if you intend to reinstall so provider wait deadlines are preserved.

@@ -1,4 +1,4 @@
-#if DESKTOP_INTEGRATION_PREVIEW
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
   import QuotaTempoCore
   import QuotaTempoDesktopCandidate
   import SwiftUI
@@ -9,14 +9,13 @@
     let schedulingDirectory: URL
 
     init(arguments: [String], supportDirectory: URL) {
-      providerDisabled =
-        arguments.contains("--provider-disabled")
-        || arguments.contains("--storage-directory")
+      providerDisabled = QuotaTempoRuntimePolicy.providersDisabled(arguments: arguments)
       if let index = arguments.firstIndex(of: "--storage-directory"), index + 1 < arguments.count {
         appDirectory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
       } else {
         appDirectory = supportDirectory.appendingPathComponent(
-          "QuotaTempoIntegrationPreview", isDirectory: true)
+          QuotaTempoRuntimePolicy.isDesktopPreview ? "QuotaTempoIntegrationPreview" : "QuotaTempo",
+          isDirectory: true)
       }
       schedulingDirectory =
         providerDisabled
@@ -27,10 +26,12 @@
 
   enum DesktopIntegrationPresentation {
     static func scenario(
-      base: FixtureScenario, desktop: ProviderSnapshot?, enabled: Bool, now: Date
+      base: FixtureScenario, desktop: ProviderSnapshot?, enabled: Bool, now: Date,
+      source: ClaudeSource = .desktop
     )
       -> FixtureScenario
     {
+      guard source == .desktop else { return base }
       var snapshots = base.snapshots.filter { $0.provider != .claude }
       if enabled {
         snapshots.append(
@@ -54,9 +55,15 @@
     }
 
     var consent: String {
-      languageCode == "ja"
-        ? "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回起動後も自動接続します。接続解除またはClaudeをOFFにすると取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。"
-        : "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission."
+      #if DESKTOP_INTEGRATION_PREVIEW
+        return languageCode == "ja"
+          ? "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回起動後も自動接続します。接続解除またはClaudeをOFFにすると取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。"
+          : "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission."
+      #else
+        return languageCode == "ja"
+          ? "Claude Desktop (Beta)は非公式の連携で、提供元の許諾は未確認です。このMacのClaude Desktop認証情報を端末内で読み取り、Anthropicへ使用量とリセット日時を問い合わせる認証に使用します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。同意設定を保存し、Desktop選択中かつClaudeがONの場合だけ次回起動時に再接続します。接続解除、自動への切り替え、ClaudeをOFFにする操作は取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。取得に失敗しても別の取得元へ切り替えません。"
+          : "Claude Desktop (Beta) is an unofficial integration; provider permission is unconfirmed. Reads Claude Desktop authentication locally on this Mac and uses it to authenticate requests to Anthropic for usage and reset times. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Saves consent and reconnects at startup only while Desktop is selected and Claude is on. Disconnecting, switching to Automatic or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission. Failures never switch to another source."
+      #endif
     }
   }
 
@@ -64,6 +71,8 @@
     @ObservedObject var connection: DesktopConnectionController
     @Environment(\.locale) private var locale
     let allowsConnection: @MainActor () -> Bool
+    var source: Binding<ClaudeSource> = .constant(.desktop)
+    var actionRevision: @MainActor () -> Int = { 0 }
     @State private var confirmsConnection = false
     @State private var confirmsRepair = false
     private var japanese: Bool { locale.language.languageCode?.identifier == "ja" }
@@ -72,6 +81,9 @@
     }
     private func text(_ ja: String, _ en: String) -> String { japanese ? ja : en }
     private var statusText: String {
+      if !QuotaTempoRuntimePolicy.isDesktopPreview && connection.status == .consentRequired {
+        return text("Desktop接続への同意が必要です。", "Explicit Desktop connection consent is required.")
+      }
       guard japanese else { return connection.statusText }
       switch connection.status {
       case .disconnected: return "Desktop接続は解除されています。"
@@ -90,7 +102,7 @@
       case .invalidClock: return "このMacの時刻を確認できません。"
       case .serviceWaitUnavailable: return "待機期限を扱えないため、自動取得を停止しています。"
       case .storageUnavailable: return "ローカルの取得記録を保存または検証できません。"
-      case .storeInUse: return "別のDesktopプレビューが取得記録を使用中です。先に終了してください。"
+      case .storeInUse: return "別のQuotaTempoが取得記録を使用中です。先に終了してください。"
       case .waitingForIdle: return "前の取得処理の終了を待ってから操作してください。"
       case .repairing: return "取得記録を修復しています。"
       case .repaired: return "取得記録を確認しました。再接続には同意が必要です。"
@@ -105,8 +117,42 @@
     var body: some View {
       VStack(alignment: .leading, spacing: 10) {
         Divider()
-        Text(text("Claude Desktop 接続・ローカル検証版", "Claude Desktop connection · Local preview"))
-          .font(.headline)
+        #if !DESKTOP_INTEGRATION_PREVIEW
+          Picker(text("Claudeの取得元", "Claude source"), selection: source) {
+            Text(text("自動", "Automatic")).tag(ClaudeSource.automatic)
+            Text("Claude Desktop (Beta)").tag(ClaudeSource.desktop)
+          }
+          .pickerStyle(.menu)
+          if source.wrappedValue == .automatic && connection.consentPersistenceFailed {
+            Text(
+              text(
+                "以前の同意の取消を保存できないため、Desktopへ切り替えられません。保存先の問題を解消してから再度選択してください。",
+                "Could not save consent revocation, so Desktop was not selected. Resolve the local storage problem, then select Desktop again."
+              )
+            )
+            .font(.caption)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
+          }
+        #endif
+        if source.wrappedValue == .desktop {
+          connectionBody
+        }
+      }
+      .onChange(of: source.wrappedValue) { _, _ in
+        confirmsConnection = false
+        confirmsRepair = false
+      }
+    }
+
+    private var connectionBody: some View {
+      VStack(alignment: .leading, spacing: 10) {
+        Text(
+          QuotaTempoRuntimePolicy.isDesktopPreview
+            ? text("Claude Desktop 接続・ローカル検証版", "Claude Desktop connection · Local preview")
+            : "Claude Desktop (Beta)"
+        )
+        .font(.headline)
         Text(statusText)
           .font(.caption)
           .foregroundStyle(.secondary)
@@ -131,8 +177,9 @@
         }
         if connection.canRequestKeychainAccess {
           Button {
+            let revision = actionRevision()
             Task {
-              guard allowsConnection() else { return }
+              guard allowsConnection(), actionRevision() == revision else { return }
               await connection.requestKeychainAccess()
             }
           } label: {
@@ -151,8 +198,9 @@
               Label(text("接続解除", "Disconnect"), systemImage: "xmark.circle")
             }
             Button {
+              let revision = actionRevision()
               Task {
-                guard allowsConnection() else { return }
+                guard allowsConnection(), actionRevision() == revision else { return }
                 await connection.refresh(recheck: true)
               }
             } label: {
@@ -185,8 +233,9 @@
         isPresented: $confirmsConnection, titleVisibility: .visible
       ) {
         Button(text("同意して接続", "Agree and connect")) {
+          let revision = actionRevision()
           Task {
-            guard allowsConnection() else { return }
+            guard allowsConnection(), actionRevision() == revision else { return }
             await connection.connect(localExperimentAuthorized: true)
           }
         }
@@ -199,8 +248,9 @@
         isPresented: $confirmsRepair, titleVisibility: .visible
       ) {
         Button(text("修復", "Repair")) {
+          let revision = actionRevision()
           Task {
-            guard allowsConnection() else { return }
+            guard allowsConnection(), actionRevision() == revision else { return }
             await connection.repair()
           }
         }

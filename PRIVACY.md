@@ -4,6 +4,12 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 
 ## Data read
 
+The default Claude source is **Automatic**, the local/CLI path below. The optional
+**Claude Desktop (Beta)** connection has a different access boundary described
+in its own section. It starts disabled and requires explicit consent and macOS
+permission. This connection is available in version 0.1.10; an older installed
+release does not gain it from this document.
+
 - Codex: rate-limit metadata returned by the installed official `codex app-server` process.
 - Claude: only the recognized usage fields and organization UUID in `~/Library/Application Support/Claude/plan-usage-history.json`, `lastKnownAccountUuid` in the adjacent Desktop `config.json`, plus `cachedUsageUtilization`, `oauthAccount.accountUuid`, and `oauthAccount.organizationUuid` in `~/.claude.json`. The UUIDs are used only to derive one-way SHA-256 account-owner, principal, and organization fingerprints; the raw values are not retained. A Desktop observation inherits an exact cached reset only when the current Desktop account, Claude Code account, organization, and quota window agree. Other fields in those files are not decoded or retained. QuotaTempo can launch the already-installed, already-signed-in Claude Code CLI in a bounded pseudo-terminal, enter `/usage`, and read only the session and all-model weekly percentages and reset times from its rendered panel. It first uses a complete recent local observation. Automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard; explicit **Refresh** invokes it immediately. QuotaTempo does not copy the raw terminal output to its store or diagnostics.
 
@@ -17,27 +23,29 @@ also rereads these same allowlisted local sources. This does not introduce a new
 file, permission, provider request, or CLI process, and does not relabel the data
 as newly captured.
 
-## Isolated Desktop acquisition experiment
+## Opt-in Claude Desktop connection
 
-`QuotaTempoDesktopCandidate` and the manually built `QT Desktop` helper are not
-included in the released application, updater or installer. Running that helper
-requires explicit local-experiment consent. That consent is not a claim of
-provider permission or public-release readiness.
+Version 0.1.10 includes `QuotaTempoDesktopCandidate` only in the main app,
+behind **Claude Desktop (Beta)** source selection and explicit consent. The
+default source remains Automatic. Consent is not a claim of provider approval;
+this is an unofficial integration and its upstream interfaces may change. The
+standalone `QT Desktop` helper and headless acceptance mode remain local test
+tools, not publicly distributed entry points.
 
-Unlike the released local/CLI path above, the experiment reads Claude Desktop's
+Unlike the Automatic local/CLI path above, this connection reads Claude Desktop's
 local account configuration and encrypted authentication cache, its selected
 organization from the Desktop cookie store, and the matching Claude Safe Storage
 Keychain item. Reads are bounded and prompt-suppressed during automatic polling.
 It does not modify those stores, export authentication, inspect conversations or
 prompts, launch a browser or CLI, or refresh provider credentials itself.
 
-The helper uses the selected Desktop authentication only to verify the account
+The connection uses the selected Desktop authentication only to verify the account
 and organization and obtain usage from the provider. Sensitive values remain in
 process memory; raw bodies, headers, identities, credentials and credential hashes
-are not written to logs or normalized snapshots. The local preview displays
+are not written to logs or normalized snapshots. The app displays
 quota values and records only fixed diagnostic categories, capture/backoff times
-and boolean availability metadata. It does not persist observations. The candidate
-now stores a size-bounded `desktop-throttle.json` in the isolated preview's private
+and boolean availability metadata. It does not persist Desktop observations. It
+stores a size-bounded `desktop-throttle.json` in the shared private
 `~/Library/Application Support/QuotaTempoDesktopPreview` directory, with
 owner-only permissions and a process-lifetime lock. The lock contains only a
 one-byte initialization marker to detect checkpoint loss after restart. The
@@ -56,20 +64,26 @@ needs acceptance. The isolated helper has an explicit offline scheduling-repair
 command: it requires the same exclusive lock, preserves valid records, leaves
 unused stores uninitialized, refuses unknown schema versions, and repairs a lost/corrupt record into a stopped state
 with a 15-minute floor. It makes no provider request and does not repair permissions.
-Restart safety therefore remains a release gate. Public integration must include consent,
-revocation, recovery and an updated privacy contract before this path can be shipped.
+The app exposes consent, disconnect, bounded recheck and offline scheduling repair.
 The service requires an explicit scheduling store; it cannot silently operate
 without persistence. A restored finite provider wait remains binding, even when
-it spans years. The preview identifies the provider wait and its next permitted
+it spans years. The app identifies the provider wait and its next permitted
 time; repair and recheck cannot erase it. Ordinary successful polling waits five
 minutes, with a 60-second minimum for verified context renewal/account changes
 or an upcoming reset. These exceptions never shorten a provider/failure wait.
 
-The opt-in **Desktop integration preview** compiles this same candidate into the
-application only when `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1`. Default product
-builds exclude it, and distribution packaging rejects this switch. The preview
-has a separate app identifier, preferences and `QuotaTempoIntegrationPreview`
-directory for non-Desktop app state. It starts disconnected until explicit consent,
+The normal app does not import the separate preview's consent. Source selection
+and consent use the normal app's own preferences. Choosing Desktop first cancels
+Automatic acquisition and excludes local, CLI and browser observations from the
+Claude row, even when the Desktop connection is disconnected or unavailable.
+Choosing Automatic revokes Desktop consent and clears its in-memory observation
+before starting Automatic acquisition. Switching sources never combines values.
+Selecting Desktop does not disconnect a separately running browser extension;
+use the extension's Disconnect control to stop its independent polling.
+Old consent must be durably revoked before a new Desktop selection is saved.
+If revocation cannot be saved, Automatic remains selected and the app reports
+the storage problem rather than allowing a restart to reuse old consent.
+The connection starts disconnected until explicit consent,
 then stores only the accepted consent revision in its local preferences so the
 same connection scope can resume after application restarts. Earlier per-launch
 consent is not upgraded automatically; a changed scope requires new consent.
@@ -95,20 +109,25 @@ does not complete this connection because it does not authorize the subsequent
 noninteractive read. Always Allow grants this app ongoing access to the Claude
 Safe Storage protection key. Disconnecting or turning Claude off stops usage
 acquisition and automatic reconnection but does not revoke that macOS grant.
-The [Desktop preview removal section](#desktop-preview-removal) below explains
-how to remove only the preview's trusted-app entry through Keychain Access
+The [Desktop connection removal section](#desktop-connection-removal) below explains
+how to remove only QuotaTempo's trusted-app entry through Keychain Access
 without revealing or deleting Claude's protection key. QuotaTempo does not
 perform this operating-system permission change on the user's behalf.
 Disconnect clears in-memory observations; repair disconnects first and never
-erases a known provider deadline. The preview does not silently fall back from
-Desktop to a CLI or browser account, persist Desktop observations, register a
-login item, or enable automatic application updates. Its Desktop scheduling metadata
+erases a known provider deadline. The connection does not silently fall back from
+Desktop to a CLI or browser account or persist Desktop observations. Its scheduling metadata
 shares the existing helper's `QuotaTempoDesktopPreview` directory and lifetime
 lock: switching UIs cannot erase a known provider wait or run two Desktop clients
 against independent schedules. A custom `--storage-directory` disables all provider
-acquisition in this preview and is reserved for synthetic QA. The same allowlist
-and locking rules above apply. This is a local acceptance build, not a public
-release or a statement of provider permission.
+acquisition and is reserved for synthetic QA. The normal app retains its separate,
+opt-in login item and signed updater regardless of the selected Claude source.
+
+The local **Desktop integration preview**, built with
+`QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1`, has a separate app identifier,
+preferences and `QuotaTempoIntegrationPreview` directory for non-Desktop state.
+It remains Desktop-only, has no updater or login item, and is rejected by public
+distribution packaging. Other shipped executables do not contain Desktop
+authentication readers. The same scheduling allowlist and locking rules apply.
 
 The signed integration preview also has an explicit, bounded headless acceptance
 mode. It requires the exact command-line consent and unconfirmed-permission
@@ -139,7 +158,7 @@ QuotaTempo writes only a schema version plus normalized provider, percentage, du
 Raw provider responses, raw executable-version output, local executable paths, account or organization UUIDs, and raw Claude source files are not copied there. The fingerprints are lowercase SHA-256 digests used only to prevent reset metadata from being combined across Claude accounts. Snapshot reads and writes are size-bounded, reject symlinks and non-regular files, and validate provider/source, time-window, and acquisition-state relationships before a record is used. The data stays on the Mac unless the user backs up or shares that directory through another service.
 QuotaTempo creates its Application Support directory with owner-only `0700` permissions and normalized snapshot files with `0600` permissions.
 
-The selected menu-bar display mode, enabled-provider choices, and first-run-guide completion are stored through macOS preferences for bundle identifier `co.ishikawa.QuotaTempo`, normally represented under `~/Library/Preferences/`. No provider percentage, reset timestamp, credential, or session data is stored in those preferences. The optional login item is managed by macOS and is never enabled automatically.
+The selected menu-bar display mode, enabled-provider choices, Claude source choice, Desktop consent revision, and first-run-guide completion are stored through macOS preferences for bundle identifier `co.ishikawa.QuotaTempo`, normally represented under `~/Library/Preferences/`. No provider percentage, reset timestamp, credential, or session data is stored in those preferences. The optional login item is managed by macOS and is never enabled automatically.
 
 Choosing **Copy diagnostics** writes a support-safe report to the macOS clipboard. It contains the QuotaTempo and operating-system versions, enabled providers, normalized source kinds, Codex executable source class and normalized semantic version when available, freshness, source state, and stable acquisition error codes. It excludes quota percentages, reset and capture timestamps, local paths, raw version output, credentials, raw provider data, prompts, transcripts, and session content. Clipboard retention is controlled by macOS and any clipboard tools installed by the user.
 
@@ -155,16 +174,18 @@ For the experimental browser bridge, **Disconnect browser** in QuotaTempo's Clau
 
 To remove the bridge installation, disable or remove the extension and use `node scripts/install-browser-bridge.mjs --remove --apply` from the source checkout. This removes only its recognized native-messaging manifest, host configuration, and normalized browser observation. It does not erase local Codex/Claude observations or change either provider's sign-in. `--remove` without `--apply` is a dry run. Stop browser-bridge activity before removal; the script refuses unsafe paths and reports an incomplete rollback or cleanup explicitly.
 
-### Desktop preview removal
+<a id="desktop-preview-removal"></a>
 
-These steps apply only to the unreleased, opt-in Desktop integration preview
-and its local test helper. The released local/CLI build does not request this
-Keychain access. Do not perform removal during an ongoing acceptance test
+### Desktop connection removal
+
+These steps apply to the opt-in Desktop connection and any separately installed
+Desktop preview or local test helper. Automatic acquisition does not request
+this Keychain access. Do not perform removal during an ongoing acceptance test
 unless revocation is the specific test being performed.
 
-Choose **Disconnect** in the preview, then **Quit QuotaTempo**. The preview does
-not register a login item. Quit any older `QT Desktop` test helper as well.
-Disconnect clears the preview's in-memory observation and remembered connection
+Choose **Disconnect**, turn off **Launch at login** if enabled, then choose
+**Quit QuotaTempo**. Quit any older preview or `QT Desktop` test helper as well.
+Disconnect clears the in-memory observation and remembered connection
 consent, not macOS permissions.
 
 A scheduling-store initialization failure also revokes remembered consent,
@@ -172,19 +193,19 @@ including a temporary failure during startup. After the underlying storage
 problem is resolved, use **Connect Desktop** and consent again. Do not delete
 the scheduling record or lock to bypass a wait or an active preview.
 
-macOS permission is separate from the preview's consent. **Always Allow** can
+macOS permission is separate from QuotaTempo's consent. **Always Allow** can
 leave a trusted-app entry after you disconnect or remove the app. Apple describes
 the per-item controls in
 [Allow apps to access your keychain](https://support.apple.com/guide/mac-help/allow-apps-to-access-your-keychain-kychn002/mac).
-The steps below target the preview's grant only; macOS labels can vary.
+The steps below target QuotaTempo's grant only; macOS labels can vary.
 
 1. Open **Keychain Access** yourself and select the **login** keychain. Locate
    the item named **Claude Safe Storage**. Do not select **Show password**.
 2. Open the item's information and its **Access Control** tab.
 3. In the trusted-app list, select only an entry you can identify as your
-   QuotaTempo Desktop preview or old `QT Desktop` helper. Remove it using the
+   QuotaTempo app, Desktop preview or old `QT Desktop` helper. Remove it using the
    list's remove control (usually a minus button). Repeat for other copies of
-   these test apps that you have authorized. Leave Claude and other apps intact.
+   these apps that you have authorized. Leave Claude and other apps intact.
 4. Keep **Confirm before allowing access** selected and save the change. If
    macOS asks for authentication, enter it only in the system dialog, never in
    a chat, command, screenshot, or support report.
@@ -196,11 +217,11 @@ stop and review that broader permission separately. Do not enable that setting.
 Do not delete **Claude Safe Storage**, reset a keychain, change its password,
 or remove Claude's authentication files as part of uninstalling QuotaTempo.
 
-After quitting all preview copies and reviewing their grants, move only the
-QuotaTempo preview app bundles you installed to the Trash. Leave Claude itself
+After quitting all copies and reviewing their grants, move only the
+QuotaTempo app bundles you installed to the Trash. Leave Claude itself
 installed. App deletion alone does not revoke a saved macOS grant.
 
-The preview's bounded scheduling records and preferences described above
+The bounded scheduling records and preferences described above
 contain no credentials. Retain scheduling records if you plan to reconnect or
 reinstall; deleting them is not a supported way to clear a provider's wait
 deadline. A future installation is not guaranteed to inherit or lose a

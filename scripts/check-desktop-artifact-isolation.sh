@@ -17,33 +17,51 @@ for executable in "$binary" "$app/Contents/MacOS/QuotaTempoBrowserHost"; do
   fi
 done
 
-# These long strings survive Swift small-string encoding and symbol stripping.
-# Keep the public refusal separate from candidate-only implementation markers.
-required=(
+# Keep reserved-argument refusal mandatory even though the normal app now
+# includes the runtime opt-in feature. Headless acceptance remains preview-only.
+required_refusal=(
   '--desktop-acceptance'
   '--consent-desktop-read-only'
   '--acknowledge-provider-permission-unconfirmed'
   '{"status":"desktopAcceptanceNotIncluded","passed":false}'
 )
-for marker in "${required[@]}"; do
-  # Do not use -q/-m: the entire file must be read, including late I/O failures.
-  if grep -aF -e "$marker" "$binary" >/dev/null; then
-    continue
-  else
-    status=$?
-    if [[ "$status" -eq 1 ]]; then
-      echo "Public Desktop refusal marker missing: $marker" >&2
+# Long runtime strings survive Swift small-string encoding and symbol stripping.
+# Require the connection, consent, identity and transport paths in the main app.
+required_inclusion=(
+  'DesktopConnectionController'
+  'DesktopIntegrationControls'
+  'desktopConnection.consentRevision'
+  'QuotaTempo-DesktopCandidate/'
+  'quotatempo.desktop.account.v1:'
+  'Claude Safe Storage'
+  'https://api.anthropic.com/api/oauth/profile'
+  'https://api.anthropic.com/api/oauth/usage'
+)
+require_main_markers() {
+  local label="$1" marker status
+  shift
+  for marker in "$@"; do
+    # Do not use -q/-m: read the entire file, including late I/O failures.
+    if grep -aF -e "$marker" "$binary" >/dev/null; then
+      continue
     else
-      echo "Unable to inspect public Desktop refusal (grep status $status)." >&2
+      status=$?
+      if [[ "$status" -eq 1 ]]; then
+        echo "$label marker missing: $marker" >&2
+      else
+        echo "Unable to inspect $label (grep status $status)." >&2
+      fi
+      exit 2
     fi
-    exit 2
-  fi
-done
+  done
+}
+require_main_markers 'Public Desktop refusal' "${required_refusal[@]}"
+require_main_markers 'Desktop connection inclusion' "${required_inclusion[@]}"
 
 # Stable module/type names plus runtime identifiers, not mutable UI copy.
 # A stripped candidate still carries runtime strings; an unstripped leak can
 # also be found by its Swift mangled symbols without depending on nm output.
-forbidden=(
+candidate_markers=(
   -e 'QuotaTempoDesktopCandidate'
   -e 'DesktopConnectionController'
   -e 'DesktopIntegrationControls'
@@ -56,6 +74,23 @@ forbidden=(
   -e 'Claude Safe Storage'
   -e 'https://api.anthropic.com/api/oauth/profile'
   -e 'https://api.anthropic.com/api/oauth/usage'
+)
+# Shared DesktopPreviewServing/Presentation and the persisted scheduling
+# namespace are not preview entry points. Do not forbid those shared names.
+preview_only=(
+  -e 'DesktopAcceptanceCommand'
+  -e 'DesktopAcceptanceRunner'
+  -e 'DesktopAcceptanceConnecting'
+  -e 'DesktopCandidateLocalProbe'
+  -e 'DesktopPreviewApplication'
+  -e 'DesktopPreviewModel'
+  -e 'DesktopPreviewMenu'
+  -e 'DesktopPreviewInstanceLock'
+  -e 'DesktopPreviewTermination'
+  -e 'desktop-local-preview'
+  -e 'desktop-preview.lock'
+  -e 'QuotaTempo.preview-termination'
+  -e 'QuotaTempo Desktop Preview'
 )
 
 files="$(mktemp "${TMPDIR:-/tmp}/quota-tempo-artifact-isolation.XXXXXX")"
@@ -72,9 +107,30 @@ if [[ ! -s "$files" ]]; then
   echo 'No compiled bundle artifacts found.' >&2
   exit 2
 fi
-while IFS= read -r -d '' artifact; do
+seen_main=false
+seen_host=false
+while true; do
+  artifact=''
+  if ! IFS= read -r -d '' artifact; then
+    if [[ -n "$artifact" ]]; then
+      echo 'Incomplete compiled artifact listing.' >&2
+      exit 2
+    fi
+    break
+  fi
+  forbidden=("${preview_only[@]}")
+  if [[ "$artifact" == "$binary" ]]; then
+    seen_main=true
+    label='Desktop preview-only implementation'
+  else
+    forbidden+=("${candidate_markers[@]}")
+    label='Desktop candidate or preview-only implementation'
+    if [[ "$artifact" == "$app/Contents/MacOS/QuotaTempoBrowserHost" ]]; then
+      seen_host=true
+    fi
+  fi
   if grep -aF "${forbidden[@]}" "$artifact" >/dev/null; then
-    echo "Desktop candidate implementation found in compiled artifact: $artifact" >&2
+    echo "$label found in compiled artifact: $artifact" >&2
     exit 2
   else
     status=$?
@@ -84,6 +140,10 @@ while IFS= read -r -d '' artifact; do
     fi
   fi
 done < "$files"
+if [[ "$seen_main" != true || "$seen_host" != true ]]; then
+  echo 'Required executables missing from compiled artifact listing.' >&2
+  exit 2
+fi
 
 rm -f -- "$files"
 trap - EXIT

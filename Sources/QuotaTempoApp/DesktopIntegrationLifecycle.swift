@@ -1,10 +1,11 @@
-#if DESKTOP_INTEGRATION_PREVIEW
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
   import Foundation
   import QuotaTempoCore
   import QuotaTempoDesktopCandidate
 
   @MainActor
   protocol DesktopLifecycleConnecting: AnyObject {
+    var consentPersistenceFailed: Bool { get }
     func resumeIfConsented(acquisitionAllowed: Bool) async
     func updateDisplay()
     func refresh(recheck: Bool) async
@@ -21,15 +22,29 @@
     let acquisitionAllowed: @MainActor () -> Bool
 
     func start() async {
-      guard !Task.isCancelled else { return }
-      await connection.resumeIfConsented(acquisitionAllowed: acquisitionAllowed())
+      guard !Task.isCancelled, acquisitionAllowed() else { return }
+      await connection.resumeIfConsented(acquisitionAllowed: true)
     }
 
     // Timer, wake and manual refresh all use normal admission, never recheck.
     func refresh() async {
-      connection.updateDisplay()
       guard !Task.isCancelled, acquisitionAllowed() else { return }
+      connection.updateDisplay()
       await connection.refresh(recheck: false)
+    }
+
+    func selectSource(_ source: ClaudeSource, model: LiveQuotaModel) {
+      guard source != model.claudeSource else { return }
+      // Persist revocation before Desktop selection. A crash between the two
+      // writes must never bind an old consent to the newly selected source.
+      connection.revokeConsent()
+      if source == .desktop && connection.consentPersistenceFailed { return }
+      model.setClaudeSource(source)
+    }
+
+    func setProviderEnabled(_ provider: ProviderID, enabled: Bool, model: LiveQuotaModel) {
+      if provider == .claude && !enabled { connection.revokeConsent() }
+      model.setProviderEnabled(provider, enabled: enabled)
     }
 
     func providersChanged(_ providers: Set<ProviderID>) {

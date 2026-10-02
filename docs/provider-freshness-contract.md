@@ -96,7 +96,42 @@ The extension polls every five minutes with failure backoff. While a browser con
 
 See `BrowserExtension/README.md` and `PRIVACY.md`. This development contract is not a released guarantee or proof of Desktop-only acquisition.
 
+The browser acquisition contract above applies only while Automatic is selected;
+Desktop mode never imports a browser observation. Source selection does not stop
+the extension's independently authorized polling.
+
+## Claude Desktop connection contract
+
+The version 0.1.10 Desktop connection is explicit opt-in and exclusive. Automatic
+remains the default; choosing Desktop without consent performs no Desktop read.
+Remembered consent belongs to the normal app, not an older preview. Before
+switching sources the app invalidates the old acquisition generation. Late
+results cannot change the new source's display, account detection or store.
+Persist consent revocation before saving a new Desktop selection. If revocation
+fails, leave Automatic selected; a crash between the writes must not reactivate
+an older consent on restart.
+
+Only a validated account/organization-bound provider response creates a Desktop
+observation. Reset times are provider-reported; no seven-day extrapolation or
+reset transfer from another source is permitted. Desktop observations remain in
+memory. Restarting may show an empty row until the persisted scheduling deadline
+permits a new request; it must say waiting rather than imply a sign-in failure.
+Failed reads retain only a still-eligible same-context observation with its
+original capture time. A confirmed context change clears old values.
+
+Successful polls normally wait five minutes. Verified context changes or an
+upcoming reset may use a 60-second floor, without shortening a provider or
+failure wait. The shared `QuotaTempoDesktopPreview` scheduling namespace and
+exclusive lock persist across normal/preview/helper copies. Refresh, source
+switches, recheck and repair must not erase provider deadlines. Missing macOS
+access never triggers a background prompt. Disconnect, Claude OFF and repair
+revoke consent; no CLI or browser fallback occurs while Desktop remains selected.
+See `PRIVACY.md` for the precise authentication and persistence boundary.
+
 ## Claude local-observation contract
+
+This section applies to **Automatic**, not the separately selected Desktop
+connection. In Desktop mode, no local/CLI/browser acquisition or merging occurs.
 
 QuotaTempo reads only recognized aggregate fields from Claude Desktop history and Claude Code's local usage cache before using the bounded, signed-in Claude Code `/usage` PTY path described in `product-spec.md`. It does not install or activate a status-line bridge, call an undocumented endpoint, read credentials, or require manual quota entry.
 

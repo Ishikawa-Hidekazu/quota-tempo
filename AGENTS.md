@@ -8,6 +8,8 @@
   a crash dialog even for a synthetic, network-free test.
 - Do not accept an Xcode license, change the global developer selection, or
   disable crash reporting as a test workaround.
-- Desktop integration remains a local preview until the release gates in
-  `docs/claude-acquisition-research.md` are satisfied. Synthetic QA does not
-  establish signed-app acceptance or provider permission.
+- Normal Desktop integration is an explicit opt-in Beta. Follow the current
+  release scope in `docs/claude-acquisition-research.md`, including signed-app
+  acceptance, source isolation and distribution verification. Synthetic QA does
+  not establish native acceptance or provider approval. The separate preview
+  and headless acceptance entry point must stay out of public artifacts.

@@ -6,7 +6,7 @@ import Testing
 @testable import QuotaTempoApp
 @testable import QuotaTempoCore
 
-#if DESKTOP_INTEGRATION_PREVIEW
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
   @testable import QuotaTempoDesktopCandidate
 #endif
 
@@ -25,12 +25,13 @@ struct ApplicationContentObservationTests {
       defaults.removePersistentDomain(forName: suite)
     }
     let store = NormalizedSnapshotStore(directory: path)
-    let model = LiveQuotaModel(store: store, acquisitionEnabled: false, now: { hostingInstant })
+    let model = LiveQuotaModel(
+      store: store, acquisitionEnabled: false, now: { hostingInstant }, claudeSource: .desktop)
     let settings = QuotaTempoSettingsModel(loginItemService: UnavailableLoginItemService())
     let presentation = QuotaTempoPresentationModel(defaults: defaults)
     let delegate = QuotaTempoApplicationDelegate()
     let updater = QuotaTempoUpdater(enabled: false)
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       let desktop = DesktopConnectionController(
         clock: { hostingInstant.addingTimeInterval(11) }, makeService: { HostingDesktopStub() },
         repairStore: { _ in .notNeeded },
@@ -68,7 +69,7 @@ struct ApplicationContentObservationTests {
         hosting.rootView.scenario.snapshots.first(where: { $0.provider == .codex })?.weekly?
           .remainingPercent == remaining)
     }
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       let heldControls = hosting.rootView.desktopConnectionControls
       #expect(heldControls.allowsConnection())
       await desktop.connect(localExperimentAuthorized: true)
@@ -100,7 +101,7 @@ struct ApplicationContentObservationTests {
   }
 }
 
-#if DESKTOP_INTEGRATION_PREVIEW
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
   private actor HostingDesktopStub: DesktopConnectionServing {
     func setApproval(_ approval: DesktopAccessApproval) {}
     func prepareForOfflineRepair() -> Bool { true }

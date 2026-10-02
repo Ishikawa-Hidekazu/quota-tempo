@@ -8,6 +8,117 @@ import Testing
 @Suite("Claude browser application integration", .serialized)
 @MainActor
 struct ClaudeBrowserAppTests {
+  @Test("Saved Desktop source is loaded before any local launch acquisition")
+  func savedDesktopSkipsLocalStartup() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let previous = fixture.localSnapshot(remaining: 88)
+    try fixture.store.save(previous)
+    try fixture.ingest(remaining: 73, offset: -1)
+    ClaudeSourcePreferences(defaults: fixture.defaults).save(.desktop)
+    let model = fixture.model(liveProbes: true)
+    #expect(model.claudeSource == .desktop)
+    #expect(!model.allowsLocalClaude)
+    #expect(model.scenario.snapshots.isEmpty)
+    model.menuOpened()
+    model.clockAdvanced()
+    model.scheduledRefresh()
+    model.systemDidWake()
+    model.explicitRefresh()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(model.scenario.snapshots.isEmpty)
+    #expect(try fixture.store.load(.claude) == previous)
+    #expect(fixture.io.readCount == 0 && fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test(
+    "Desktop selection cancels queued local and browser acquisition before connection",
+    arguments: [false, true])
+  func sourceSwitchCancelsQueuedAcquisition(browserConnected: Bool) async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let previous = fixture.localSnapshot(
+      remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600))
+    try fixture.store.save(previous)
+    if browserConnected { try fixture.ingest(remaining: 73, offset: -1) }
+    let queue = DispatchQueue(label: "ClaudeSource.Queued.\(UUID().uuidString)")
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    queue.async { barrier.pause() }
+    try await barrier.waitUntilEntered()
+    let model = fixture.model(liveProbes: true, providerQueue: queue)
+    #expect(model.refreshInFlight)
+    model.explicitRefresh()
+    model.setClaudeSource(.desktop)
+    #expect(!model.allowsLocalClaude && model.scenario.snapshots.isEmpty)
+    #expect(ClaudeSourcePreferences(defaults: fixture.defaults).load() == .desktop)
+    barrier.release()
+    try await waitFor(model) { model.scenario.snapshots.isEmpty }
+    #expect(try fixture.store.load(.claude) == previous)
+    #expect(fixture.io.readCount == 0 && fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Desktop switch rejects a late local result and discards the pending live request")
+  func sourceSwitchRejectsLateLocalResult() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let previous = fixture.localSnapshot(remaining: 41)
+    try fixture.store.save(previous)
+    let model = fixture.model(liveProbes: true)
+    try await waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+    model.explicitRefresh()
+    model.setClaudeSource(.desktop)
+    read.release()
+    try await waitFor(model) { model.scenario.snapshots.isEmpty }
+    #expect(try fixture.store.load(.claude) == previous)
+    #expect(fixture.historyReadCount == 1 && fixture.io.resolverCount == 0)
+    model.explicitRefresh()
+    model.systemDidWake()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(model.claudeSource == .desktop && model.scenario.snapshots.isEmpty)
+    #expect(fixture.historyReadCount == 1 && fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Switching back permits exactly one fresh automatic generation")
+  func sourceSwitchBackRefreshesOnce() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let previous = fixture.localSnapshot(remaining: 41)
+    try fixture.store.save(previous)
+    let model = fixture.model(liveProbes: true)
+    try await waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let first = fixture.pauseNextHistoryRead()
+    defer { first.release() }
+    model.clockAdvanced()
+    try await first.waitUntilEntered()
+    model.explicitRefresh()
+    model.setClaudeSource(.desktop)
+    model.setClaudeSource(.automatic)
+    model.setClaudeSource(.automatic)
+    let second = fixture.pauseNextHistoryRead()
+    defer { second.release() }
+    first.release()
+    try await second.waitUntilEntered()
+    #expect(try fixture.store.load(.claude) == previous)
+    try fixture.setHistory(remaining: 22, capturedAt: fixture.now.addingTimeInterval(-1))
+    second.release()
+    try await waitFor(model) {
+      model.scenario.snapshots.first?.weekly?.remainingPercent == 22
+    }
+    #expect(fixture.historyReadCount == 2 && fixture.io.resolverCount == 1)
+    #expect(ClaudeSourcePreferences(defaults: fixture.defaults).load() == .automatic)
+    fixture.expectIsolated()
+  }
+
   @Test("Exclusive Desktop integration never starts a CLI or imports browser values")
   func exclusiveDesktopSuppressesOtherAcquisition() async throws {
     let fixture = try BrowserAppFixture()
@@ -866,7 +977,8 @@ private struct BrowserAppFixture {
         desktopConfigURL: self.root.appendingPathComponent("synthetic-config.json"),
         cliFallbackEnabled: liveProbes, ptyProbeEnabled: liveProbes, ptyProbe: io,
         probeDirectory: self.root.appendingPathComponent("synthetic-probe")), now: now,
-      providerQueue: providerQueue, localClaudeAcquisitionEnabled: localClaudeAcquisitionEnabled)
+      providerQueue: providerQueue, localClaudeAcquisitionEnabled: localClaudeAcquisitionEnabled,
+      sourcePreferences: ClaudeSourcePreferences(defaults: defaults))
   }
 
   func setHistory(remaining: Double, capturedAt: Date) throws {

@@ -20,6 +20,7 @@ if (!args.length) {
 }
 execFileSync("swift", ["build", "--target", "QuotaTempoDesktopCandidate"], {
   cwd: root, stdio: "inherit", timeout: 120_000,
+  env: { ...process.env, QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW: "1" },
 });
 // SwiftPM's current map excludes stale object files left by older branches.
 const objects = ["QuotaTempoDesktopCandidate", "QuotaTempoCore"].flatMap((target) => {

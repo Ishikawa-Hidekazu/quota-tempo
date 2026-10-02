@@ -12,19 +12,33 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const checker = fileURLToPath(new URL("./check-desktop-artifact-isolation.sh", import.meta.url));
-const required = [
+const requiredRefusal = [
   "--desktop-acceptance", "--consent-desktop-read-only",
   "--acknowledge-provider-permission-unconfirmed",
   '{"status":"desktopAcceptanceNotIncluded","passed":false}',
 ];
 // Independent expectations: removing a marker from the checker must fail QA.
-const forbidden = [
+const requiredInclusion = [
+  "DesktopConnectionController", "DesktopIntegrationControls",
+  "desktopConnection.consentRevision", "QuotaTempo-DesktopCandidate/",
+  "quotatempo.desktop.account.v1:", "Claude Safe Storage",
+  "https://api.anthropic.com/api/oauth/profile", "https://api.anthropic.com/api/oauth/usage",
+];
+const required = [...requiredRefusal, ...requiredInclusion];
+const candidateMarkers = [
   "QuotaTempoDesktopCandidate", "DesktopConnectionController", "DesktopIntegrationControls",
   "DesktopAcceptanceCommand", "DesktopUsageHTTPTransport", "DesktopCredentialLease",
   "desktopConnection.consentRevision", "QuotaTempo-DesktopCandidate/",
   "quotatempo.desktop.account.v1:",
   "Claude Safe Storage", "https://api.anthropic.com/api/oauth/profile",
   "https://api.anthropic.com/api/oauth/usage",
+];
+const previewOnly = [
+  "DesktopAcceptanceCommand", "DesktopAcceptanceRunner", "DesktopAcceptanceConnecting",
+  "DesktopCandidateLocalProbe", "DesktopPreviewApplication", "DesktopPreviewModel",
+  "DesktopPreviewMenu", "DesktopPreviewInstanceLock", "DesktopPreviewTermination",
+  "desktop-local-preview", "desktop-preview.lock", "QuotaTempo.preview-termination",
+  "QuotaTempo Desktop Preview",
 ];
 const allowed = [
   "Claude Desktop", "claudeDesktopHistory", "Library/Application Support/Claude",
@@ -56,7 +70,7 @@ function fixture(t) {
   }
   artifact(main, [...required, ...allowed]);
   artifact(host, allowed);
-  writeFileSync(join(app, "Contents/Resources/PRIVACY.md"), forbidden.join("\n"), { mode: 0o644 });
+  writeFileSync(join(app, "Contents/Resources/PRIVACY.md"), [...candidateMarkers, ...previewOnly].join("\n"), { mode: 0o644 });
   const run = (args = [app]) => {
     // No inherited HOME, credentials, shell hooks, or fallback PATH. In
     // particular, no Swift, UI, browser, signing or network tool is available.
@@ -82,14 +96,24 @@ function rejected(result, message) {
   if (message) assert.match(result.stderr, message);
 }
 
-test("public refusal and legacy Desktop history remain allowed; documentation is not code", (t) => {
+test("normal opt-in connection, reserved refusal and legacy history coexist; documentation is not code", (t) => {
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "desktop_compiled_artifact_isolation=PASS\n");
 });
 
-for (const marker of required) {
+test("shared implementation is allowed in the main binary, including unstripped symbols", (t) => {
+  const f = fixture(t);
+  f.artifact(f.main, [...required, ...candidateMarkers.filter((marker) => marker !== "DesktopAcceptanceCommand"),
+    "_$s26QuotaTempoDesktopCandidate27DesktopConnectionControllerCMa",
+    "DesktopPreviewServing", "DesktopPreviewPresentation", "QuotaTempoDesktopPreview"]);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "desktop_compiled_artifact_isolation=PASS\n");
+});
+
+for (const marker of requiredRefusal) {
   test(`missing public refusal marker: ${marker}`, (t) => {
     const f = fixture(t);
     f.artifact(f.main, required.filter((item) => item !== marker));
@@ -99,18 +123,34 @@ for (const marker of required) {
   });
 }
 
-for (const marker of forbidden) {
-  test(`candidate marker in main binary: ${marker}`, (t) => {
+for (const marker of requiredInclusion) {
+  test(`missing main connection inclusion marker: ${marker}`, (t) => {
+    const f = fixture(t);
+    f.artifact(f.main, required.filter((item) => item !== marker));
+    // Presence elsewhere cannot substitute for inclusion in the main binary.
+    f.artifact(f.host, [marker]);
+    rejected(f.run(), /Desktop connection inclusion marker missing/);
+  });
+}
+
+test("a legacy main with only reserved refusal markers must not pass", (t) => {
+  const f = fixture(t);
+  f.artifact(f.main, [...requiredRefusal, ...allowed]);
+  rejected(f.run(), /Desktop connection inclusion marker missing/);
+});
+
+for (const marker of previewOnly) {
+  test(`preview-only implementation in main binary: ${marker}`, (t) => {
     const f = fixture(t);
     f.artifact(f.main, [...required, marker]);
-    rejected(f.run(), /Desktop candidate implementation found/);
+    rejected(f.run(), /Desktop preview-only implementation found/);
   });
 }
 
 test("candidate Swift mangled symbol is rejected without demangling", (t) => {
   const f = fixture(t);
   f.artifact(f.host, ["_$s26QuotaTempoDesktopCandidate27DesktopConnectionControllerCMa"]);
-  rejected(f.run(), /Desktop candidate implementation found/);
+  rejected(f.run(), /Desktop candidate or preview-only implementation found/);
 });
 
 for (const [path, mode] of [
@@ -126,13 +166,27 @@ for (const [path, mode] of [
   ["Contents/Resources/candidate.a", 0o644],
   ["Contents/Resources/candidate\nobject.o", 0o644],
 ]) {
-  test(`candidate runtime string in nested artifact: ${JSON.stringify(path)}`, (t) => {
+  for (const marker of new Set([...candidateMarkers, ...previewOnly])) {
+    test(`isolated leak ${marker} in ${JSON.stringify(path)}`, (t) => {
+      const f = fixture(t);
+      // Exactly one leak per case: no other marker can accidentally mask a gap.
+      f.artifact(join(f.app, path), [marker], mode);
+      rejected(f.run(), /Desktop candidate or preview-only implementation found/);
+    });
+  }
+  test(`clean nested artifact remains allowed: ${JSON.stringify(path)}`, (t) => {
     const f = fixture(t);
-    // No symbols: catches stripped artifacts using a stable runtime identifier.
-    f.artifact(join(f.app, path), ["QuotaTempo-DesktopCandidate/0.1"], mode);
-    rejected(f.run(), /Desktop candidate implementation found/);
+    f.artifact(join(f.app, path), allowed, mode);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
   });
 }
+
+test("another artifact named QuotaTempo is not exempted as the main binary", (t) => {
+  const f = fixture(t);
+  f.artifact(join(f.app, "Contents/Helpers/QuotaTempo"), required);
+  rejected(f.run(), /Desktop candidate or preview-only implementation found/);
+});
 
 for (const name of ["main", "host"]) {
   for (const kind of ["missing", "directory", "symlink", "non-executable"]) {
@@ -160,7 +214,28 @@ for (const tool of ["grep", "find", "mktemp"]) {
 test("grep error after emitting an apparent refusal match fails closed", (t) => {
   const f = fixture(t);
   f.stub("grep", "printf '%s\\n' '--desktop-acceptance'\nexit 2");
-  rejected(f.run(), /Unable to inspect public Desktop refusal/);
+  rejected(f.run(), /Unable to inspect Public Desktop refusal/);
+});
+
+test("grep error after emitting an apparent inclusion match fails closed", (t) => {
+  const f = fixture(t);
+  f.stub("grep", `for arg in "$@"; do
+  if [[ "$arg" == DesktopConnectionController ]]; then
+    printf '%s\\n' DesktopConnectionController
+    exit 2
+  fi
+done
+exec /usr/bin/grep "$@"`);
+  rejected(f.run(), /Unable to inspect Desktop connection inclusion/);
+});
+
+test("grep error during main preview exclusion fails closed", (t) => {
+  const f = fixture(t);
+  f.stub("grep", `for arg in "$@"; do
+  if [[ "$arg" == DesktopAcceptanceCommand ]]; then exit 2; fi
+done
+exec /usr/bin/grep "$@"`);
+  rejected(f.run(), /Unable to inspect compiled artifact/);
 });
 
 test("grep error during candidate exclusion fails closed", (t) => {
@@ -174,8 +249,24 @@ exec /usr/bin/grep "$@"`);
 
 test("candidate beyond the first read buffer is still rejected", (t) => {
   const f = fixture(t);
-  f.artifact(f.main, [...required, "A".repeat(262_144), "QuotaTempo-DesktopCandidate/0.1"]);
-  rejected(f.run(), /Desktop candidate implementation found/);
+  f.artifact(f.host, ["A".repeat(262_144), "QuotaTempo-DesktopCandidate/0.1"]);
+  rejected(f.run(), /Desktop candidate or preview-only implementation found/);
+});
+
+test("preview implementation beyond the first read buffer in main is rejected", (t) => {
+  const f = fixture(t);
+  f.artifact(f.main, [...required, "A".repeat(262_144), "DesktopAcceptanceCommand"]);
+  rejected(f.run(), /Desktop preview-only implementation found/);
+});
+
+test("all grep checks require complete reads, not early match exits", (t) => {
+  const f = fixture(t);
+  f.stub("grep", `for arg in "$@"; do
+  case "$arg" in -q*|-m*|--quiet|--silent|--max-count*) exit 2 ;; esac
+done
+exec /usr/bin/grep "$@"`);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("a disappearing artifact fails closed", (t) => {
@@ -195,6 +286,21 @@ test("empty find output fails closed", (t) => {
   f.stub("find", "exit 0");
   rejected(f.run(), /No compiled bundle artifacts found/);
 });
+
+test("an unterminated find record fails closed", (t) => {
+  const f = fixture(t);
+  f.stub("find", 'printf "%s\\0%s\\0%s" "$1/MacOS/QuotaTempo" "$1/MacOS/QuotaTempoBrowserHost" "$1/unread.dylib"');
+  rejected(f.run(), /Incomplete compiled artifact listing/);
+});
+
+for (const missing of ["QuotaTempo", "QuotaTempoBrowserHost"]) {
+  test(`find must enumerate the required ${missing} executable`, (t) => {
+    const f = fixture(t);
+    const remaining = missing === "QuotaTempo" ? "QuotaTempoBrowserHost" : "QuotaTempo";
+    f.stub("find", `printf '%s\\0' "$1/MacOS/${remaining}"`);
+    rejected(f.run(), /Required executables missing from compiled artifact listing/);
+  });
+}
 
 test("mktemp failure fails closed", (t) => {
   const f = fixture(t);

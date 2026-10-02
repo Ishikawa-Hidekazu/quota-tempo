@@ -2,18 +2,6 @@ import Combine
 import Foundation
 import QuotaTempoCore
 
-protocol DesktopPreviewServing: Sendable {
-  func setApproval(_ approval: DesktopAccessApproval) async
-  func refresh() async -> DesktopUsageCandidateResult
-  func recheckConnection() async -> DesktopUsageCandidateResult
-}
-
-extension DesktopPreviewServing {
-  func recheckConnection() async -> DesktopUsageCandidateResult { await refresh() }
-}
-
-extension DesktopUsageCandidateService: DesktopPreviewServing {}
-
 enum DesktopPreviewRefreshTrigger: String, Sendable {
   case startup, scheduled, manual, wake, recheck
 }

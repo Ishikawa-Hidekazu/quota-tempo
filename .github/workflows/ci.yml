@@ -20,10 +20,12 @@ jobs:
         run: xcrun swift-format lint --strict --recursive Sources Tests
       - name: Test
         run: bash scripts/test-swift.sh
-      - name: Desktop candidate remains outside shipped products
+      - name: Desktop connection stays isolated to the app
         run: node scripts/test-desktop-candidate-isolation.mjs
       - name: Swift test runner regression checks
         run: node scripts/test-swift-runner.mjs
+      - name: Mods metadata experiment (synthetic only)
+        run: node --test experiments/claude-mods-usage/producer.test.mjs
       - name: Local Desktop preview packaging (synthetic only)
         run: node scripts/test-desktop-integration-builder.mjs
       - name: Local Desktop startup harness (synthetic only)

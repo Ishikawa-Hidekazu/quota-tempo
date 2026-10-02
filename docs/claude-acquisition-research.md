@@ -3,6 +3,50 @@
 Research dates: 2026-09-29 and 2026-09-30. This is a source-based feasibility assessment, not a
 runtime compatibility guarantee or a change to the [freshness contract](provider-freshness-contract.md).
 
+## Official Mods follow-up (2026-10-03)
+
+[Upstream issue #41456](https://github.com/anthropics/claude-code/issues/41456)
+identified [statusline-anywhere](https://github.com/NathanAB/statusline-anywhere/tree/93fb965863571fca8140aca0d17277d121a2f9df)
+as a useful implementation reference. It uses the official `$.session.usage()`
+Mods API, not a new documented account-wide Desktop usage endpoint. The earlier
+paceline comment explicitly describes a terminal-only status line.
+
+The [official Mods overview](https://code.claude.com/docs/en/plugins/mods/overview)
+requires Claude Code 2.1.287 or later and describes the CLI and Desktop Code tab.
+It does not establish support for ordinary Desktop Chat or Cowork while no Code
+session is running. The [fixed upstream type contract](https://github.com/anthropics/claude-code/blob/1c229fcd1e1e4e452e29a8f116b45fe4cfe2c528/mods/types/claude-code.d.ts#L9206-L9228)
+returns recent response-derived rate limits, not a stable account/org identifier
+with an upstream capture time. `sessionId` is not an account identity, and a new
+local read timestamp is not proof that the provider refreshed its observation.
+
+`experiments/claude-mods-usage/` contains an original, synthetic-only metadata
+producer. It accepts recognized percentages and exact future reset timestamps,
+keeps first-seen and last-read times separate, and has no network, filesystem,
+plugin registration or runtime installation. It is not wired into the product.
+Account binding, freshness and runtime compatibility remain separate research
+items; they do not block release of the existing opt-in Desktop connection.
+
+## Release-scope update (2026-10-03)
+
+The project owner approved preparing the existing Desktop connection for an
+explicitly selected, consent-based beta without waiting for a provider response
+or confirmation of provider permission. Natural weekly-rollover acceptance is
+deferred for this release. These decisions supersede the corresponding blockers
+in the dated research below; neither permission nor rollover reliability is
+claimed verified. QuotaTempo remains an independent, unofficial application.
+
+The normal-product integration retains Automatic as its initial source. Selecting
+Desktop is exclusive, including disconnected/error states: it must not silently
+substitute a CLI or browser account. Preview consent is not migrated into the
+normal app. Cancellation, account isolation, durable provider waits, explicit
+macOS permission, final-artifact signing/notarization and technical acceptance
+remain required. The local preview's diagnostic command is not a public feature.
+
+The documented Mods API is a separate feasibility investigation, not a reason
+to delay this integration or silently replace its data source. An API snapshot
+read is not proof of a new provider observation; Desktop Code support is not
+proof of support in ordinary Desktop Chat or while no Code session is running.
+
 ## Requirement and status
 
 The unresolved requirement is reliable Claude weekly remaining (`W`), today's

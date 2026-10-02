@@ -1,4 +1,4 @@
-#if DESKTOP_INTEGRATION_PREVIEW
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
   import Foundation
   import Testing
   import AppKit
@@ -26,6 +26,12 @@
           language == "ja"
             ? "取得と自動接続を停止" : "stops acquisition and automatic reconnection"))
       #expect(copy.consent.contains(language == "ja" ? "取り消しません" : "does not revoke macOS"))
+      #if !DESKTOP_INTEGRATION_PREVIEW
+        #expect(copy.consent.contains("Claude Desktop (Beta)"))
+        #expect(copy.consent.contains(language == "ja" ? "非公式" : "unofficial"))
+        #expect(copy.consent.contains(language == "ja" ? "許諾は未確認" : "permission is unconfirmed"))
+        #expect(copy.consent.contains(language == "ja" ? "別の取得元へ切り替えません" : "never switch"))
+      #endif
     }
 
     @Test("Restart does not hide memory-only Desktop because only Codex has a saved observation")
@@ -38,6 +44,8 @@
       let defaults = UserDefaults(suiteName: name)!
       defer { defaults.removePersistentDomain(forName: name) }
       let preferences = ProviderSelectionPreferences(defaults: defaults)
+      let sources = ClaudeSourcePreferences(defaults: defaults)
+      sources.save(.desktop)
       let store = NormalizedSnapshotStore(directory: directory)
       try store.save(
         ProviderSnapshot(
@@ -47,13 +55,14 @@
             resetAt: now.addingTimeInterval(400_000)), sourceState: .observationSucceeded))
       let model = LiveQuotaModel(
         store: store, acquisitionEnabled: false, preferences: preferences,
-        now: { now }, localClaudeAcquisitionEnabled: false)
+        now: { now }, sourcePreferences: sources)
+      #expect(model.claudeSource == .desktop && !model.allowsLocalClaude)
       #expect(model.enabledProviders == Set(ProviderID.allCases))
       #expect(preferences.load() == nil)
       preferences.save(ProviderSelection(enabled: [.codex]))
       let disabled = LiveQuotaModel(
         store: store, acquisitionEnabled: false, preferences: preferences,
-        now: { now }, localClaudeAcquisitionEnabled: false)
+        now: { now }, sourcePreferences: sources)
       #expect(disabled.enabledProviders == [.codex])
     }
 
@@ -62,7 +71,10 @@
       let support = URL(fileURLWithPath: "/synthetic/support", isDirectory: true)
       let real = DesktopIntegrationConfiguration(arguments: [], supportDirectory: support)
       #expect(!real.providerDisabled)
-      #expect(real.appDirectory.lastPathComponent == "QuotaTempoIntegrationPreview")
+      #expect(
+        real.appDirectory.lastPathComponent
+          == (QuotaTempoRuntimePolicy.isDesktopPreview
+            ? "QuotaTempoIntegrationPreview" : "QuotaTempo"))
       #expect(
         real.schedulingDirectory
           == support.appendingPathComponent("QuotaTempoDesktopPreview", isDirectory: true))
@@ -149,6 +161,11 @@
       #expect(result.snapshots.last?.source == .claudeDesktopDirect)
       #expect(result.snapshots.last?.weekly == nil)
       #expect(result.snapshots.last?.capturedAt == nil)
+      #expect(
+        DesktopIntegrationPresentation.scenario(
+          base: base, desktop: nil, enabled: true, now: now, source: .automatic
+        ).snapshots
+          == base.snapshots)
       #expect(QuotaPlanner.evaluate(result.snapshots.last!, now: now).targetNow == nil)
       #expect(
         DesktopIntegrationPresentation.scenario(base: base, desktop: old, enabled: false, now: now)
