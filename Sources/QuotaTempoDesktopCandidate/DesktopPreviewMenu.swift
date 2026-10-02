@@ -78,6 +78,10 @@ final class DesktopPreviewMenu: NSObject {
       set(.status, "Claude Desktop: Waiting for next update")
       set(.error, "Next update: \(date(nextAllowedAt))")
     }
+    if state == .waitingForProvider {
+      set(.status, "Claude Desktop: Provider wait")
+      set(.error, "Requests paused until: \(date(nextAllowedAt))")
+    }
     let canRecheck =
       state == .waitingForDesktopRenewal || state == .accessDenied
       || state == .serviceWaitUnavailable

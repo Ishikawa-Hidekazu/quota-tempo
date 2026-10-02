@@ -110,7 +110,8 @@ private func successfulReply(_ request: DesktopUsageRequest, utilization: Int = 
     body: Data("{\"seven_day\":{\"utilization\":\(utilization),\"resets_at\":\"\(reset)\"}}".utf8))
 }
 
-private final class SyntheticThrottleStore: DesktopThrottleStoring, @unchecked Sendable {
+// TEST-ONLY in-memory persistence shared by synthetic candidate tests.
+final class SyntheticThrottleStore: DesktopThrottleStoring, @unchecked Sendable {
   private let lock = NSLock()
   private var record: DesktopThrottleRecord?
   private var writes = 0
@@ -590,7 +591,7 @@ struct DesktopUsageCandidateServiceTests {
     let clock = SyntheticServiceClock()
     let counter = SyntheticFetchCounter()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         await counter.increment()
         return successfulReply(request)
@@ -620,7 +621,7 @@ struct DesktopUsageCandidateServiceTests {
     let clock = SyntheticServiceClock()
     let counter = SyntheticFetchCounter()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         await counter.increment()
         if request.startedAt == serviceNow { return successfulReply(request) }
@@ -656,7 +657,7 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let clock = SyntheticServiceClock()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         request.startedAt == serviceNow ? successfulReply(request) : .networkFailure
       })
@@ -677,7 +678,7 @@ struct DesktopUsageCandidateServiceTests {
     let clock = SyntheticServiceClock()
     let counter = SyntheticFetchCounter()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         await counter.increment()
         if request.startedAt > serviceNow { try? await reader.renew() }
@@ -699,7 +700,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func explicitLocalExperimentDoesNotImplyProviderApproval() async throws {
     let reader = try SyntheticDesktopReader()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { request, _ in
       await counter.increment()
       return successfulReply(request)
     }
@@ -716,7 +719,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func preCancelledCallerDoesNotReadCredentialsOrStartHTTP() async throws {
     let reader = try SyntheticDesktopReader()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { request, _ in
       await counter.increment()
       return successfulReply(request)
     }
@@ -737,7 +742,9 @@ struct DesktopUsageCandidateServiceTests {
     let gate = SyntheticFetchGate()
     let reader = try SyntheticDesktopReader(loadGate: gate)
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { request, _ in
       await counter.increment()
       return successfulReply(request)
     }
@@ -759,7 +766,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { request, _ in
       await counter.increment()
       await gate.pause()
       #expect(Task.isCancelled)
@@ -782,7 +791,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func callerCancellationDuringPostFetchIdentityReadRejectsSuccess() async throws {
     let gate = SyntheticFetchGate()
     let reader = try SyntheticDesktopReader(contextGate: gate)
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { request, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { request, _ in
       successfulReply(request)
     }
     await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
@@ -801,7 +812,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { _, _ in
       await counter.increment()
       await gate.pause()
       #expect(Task.isCancelled)
@@ -829,7 +842,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { _, _ in
       await counter.increment()
       await gate.pause()
       #expect(Task.isCancelled)
@@ -853,7 +868,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func noFileOrNetworkBeforeBothApprovals() async throws {
     let reader = try SyntheticDesktopReader()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { _, _ in
       await counter.increment()
       return .networkFailure
     }
@@ -867,7 +884,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func verifiedResponseBecomesObservationAndAutomaticRepeatIsThrottled() async throws {
     let reader = try SyntheticDesktopReader()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) {
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) {
       request, _ in
       await counter.increment()
       return successfulReply(request)
@@ -884,7 +903,9 @@ struct DesktopUsageCandidateServiceTests {
 
   @Test func postRequestIdentityChangeDiscardsEvenSuccessfulResponse() async throws {
     let reader = try SyntheticDesktopReader()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) {
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) {
       request, _ in
       await reader.invalidate()
       return successfulReply(request)
@@ -903,7 +924,9 @@ struct DesktopUsageCandidateServiceTests {
       let reader = try SyntheticDesktopReader()
       await reader.fail(error)
       let counter = SyntheticFetchCounter()
-      let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+      let service = DesktopUsageCandidateService(
+        reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+      ) { _, _ in
         await counter.increment()
         return .networkFailure
       }
@@ -920,7 +943,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) {
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) {
       request, _ in
       await counter.increment()
       await gate.pause()
@@ -952,7 +977,7 @@ struct DesktopUsageCandidateServiceTests {
     let counter = SyntheticFetchCounter()
     let clock = SyntheticServiceClock()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         await counter.increment()
         if request.startedAt == serviceNow { return successfulReply(request) }
@@ -1004,7 +1029,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader(loadGate: gate)
     await reader.fail(error)
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { _, _ in
       await counter.increment()
       return .networkFailure
     }
@@ -1027,7 +1054,9 @@ struct DesktopUsageCandidateServiceTests {
   @Test func revocationCancelsFetchAndRejectsItsResult() async throws {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) {
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) {
       request, _ in
       await gate.pause()
       #expect(Task.isCancelled)
@@ -1054,7 +1083,9 @@ struct DesktopUsageCandidateServiceTests {
     let reader = try SyntheticDesktopReader()
     let gate = SyntheticFetchGate()
     let counter = SyntheticFetchCounter()
-    let service = DesktopUsageCandidateService(reader: reader, clock: serviceClock) { _, _ in
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: SyntheticThrottleStore()
+    ) { _, _ in
       await counter.increment()
       await gate.pause()
       return .response(

@@ -1,0 +1,13 @@
+{
+  "id": "browser-unavailable",
+  "now": "2026-10-02T00:00:00Z",
+  "snapshots": [
+    {
+      "provider": "claude",
+      "source": "claudeBrowser",
+      "lastAttemptAt": "2026-10-01T23:40:00Z",
+      "sourceState": "attemptFailed",
+      "errorCode": "sourceUnavailable"
+    }
+  ]
+}

@@ -285,17 +285,60 @@ struct DesktopThrottleStoreTests {
   }
 
   @Test(arguments: [false, true])
-  func missingRecordRecoveryKeepsLockAndRequiresDeliberateRecheck(initialized: Bool) throws {
+  func unusedStoreRecoveryIsNoOp(existingLock: Bool) throws {
+    let fixture = try ThrottleFixture()
+    if existingLock { try fixture.write(Data(), to: fixture.lockURL) }
+    var before = stat()
+    if existingLock { #expect(lstat(fixture.lockURL.path, &before) == 0) }
+    for _ in 0..<2 {
+      #expect(
+        try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+          == .notNeeded)
+      #expect(try fixture.names() == ["desktop-throttle.lock"])
+      #expect(try Data(contentsOf: fixture.lockURL).isEmpty)
+      var after = stat()
+      #expect(lstat(fixture.lockURL.path, &after) == 0)
+      if existingLock {
+        #expect(before.st_dev == after.st_dev && before.st_ino == after.st_ino)
+      }
+    }
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == nil)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.lockURL).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+    withExtendedLifetime(restarted) {}
+  }
+
+  @Test func unusedApplicationSupportRecoveryIsNoOp() throws {
+    let fixture = try ThrottleFixture()
+    let support = fixture.directory.appendingPathComponent("Library/Application Support")
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    #expect(
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory) == .notNeeded)
+    let candidate = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: candidate.path)
+        == ["desktop-throttle.lock"])
+    #expect(try Data(contentsOf: candidate.appendingPathComponent("desktop-throttle.lock")).isEmpty)
+    let restarted = try DesktopThrottleFileStore.applicationSupport(
+      homeDirectory: fixture.directory)
+    #expect(try restarted.load() == nil)
+  }
+
+  @Test func missingRecordRecoveryKeepsLockAndRequiresDeliberateRecheck() throws {
     let fixture = try ThrottleFixture()
     var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
       directory: fixture.directory)
-    if initialized { try store?.save(throttleRecord()) }
+    try store?.save(throttleRecord())
     store = nil
-    if initialized {
-      try FileManager.default.removeItem(at: fixture.recordURL)
-      #expect(throws: DesktopThrottleStoreError.missingRecord) {
-        try DesktopThrottleFileStore(directory: fixture.directory)
-      }
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
     }
     var before = stat()
     #expect(lstat(fixture.lockURL.path, &before) == 0)

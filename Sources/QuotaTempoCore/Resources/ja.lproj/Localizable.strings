@@ -21,6 +21,12 @@
 "source.claudeBrowser" = "Claudeブラウザ連携";
 "claude.browser.boundary" = "連携したブラウザのアカウントです。Claude Desktopとは異なる場合があります。";
 "claude.browser.refresh.error" = "QuotaTempoブラウザ拡張の接続状態とClaudeへのログインを確認してください。";
+"claude.browser.disconnect" = "ブラウザ接続を解除";
+"claude.browser.disconnect.confirm" = "Claudeのブラウザ接続を解除しますか？";
+"claude.browser.disconnect.boundary" = "QuotaTempoのブラウザ由来の値を消去します。ローカル取得元は別のアカウントの場合があります。Claudeのログインや保存された待機期限は変更しません。";
+"claude.browser.disconnect.failed" = "安全に解除できませんでした。接続解除は確認できていません。";
+"claude.browser.disconnect.cleanup.failed" = "ブラウザ接続は解除済みです。保存済みの表示データを消去できませんでしたが、解除した接続の値は表示しません。";
+"cancel" = "キャンセル";
 "codex.executable.source" = "Codexの種類";
 "codex.executable.version" = "Codexバージョン";
 "codex.executable.source.desktopBundled" = "公式デスクトップアプリ";

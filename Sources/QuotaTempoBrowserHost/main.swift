@@ -27,20 +27,7 @@ do {
 
   // A slow sender must not hold the store lock while another profile signs out.
   let message = try NativeMessageFraming.read(from: .standardInput)
-  // Chrome may start hosts from more than one profile concurrently. Serialize
-  // the binding check and atomic replacement so only one profile can claim it.
-  let lockURL = directory.appendingPathComponent("host.lock")
-  let lock = open(lockURL.path, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
-  guard lock >= 0 else { throw ClaudeBrowserBridgeError.invalidMessage }
-  defer { close(lock) }
-  let deadline = ProcessInfo.processInfo.systemUptime + 1
-  while flock(lock, LOCK_EX | LOCK_NB) != 0 {
-    guard errno == EWOULDBLOCK, ProcessInfo.processInfo.systemUptime < deadline else {
-      throw ClaudeBrowserBridgeError.bridgeBusy
-    }
-    usleep(10_000)
-  }
-  defer { flock(lock, LOCK_UN) }
+  // The store shares one lock with app-side disconnect as well as other hosts.
   try ClaudeBrowserStore(directory: directory).ingest(message, now: Date())
   try FileHandle.standardOutput.write(
     contentsOf: NativeMessageFraming.frame(Data(#"{"ok":true}"#.utf8)))

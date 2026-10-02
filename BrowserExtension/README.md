@@ -10,6 +10,23 @@ The expected host name is `co.ishikawa.quotatempo`. Each observation uses one `c
 
 ## Setup and recovery
 
+The development app's Claude details now include **Disconnect browser**, with
+confirmation, for recovery when the extension has been removed or is unavailable.
+This retires the local connection generation and clears its quota/ownership
+metadata. Native-host writes and app revocation share one bounded lock, and late
+old-generation observations cannot restore the values. An explicit extension
+Disconnect acknowledges the existing tombstone without rewriting it, allowing a
+new Connect afterward. A newly connected generation cannot predate the last
+revocation.
+
+If the extension is still running, its next rejected observation disables that
+generation and stops the alarm while preserving its provider polling deadline.
+An in-flight or next scheduled web observation can run before that rejection:
+the native app cannot send an unsolicited notification to Chrome. Disconnect or
+disable the extension directly to stop browser-side polling immediately. This
+does not sign out of Claude or erase a service wait. App-side disconnect reads
+local fallback metadata only; browser resets/ownership never cross into it.
+
 Use the final Chrome extension ID, which must be the ID allowed by the native host manifest. These commands do not load or manipulate Chrome; installation and removal are dry runs unless `--apply` is supplied:
 
 ```sh

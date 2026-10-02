@@ -104,6 +104,22 @@ struct DesktopPreviewMenuTests {
       preview.menu.item(withTag: DesktopPreviewMenu.Command.recheck.rawValue)?.isHidden == true)
   }
 
+  @Test("A restored provider wait shows its deadline without advising login or allowing recheck")
+  func providerWaitingCopy() {
+    let preview = makeMenu()
+    preview.update(
+      scenario: scenario(available: false), refreshing: false,
+      state: .waitingForProvider, nextAllowedAt: now.addingTimeInterval(2 * 365 * 86400))
+    #expect(title(.status, preview) == "Claude Desktop: Provider wait")
+    #expect(title(.error, preview)?.hasPrefix("Requests paused until: ") == true)
+    #expect(title(.error, preview)?.contains("--") == false)
+    #expect(
+      preview.menu.item(withTag: DesktopPreviewMenu.Command.recheck.rawValue)?.isHidden == true)
+    #expect(
+      preview.menu.item(withTag: DesktopPreviewMenu.Command.close.rawValue)?.isEnabled == true)
+    #expect(preview.menu.item(withTag: DesktopPreviewMenu.Command.quit.rawValue)?.isEnabled == true)
+  }
+
   @Test("Recheck is explicit and disabled until the persisted floor")
   func recheckAvailability() {
     let preview = DesktopPreviewMenu(onRefresh: {}, onQuit: {}, onRecheck: {})

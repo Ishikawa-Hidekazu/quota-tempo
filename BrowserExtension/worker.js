@@ -186,6 +186,7 @@ async function nativeSend(message) {
   try {
     const ack = await chrome.runtime.sendNativeMessage(HOST, message);
     if (ack?.ok === true) return "ok";
+    if (ack?.ok === false && ack.error === "connectionMismatch") return "connectRequired";
     if (ack?.ok === false && (ack.error === undefined
       || typeof ack.error === "string" && /^[a-z][a-zA-Z0-9]{0,63}$/.test(ack.error))) {
       return "nativeRejected";
@@ -212,6 +213,27 @@ async function schedule(value, delay) {
 
 async function stopPolling() {
   await chrome.alarms.clear(ALARM);
+}
+
+async function requireNewConnection(value, delay = 0) {
+  const deadline = Math.max(providerDeadline(value) ?? 0, delay > 0 ? Date.now() + delay : 0);
+  value.pollNotBefore = deadline || null;
+  value.enabled = false;
+  value.blocked = false;
+  value.pin = null;
+  value.tabID = null;
+  value.connectionID = null;
+  value.sequence = null;
+  value.pendingRevocation = null;
+  value.pendingConnect = false;
+  value.pendingConnectedMessage = null;
+  value.pendingDisconnect = false;
+  value.inFlight = null;
+  value.recovering = false;
+  value.nextAt = null;
+  value.status = "connectRequired";
+  await save(value);
+  await stopPolling();
 }
 
 function pollingDeadline(value) {
@@ -265,6 +287,13 @@ async function finishObservation(value, result, observedAt = new Date(Date.now()
     value.nextAt = now + REVOCATION_DELAYS[0];
   }
   const ack = await sendNext(value, checked, observedAt, revocation);
+  if (ack === "connectRequired") {
+    // App-side revocation is terminal for this generation, not a transient host
+    // failure. Keep provider waits even when an explicit new Connect follows.
+    value.failureCount = checked.status === "ok" ? 0 : value.failureCount + 1;
+    await requireNewConnection(value, nextDelay(value, checked.status));
+    return;
+  }
   value.inFlight = null;
   value.status = ack === "ok"
     ? (waitingForPinnedAccount ? "waitingForAccount" : checked.status) : ack;
@@ -374,6 +403,10 @@ async function sendPendingDisconnect(value) {
   const ack = value.pendingRevocation?.message.status === "disconnected"
     ? await retryRevocation(value, true)
     : await sendNext(value, disconnected, undefined, true);
+  if (ack === "connectRequired") {
+    await requireNewConnection(value);
+    return ack;
+  }
   value.pendingDisconnect = ack !== "ok";
   value.status = ack === "ok" ? "disconnected" : ack;
   if (ack === "ok") {
@@ -392,7 +425,9 @@ async function retryPendingConnect(value) {
     ...value.pendingConnectedMessage, observedAt: new Date(Date.now()).toISOString()
   };
   await save(value);
-  return nativeSend(value.pendingConnectedMessage);
+  const ack = await nativeSend(value.pendingConnectedMessage);
+  if (ack === "connectRequired") await requireNewConnection(value);
+  return ack;
 }
 
 async function connect(reconnect) {
@@ -451,6 +486,10 @@ async function connect(reconnect) {
   await save(value);
   const ack = await nativeSend(message);
   value.lastObservedAt = message.observedAt;
+  if (ack === "connectRequired") {
+    await requireNewConnection(value);
+    return view(value);
+  }
   if (ack !== "ok") {
     value.status = ack;
     await save(value);
@@ -541,6 +580,10 @@ chrome.alarms.onAlarm.addListener(alarm => {
     if (REVOCATIONS.has(value.pendingRevocation?.message.status)) {
       const status = value.pendingRevocation.message.status;
       const ack = await retryRevocation(value);
+      if (ack === "connectRequired") {
+        await requireNewConnection(value);
+        return;
+      }
       if (ack !== "ok") await scheduleRevocationRetry(value);
       else if (status === "signedOut") {
         value.inFlight = null;

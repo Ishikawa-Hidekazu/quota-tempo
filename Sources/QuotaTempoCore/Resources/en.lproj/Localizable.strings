@@ -21,6 +21,12 @@
 "source.claudeBrowser" = "Claude browser connection";
 "claude.browser.boundary" = "Connected browser account. This may differ from Claude Desktop.";
 "claude.browser.refresh.error" = "Check the QuotaTempo browser extension connection and Claude sign-in.";
+"claude.browser.disconnect" = "Disconnect browser";
+"claude.browser.disconnect.confirm" = "Disconnect the Claude browser connection?";
+"claude.browser.disconnect.boundary" = "Browser values will be removed from QuotaTempo. Local sources may use a different account. Claude sign-in and saved provider waits are unchanged.";
+"claude.browser.disconnect.failed" = "Could not disconnect safely. The connection has not been confirmed as disconnected.";
+"claude.browser.disconnect.cleanup.failed" = "Browser connection revoked. Saved display data could not be cleared; revoked values will not be shown.";
+"cancel" = "Cancel";
 "codex.executable.source" = "Codex installation";
 "codex.executable.version" = "Codex version";
 "codex.executable.source.desktopBundled" = "Official desktop app";

@@ -229,7 +229,7 @@ struct DesktopCredentialReaderTests {
     let clock = ReaderClock()
     let calls = ReaderCounter()
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { _, _ in
         calls.increment()
         return .response(
@@ -331,7 +331,7 @@ struct DesktopCredentialReaderTests {
     let count = ReaderCounter()
     let approval = DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true)
     let service = DesktopUsageCandidateService(
-      reader: reader, clock: { clock.now() },
+      reader: reader, clock: { clock.now() }, throttleStore: SyntheticThrottleStore(),
       fetch: { request, _ in
         count.increment()
         if count.count == 1 {

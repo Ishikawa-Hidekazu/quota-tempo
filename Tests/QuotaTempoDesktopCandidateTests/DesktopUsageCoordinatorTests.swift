@@ -72,6 +72,15 @@ struct DesktopUsageCoordinatorTests {
     #expect(restarted.restoreThrottle(first.throttleRecord(now: now), now: now) == true)
     #expect(restarted.nextAllowedAt == retry)
     #expect(!restarted.throttleRecord(now: now).unsupportedServiceWait)
+    let refreshed = context(expiresAt: retry.addingTimeInterval(3600))
+    #expect(restarted.begin(context: refreshed, now: now.addingTimeInterval(60)) == nil)
+    #expect(restarted.state == .waitingForProvider)
+    #expect(restarted.observation == nil)
+    #expect(restarted.nextAllowedAt == retry)
+    #expect(
+      restarted.begin(
+        context: refreshed, now: now.addingTimeInterval(61), userRequestedRecheck: true) == nil)
+    #expect(restarted.throttleRecord(now: now.addingTimeInterval(61)).serviceNotBefore == retry)
     #expect(
       restarted.begin(context: context(expiresAt: retry.addingTimeInterval(3600)), now: retry)
         != nil)

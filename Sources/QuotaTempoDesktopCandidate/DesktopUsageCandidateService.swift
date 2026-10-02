@@ -32,7 +32,7 @@ actor DesktopUsageCandidateService {
   private let reader: any DesktopCredentialReading
   private let fetch: Fetch
   private let clock: @Sendable () -> Date
-  private let throttleStore: (any DesktopThrottleStoring)?
+  private let throttleStore: any DesktopThrottleStoring
   private var throttleLoaded = false
   private var persistenceFailed = false
   private var lastSavedRecord: DesktopThrottleRecord?
@@ -45,7 +45,7 @@ actor DesktopUsageCandidateService {
   init(
     reader: any DesktopCredentialReading = DesktopCredentialReader(),
     clock: @escaping @Sendable () -> Date = Date.init,
-    throttleStore: (any DesktopThrottleStoring)? = nil,
+    throttleStore: any DesktopThrottleStoring,
     fetch: @escaping Fetch = { request, lease in
       await DesktopUsageHTTPTransport().fetch(request: request, lease: lease)
     }
@@ -166,7 +166,7 @@ actor DesktopUsageCandidateService {
   }
 
   private func loadThrottle() -> Bool {
-    guard let throttleStore, !throttleLoaded else { return true }
+    guard !throttleLoaded else { return true }
     do {
       if let record = try throttleStore.load() {
         guard coordinator.restoreThrottle(record, now: clock()) else {
@@ -185,7 +185,6 @@ actor DesktopUsageCandidateService {
   }
 
   private func saveThrottle() -> Bool {
-    guard let throttleStore else { return true }
     do {
       let record = coordinator.throttleRecord(now: clock())
       try throttleStore.save(record)

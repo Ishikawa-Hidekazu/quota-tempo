@@ -53,11 +53,17 @@ No identity, ownership fingerprint, credential revision or usage value is stored
 there. Provider requests stop while the checkpoint cannot be validated or saved.
 The crash boundary between an HTTP response and its durable checkpoint still
 needs acceptance. The isolated helper has an explicit offline scheduling-repair
-command: it requires the same exclusive lock, preserves valid records, refuses
-unknown schema versions, and repairs a missing/corrupt record into a stopped state
+command: it requires the same exclusive lock, preserves valid records, leaves
+unused stores uninitialized, refuses unknown schema versions, and repairs a lost/corrupt record into a stopped state
 with a 15-minute floor. It makes no provider request and does not repair permissions.
 Restart safety therefore remains a release gate. Public integration must include consent,
 revocation, recovery and an updated privacy contract before this path can be shipped.
+The service requires an explicit scheduling store; it cannot silently operate
+without persistence. A restored finite provider wait remains binding, even when
+it spans years. The preview identifies the provider wait and its next permitted
+time; repair and recheck cannot erase it. Ordinary successful polling waits five
+minutes, with a 60-second minimum for verified context renewal/account changes
+or an upcoming reset. These exceptions never shorten a provider/failure wait.
 
 ## Experimental opt-in browser connection
 
@@ -90,7 +96,9 @@ Sparkle checks the official HTTPS appcast at `ishikawa.co` at most once per day 
 
 Turn off **Launch at login** if enabled, quit QuotaTempo, remove `QuotaTempo.app`, and optionally remove the QuotaTempo Application Support directory and the `co.ishikawa.QuotaTempo` macOS preference to erase its normalized observations, display mode, provider choices, and guide completion. Removing QuotaTempo does not alter Codex or Claude authentication.
 
-For the experimental browser bridge, disconnect in the extension, disable or remove the extension, and use `node scripts/install-browser-bridge.mjs --remove --apply` from the source checkout. This removes only its recognized native-messaging manifest, host configuration, and normalized browser observation. It does not erase local Codex/Claude observations or change either provider's sign-in. `--remove` without `--apply` is a dry run. Stop browser-bridge activity before removal; the script refuses unsafe paths and reports an incomplete rollback or cleanup explicitly.
+For the experimental browser bridge, **Disconnect browser** in QuotaTempo's Claude details revokes the local connection even if the extension was removed. After confirmation, it clears browser quota/ownership fields and rejects late messages under the same lock used by the native host. Local metadata can then be displayed as a separate source, without inheriting browser resets or triggering a live request. Claude sign-in is unchanged. If the extension is still running, it stops when the host next rejects that connection; an in-flight or next scheduled observation can still run because the app cannot push a notification to Chrome. Disable/disconnect the extension directly to stop it there immediately. Reconnect preserves its saved provider wait.
+
+To remove the bridge installation, disable or remove the extension and use `node scripts/install-browser-bridge.mjs --remove --apply` from the source checkout. This removes only its recognized native-messaging manifest, host configuration, and normalized browser observation. It does not erase local Codex/Claude observations or change either provider's sign-in. `--remove` without `--apply` is a dry run. Stop browser-bridge activity before removal; the script refuses unsafe paths and reports an incomplete rollback or cleanup explicitly.
 
 ## Upstream compatibility
 

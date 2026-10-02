@@ -18,6 +18,7 @@ enum DesktopThrottleStoreError: Error, Equatable, Sendable {
 }
 
 enum DesktopThrottleRecoveryResult: Equatable, Sendable {
+  case notNeeded
   case preserved
   case repaired
   case unsupportedVersion
@@ -235,6 +236,9 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
   private func recover(now: Date) throws -> DesktopThrottleRecoveryResult {
     // This private instance cannot escape; its flock spans inspection and save.
     let data = try readData()
+    // No checkpoint and no durable initialization marker means unused, not lost.
+    // Keep the validated lifetime lock, but do not invent a wait or initialize it.
+    if data == nil, lockStamp.size == 0 { return .notNeeded }
     let inspected = recordStamp
     if let data {
       if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

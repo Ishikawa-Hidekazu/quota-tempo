@@ -88,10 +88,15 @@ public struct QuotaMenuView: View {
   private let loginItemChangeFailed: Bool
   private let onSetProviderEnabled: ((ProviderID, Bool) -> Void)?
   private let onCopyDiagnostics: (() -> Bool)?
+  private let onDisconnectBrowser: (() -> Void)?
+  private let browserDisconnectInFlight: Bool
+  private let browserDisconnectFailed: Bool
+  private let browserDisconnectCleanupFailed: Bool
   @Binding private var menuBarDisplayMode: MenuBarDisplayMode
   @Binding private var onboardingPresented: Bool
   @Binding private var launchAtLogin: Bool
   @State private var diagnosticsCopied = false
+  @State private var confirmsBrowserDisconnect = false
 
   public init(
     scenario: FixtureScenario,
@@ -114,8 +119,12 @@ public struct QuotaMenuView: View {
     launchAtLogin: Binding<Bool> = .constant(false),
     loginItemState: LoginItemState = .disabled,
     loginItemChangeFailed: Bool = false,
+    browserDisconnectInFlight: Bool = false,
+    browserDisconnectFailed: Bool = false,
+    browserDisconnectCleanupFailed: Bool = false,
     onSetProviderEnabled: ((ProviderID, Bool) -> Void)? = nil,
     onRefresh: (() -> Void)? = nil,
+    onDisconnectBrowser: (() -> Void)? = nil,
     onCheckForUpdates: (() -> Void)? = nil,
     onCopyDiagnostics: (() -> Bool)? = nil,
     onOpenWindow: (() -> Void)? = nil,
@@ -145,6 +154,10 @@ public struct QuotaMenuView: View {
     self.loginItemChangeFailed = loginItemChangeFailed
     self.onSetProviderEnabled = onSetProviderEnabled
     self.onRefresh = onRefresh
+    self.onDisconnectBrowser = onDisconnectBrowser
+    self.browserDisconnectInFlight = browserDisconnectInFlight
+    self.browserDisconnectFailed = browserDisconnectFailed
+    self.browserDisconnectCleanupFailed = browserDisconnectCleanupFailed
     self.onCheckForUpdates = onCheckForUpdates
     self.onCopyDiagnostics = onCopyDiagnostics
     self.onOpenWindow = onOpenWindow
@@ -193,6 +206,17 @@ public struct QuotaMenuView: View {
       self.onMenuOpen?()
     }
     .onDisappear { self.onMenuClose?() }
+    .confirmationDialog(
+      self.copy.text("claude.browser.disconnect.confirm"),
+      isPresented: self.$confirmsBrowserDisconnect, titleVisibility: .visible
+    ) {
+      Button(self.copy.text("claude.browser.disconnect"), role: .destructive) {
+        self.onDisconnectBrowser?()
+      }
+      Button(self.copy.text("cancel"), role: .cancel) {}
+    } message: {
+      Text(self.copy.text("claude.browser.disconnect.boundary"))
+    }
   }
 
   private var mainContent: some View {
@@ -624,6 +648,19 @@ public struct QuotaMenuView: View {
           Text(self.copy.text("claude.browser.boundary"))
             .font(.caption)
             .foregroundStyle(.secondary)
+          if self.onDisconnectBrowser != nil {
+            Button {
+              self.confirmsBrowserDisconnect = true
+            } label: {
+              Label(self.copy.text("claude.browser.disconnect"), systemImage: "link")
+            }
+            .disabled(self.browserDisconnectInFlight)
+            if self.browserDisconnectFailed {
+              Text(self.copy.text("claude.browser.disconnect.failed"))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
         } else if plan.provider == .claude {
           Text(self.copy.text("claude.local.boundary"))
             .font(.caption)
@@ -634,6 +671,12 @@ public struct QuotaMenuView: View {
               .foregroundStyle(.secondary)
           }
         }
+      }
+
+      if plan.provider == .claude, self.browserDisconnectCleanupFailed {
+        Text(self.copy.text("claude.browser.disconnect.cleanup.failed"))
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       if plan.fiveHourRisk {

@@ -207,6 +207,8 @@ The extension is disabled until connected by the user. Chrome makes same-origin 
 
 See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). The web routes are not a stable public API. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
 
+The development app provides **Disconnect browser** in Claude details, including when the extension has been removed. It clears browser values and revokes the local connection without changing Claude sign-in or silently combining accounts. A still-running extension stops after the next host rejection, so an in-flight or next scheduled observation may still run; disconnect or disable it in Chrome for immediate browser-side stop. Reconnect preserves its saved polling deadline. This control is not yet in a published release.
+
 ## Safety boundary
 
 QuotaTempo must not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.

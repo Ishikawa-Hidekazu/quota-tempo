@@ -69,6 +69,7 @@ enum DesktopUsageState: String, Sendable {
   case serviceWaitUnavailable
   case persistenceUnavailable
   case waitingForNextRefresh
+  case waitingForProvider
 }
 
 enum DesktopUsageReply: Sendable {
@@ -271,7 +272,9 @@ struct DesktopUsageCoordinator: Sendable {
       .max()
     guard deadline.map({ now >= $0 }) ?? true, let context else {
       if observation == nil, state == .contextChanged || state == .ready {
-        state = .waitingForNextRefresh
+        state =
+          serviceNotBefore.map { now < $0 } == true
+          ? .waitingForProvider : .waitingForNextRefresh
       }
       return nil
     }

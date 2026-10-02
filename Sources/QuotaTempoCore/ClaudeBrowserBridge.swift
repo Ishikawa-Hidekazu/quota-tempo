@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum ClaudeBrowserBridgeError: String, Error {
@@ -145,6 +146,16 @@ public struct ClaudeBrowserRecord: Codable, Equatable, Sendable {
     _ message: ClaudeBrowserMessage, to previous: Self?, now: Date
   ) throws -> Self {
     let observed = try message.validate(now: now)
+    // The app may revoke without the extension's next sequence. A later explicit
+    // extension Disconnect acknowledges that same revocation without reopening it.
+    if let previous, !previous.enabled, previous.lastStatus == .disconnected,
+      message.status == .disconnected,
+      UUID(uuidString: previous.profileID) == UUID(uuidString: message.profileID),
+      UUID(uuidString: previous.connectionID) == UUID(uuidString: message.connectionID),
+      message.sequence >= previous.lastSequence
+    {
+      return previous
+    }
     // A lost ACK can replay a value-free control message without changing the
     // observation time. Successful quota observations are never replayed.
     if let previous, message.status != .ok, message.status == previous.lastStatus,
@@ -157,6 +168,7 @@ public struct ClaudeBrowserRecord: Codable, Equatable, Sendable {
     }
     if message.status == .connected {
       guard message.sequence == 0, previous?.enabled != true,
+        previous.map({ observed >= $0.lastMessageAt }) ?? true,
         previous?.retiredConnectionIDs.contains(message.connectionID.lowercased()) != true,
         previous.map({ UUID(uuidString: $0.connectionID) != UUID(uuidString: message.connectionID) }
         )
@@ -270,6 +282,31 @@ public struct ClaudeBrowserStore: Sendable {
   }
 
   public func ingest(_ data: Data, now: Date) throws {
+    try withConnectionLock { try ingestLocked(data, now: now) }
+  }
+
+  // A local, explicit revocation also works after the extension was removed.
+  // Retiring the current connection rejects queued/late native-host messages.
+  public func disconnect(now: Date) throws {
+    try withConnectionLock {
+      guard now.timeIntervalSince1970.isFinite, now.timeIntervalSince1970 > 0 else {
+        throw ClaudeBrowserBridgeError.invalidMessage
+      }
+      guard let previous = try load(), previous.enabled else { return }
+      let disconnected = ClaudeBrowserRecord(
+        schemaVersion: 1, profileID: previous.profileID, connectionID: previous.connectionID,
+        lastSequence: previous.lastSequence, lastStatus: .disconnected,
+        retiredConnectionIDs: previous.retiredConnectionIDs + [previous.connectionID],
+        accountFingerprint: nil, organizationFingerprint: nil, principalFingerprint: nil,
+        lastMessageAt: max(now, previous.lastMessageAt), enabled: false,
+        snapshot: ProviderSnapshot(
+          provider: .claude, source: .claudeBrowser, capturedAt: nil, weekly: nil,
+          sourceState: .neverObserved))
+      try FileAtomicDataWriter().write(JSONEncoder().encode(disconnected), to: url)
+    }
+  }
+
+  private func ingestLocked(_ data: Data, now: Date) throws {
     let message = try ClaudeBrowserMessage.decode(data)
     let previous = try load()
     let record: ClaudeBrowserRecord
@@ -290,6 +327,38 @@ public struct ClaudeBrowserStore: Sendable {
     if record != previous {
       try FileAtomicDataWriter().write(JSONEncoder().encode(record), to: url)
     }
+  }
+
+  private func withConnectionLock<T>(_ action: () throws -> T) throws -> T {
+    guard !LocalPathSafety.containsSymlink(atOrAbove: url, fileManager: .default) else {
+      throw ClaudeAutomaticAdapterError.unsafePath
+    }
+    let directory = url.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let lockURL = directory.appendingPathComponent("host.lock")
+    let descriptor = open(
+      lockURL.path, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+    guard descriptor >= 0 else { throw ClaudeBrowserBridgeError.invalidMessage }
+    defer { close(descriptor) }
+    var identity = stat()
+    guard fstat(descriptor, &identity) == 0, identity.st_mode & S_IFMT == S_IFREG,
+      identity.st_uid == geteuid(), identity.st_nlink == 1, identity.st_mode & 0o7777 == 0o600
+    else { throw ClaudeBrowserBridgeError.invalidMessage }
+    let deadline = ProcessInfo.processInfo.systemUptime + 1
+    while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+      guard errno == EWOULDBLOCK, ProcessInfo.processInfo.systemUptime < deadline else {
+        throw ClaudeBrowserBridgeError.bridgeBusy
+      }
+      usleep(10_000)
+    }
+    defer { flock(descriptor, LOCK_UN) }
+    var current = stat()
+    guard !LocalPathSafety.containsSymlink(atOrAbove: url, fileManager: .default),
+      lstat(lockURL.path, &current) == 0, current.st_dev == identity.st_dev,
+      current.st_ino == identity.st_ino
+    else { throw ClaudeBrowserBridgeError.invalidMessage }
+    return try action()
   }
 
   // A connected browser owns the whole Claude observation. It never lends just

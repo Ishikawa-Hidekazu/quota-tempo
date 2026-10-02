@@ -9,6 +9,7 @@ enum DesktopPreviewPresentation {
     case .serviceWaitUnavailable: "Provider wait unsupported; automatic requests stopped."
     case .persistenceUnavailable: "Local scheduling state could not be saved or verified."
     case .waitingForNextRefresh: "Waiting for the next scheduled update."
+    case .waitingForProvider: "Provider requested a wait; requests remain paused."
     case .waitingForDesktopRenewal: "Previous sign-in refused; renew or recheck connection."
     default: nil
     }
@@ -54,7 +55,8 @@ enum DesktopPreviewPresentation {
   ) -> DesktopUsageObservation? {
     guard result.credentialError == nil, validDate(now) else { return nil }
     switch result.state {
-    case .current, .contextChanged, .waitingForNextRefresh, .requesting, .rateLimited,
+    case .current, .contextChanged, .waitingForNextRefresh, .waitingForProvider, .requesting,
+      .rateLimited,
       .temporaryFailure, .timedOut,
       .invalidResponse:
       break
@@ -105,7 +107,7 @@ enum DesktopPreviewPresentation {
     case .missingScope, .accessDenied: return .usageRestricted
     case .serviceWaitUnavailable: return .invalidResponse
     case .persistenceUnavailable: return .atomicWriteFailed
-    case .rateLimited, .temporaryFailure: return .temporaryFailure
+    case .rateLimited, .waitingForProvider, .temporaryFailure: return .temporaryFailure
     case .timedOut: return .timeout
     case .invalidResponse, .identityMismatch, .invalidClock: return .invalidResponse
     case .consentRequired, .permissionDenied, .identityUnavailable, .contextChanged, .ready, .stale,

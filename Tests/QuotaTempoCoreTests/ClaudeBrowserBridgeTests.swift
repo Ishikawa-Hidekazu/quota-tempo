@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -448,7 +449,7 @@ struct ClaudeBrowserBridgeTests {
     try store.ingest(self.data(self.envelope(sequence: 1)), now: self.now)
     try store.ingest(self.data(self.envelope(status: "disconnected", sequence: 2)), now: self.now)
     let disconnected = try Data(contentsOf: store.url)
-    for status in ["ok", "unavailable", "rateLimited", "signedOut", "disconnected"] {
+    for status in ["ok", "unavailable", "rateLimited", "signedOut"] {
       #expect(throws: ClaudeBrowserBridgeError.connectionMismatch) {
         try store.ingest(self.data(self.envelope(status: status, sequence: 3)), now: self.now)
       }
@@ -456,6 +457,8 @@ struct ClaudeBrowserBridgeTests {
       #expect(try store.load()?.enabled == false)
       #expect(store.selectedSnapshot(now: self.now) == nil)
     }
+    try store.ingest(self.data(self.envelope(status: "disconnected", sequence: 3)), now: self.now)
+    #expect(try Data(contentsOf: store.url) == disconnected)
     #expect(throws: ClaudeBrowserBridgeError.connectionMismatch) { try self.connect(store) }
     #expect(try Data(contentsOf: store.url) == disconnected)
   }
@@ -856,6 +859,100 @@ struct ClaudeBrowserBridgeTests {
     #expect(rebound.capturedAt == self.now)
   }
 
+  @Test(
+    "App disconnect retires ownership and rejects late extension messages without the extension")
+  func appDisconnectRetiresConnection() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ClaudeBrowserStore(directory: root)
+    try self.connect(store)
+    try store.ingest(self.data(self.envelope(offset: -60)), now: self.now)
+    try store.disconnect(now: self.now)
+    let disconnected = try #require(try store.load())
+    #expect(!disconnected.enabled)
+    #expect(disconnected.lastStatus == .disconnected)
+    #expect(disconnected.retiredConnectionIDs == [self.connectionID])
+    #expect(disconnected.accountFingerprint == nil)
+    #expect(disconnected.organizationFingerprint == nil)
+    #expect(disconnected.principalFingerprint == nil)
+    #expect(disconnected.snapshot.weekly == nil)
+    #expect(disconnected.snapshot.fiveHour == nil)
+    #expect(disconnected.snapshot.capturedAt == nil)
+    #expect(store.selectedSnapshot(now: self.now) == nil)
+    let bytes = try Data(contentsOf: store.url)
+    try store.disconnect(now: self.now.addingTimeInterval(1))
+    #expect(try Data(contentsOf: store.url) == bytes)
+    try store.ingest(self.data(self.envelope(status: "disconnected", offset: 1)), now: self.now)
+    #expect(try Data(contentsOf: store.url) == bytes)
+    for status in ["ok", "unavailable", "rateLimited", "connected"] {
+      #expect(throws: ClaudeBrowserBridgeError.connectionMismatch) {
+        try store.ingest(self.data(self.envelope(status: status, offset: 1)), now: self.now)
+      }
+      #expect(try Data(contentsOf: store.url) == bytes)
+    }
+    let next = "40000000-0000-4000-8000-000000000004"
+    #expect(throws: ClaudeBrowserBridgeError.connectionMismatch) {
+      try store.ingest(
+        self.data(
+          self.envelope(
+            status: "connected", offset: -1, connectionID: next)), now: self.now)
+    }
+    try store.ingest(
+      self.data(
+        self.envelope(
+          status: "connected", offset: 1, connectionID: next)), now: self.now)
+    try store.ingest(self.data(self.envelope(offset: 2, connectionID: next)), now: self.now)
+    #expect(store.selectedSnapshot(now: self.now)?.weekly?.remainingPercent == 73.5)
+  }
+
+  @Test("App and native host writers use the same lock and never write through contention")
+  func sharedWriterLock() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ClaudeBrowserStore(directory: root)
+    try self.connect(store)
+    try store.ingest(self.data(self.envelope()), now: self.now)
+    let bytes = try Data(contentsOf: store.url)
+    let descriptor = open(root.appendingPathComponent("host.lock").path, O_RDWR)
+    #expect(descriptor >= 0)
+    defer { close(descriptor) }
+    #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+    #expect(throws: ClaudeBrowserBridgeError.bridgeBusy) { try store.disconnect(now: self.now) }
+    #expect(throws: ClaudeBrowserBridgeError.bridgeBusy) {
+      try store.ingest(self.data(self.envelope(offset: 1)), now: self.now)
+    }
+    #expect(try Data(contentsOf: store.url) == bytes)
+    #expect(flock(descriptor, LOCK_UN) == 0)
+    try store.disconnect(now: self.now)
+    #expect(try store.load()?.enabled == false)
+  }
+
+  @Test(
+    "Unsafe lock objects cannot authorize disconnect or ingestion",
+    arguments: ["symlink", "hardlink", "mode"])
+  func unsafeWriterLocks(kind: String) throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ClaudeBrowserStore(directory: root)
+    try self.connect(store)
+    let bytes = try Data(contentsOf: store.url)
+    let lock = root.appendingPathComponent("host.lock")
+    let other = root.appendingPathComponent("other-lock")
+    if kind == "symlink" {
+      try FileManager.default.moveItem(at: lock, to: other)
+      try FileManager.default.createSymbolicLink(at: lock, withDestinationURL: other)
+    } else if kind == "hardlink" {
+      try FileManager.default.linkItem(at: lock, to: other)
+    } else {
+      try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lock.path)
+    }
+    #expect(throws: (any Error).self) { try store.disconnect(now: self.now) }
+    #expect(throws: (any Error).self) {
+      try store.ingest(self.data(self.envelope()), now: self.now)
+    }
+    #expect(try Data(contentsOf: store.url) == bytes)
+  }
+
   @Test("Browser persistence round-trips normalized metadata with private permissions")
   func persistenceRoundTrip() throws {
     let root = try self.temporaryDirectory()
@@ -1120,7 +1217,8 @@ struct ClaudeBrowserBridgeTests {
   private func connect(
     _ store: ClaudeBrowserStore, profileID: String? = nil, connectionID: String? = nil
   ) throws {
-    var handshake = self.envelope(status: "connected", offset: -300, connectionID: connectionID)
+    let offset = try store.load()?.lastMessageAt.timeIntervalSince(self.now) ?? -300
+    var handshake = self.envelope(status: "connected", offset: offset, connectionID: connectionID)
     handshake["profileID"] = profileID ?? self.profileID
     try store.ingest(self.data(handshake), now: self.now)
   }

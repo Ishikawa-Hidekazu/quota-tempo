@@ -44,11 +44,15 @@ final class LiveQuotaModel: ObservableObject {
   @Published private(set) var scenario: FixtureScenario
   @Published private(set) var refreshInFlight = false
   @Published private(set) var enabledProviders: Set<ProviderID>
+  @Published private(set) var browserDisconnectInFlight = false
+  @Published private(set) var browserDisconnectFailed = false
+  @Published private(set) var browserDisconnectCleanupFailed = false
 
   private let store: NormalizedSnapshotStore
   private let acquisitionGate: ProviderAcquisitionGate
   private let preferences: ProviderSelectionPreferences?
   private let claudeAdapter: ClaudeAutomaticAdapter
+  private let workerQueue: DispatchQueue
   private let now: @Sendable () -> Date
   private var selection: ProviderSelection
   private var initialDetectionPending: Bool
@@ -59,6 +63,8 @@ final class LiveQuotaModel: ObservableObject {
   private var pendingClaudeRefresh: ClaudeRefreshRequest?
   private var transientSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var scenarioRevision = 0
+  private var claudeConnectionRevision = 0
+  private var claudeRefreshCancellation = ClaudeRefreshCancellation()
 
   init(
     store: NormalizedSnapshotStore,
@@ -69,14 +75,17 @@ final class LiveQuotaModel: ObservableObject {
       resolveCLIOnRefresh: true,
       ptyProbeEnabled: true
     ),
-    now: @escaping @Sendable () -> Date = { Date() }
+    now: @escaping @Sendable () -> Date = { Date() },
+    providerQueue: DispatchQueue? = nil
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
     self.preferences = preferences
     self.claudeAdapter = claudeAdapter
+    self.workerQueue = providerQueue ?? Self.providerQueue
     self.now = now
-    let storedScenario = self.store.scenario(now: now())
+    let storedScenario = Self.validatedBrowserPresentation(
+      self.store.scenario(now: now()), store: store)
     if let configured = preferences?.load() {
       self.selection = configured
       self.initialDetectionPending = false
@@ -122,7 +131,7 @@ final class LiveQuotaModel: ObservableObject {
           to: stored,
           now: now
         )
-        return selection.filtering(complete)
+        return selection.filtering(Self.validatedBrowserPresentation(complete, store: store))
       }.value
       guard self.scenarioRevision == revision else { return }
       self.scenario = loaded
@@ -144,6 +153,46 @@ final class LiveQuotaModel: ObservableObject {
   func explicitRefresh() {
     self.refreshCodex(trigger: .explicitRefresh, force: true)
     self.refreshClaude(trigger: .explicitRefresh, force: true)
+  }
+
+  func disconnectClaudeBrowser() async {
+    guard !browserDisconnectInFlight else { return }
+    browserDisconnectInFlight = true
+    browserDisconnectFailed = false
+    browserDisconnectCleanupFailed = false
+    claudeConnectionRevision += 1
+    claudeRefreshCancellation.cancel()
+    claudeRefreshCancellation = ClaudeRefreshCancellation()
+    pendingClaudeRefresh = nil
+    defer { browserDisconnectInFlight = false }
+    let browser = ClaudeBrowserStore(
+      directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
+    let instant = now()
+    let succeeded = await Task.detached(priority: .utility) {
+      do {
+        try browser.disconnect(now: instant)
+        return true
+      } catch { return false }
+    }.value
+    guard succeeded else {
+      browserDisconnectFailed = true
+      return
+    }
+    // Never carry browser ownership or resets into the local route. Disconnect
+    // is not permission for a new live CLI request or an immediate retry.
+    let cleared = ProviderSnapshot(
+      provider: .claude, source: .claudeDesktopHistory, capturedAt: nil, weekly: nil,
+      sourceState: .neverObserved)
+    scenario = selection.filtering(
+      SnapshotScenarioOverlay.apply([.claude: cleared], to: scenario, now: now()))
+    browserDisconnectCleanupFailed = !persist(cleared)
+    browserDisconnectInFlight = false
+    if activeClaudeRefresh != nil {
+      pendingClaudeRefresh = ClaudeRefreshRequest(
+        trigger: .explicitRefresh, force: false, localOnly: true)
+    } else {
+      refreshClaude(trigger: .explicitRefresh, force: false, localOnly: true)
+    }
   }
 
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
@@ -180,17 +229,45 @@ final class LiveQuotaModel: ObservableObject {
           to: stored,
           now: now
         )
-        return selection.filtering(complete)
+        return selection.filtering(Self.validatedBrowserPresentation(complete, store: store))
       }.value
       guard self.scenarioRevision == revision else { return }
       self.scenario = loaded
     }
   }
 
-  private func persist(_ snapshot: ProviderSnapshot) {
+  nonisolated private static func validatedBrowserPresentation(
+    _ scenario: FixtureScenario, store: NormalizedSnapshotStore
+  ) -> FixtureScenario {
+    guard scenario.snapshots.contains(where: { $0.source == .claudeBrowser }) else {
+      return scenario
+    }
+    let browser = ClaudeBrowserStore(
+      directory: store.directory.appendingPathComponent("BrowserBridge"))
+    var current =
+      browser.selectedSnapshot(now: scenario.now)
+      ?? ProviderSnapshot(
+        provider: .claude, source: .claudeDesktopHistory, capturedAt: nil, weekly: nil,
+        sourceState: .neverObserved)
+    if scenario.snapshots.first(where: { $0.provider == .claude })?.errorCode == .atomicWriteFailed
+    {
+      current = AcquisitionRecords.preservingFailure(
+        previous: current, provider: .claude, source: current.source,
+        attemptedAt: current.lastAttemptAt, state: .attemptFailed, error: .atomicWriteFailed)
+    }
+    return SnapshotScenarioOverlay.apply([.claude: current], to: scenario, now: scenario.now)
+  }
+
+  @discardableResult
+  private func persist(_ snapshot: ProviderSnapshot) -> Bool {
+    var saved = false
     do {
       try self.store.save(snapshot)
       self.transientSnapshots.removeValue(forKey: snapshot.provider)
+      saved = true
+      if snapshot.provider == .claude, snapshot.source != .claudeBrowser {
+        browserDisconnectCleanupFailed = false
+      }
     } catch {
       self.transientSnapshots[snapshot.provider] = AcquisitionRecords.preservingFailure(
         previous: snapshot,
@@ -203,6 +280,7 @@ final class LiveQuotaModel: ObservableObject {
     }
     self.finishInitialDetectionAttempt(snapshot.provider, snapshot: snapshot)
     self.reload()
+    return saved
   }
 
   private func finishInitialDetectionAttempt(
@@ -268,6 +346,7 @@ final class LiveQuotaModel: ObservableObject {
   private func refreshClaude(
     trigger: ProviderAcquisitionTrigger, force: Bool, localOnly: Bool = false
   ) {
+    guard !browserDisconnectInFlight else { return }
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
     let request = ClaudeRefreshRequest(trigger: trigger, force: force, localOnly: localOnly)
@@ -287,9 +366,16 @@ final class LiveQuotaModel: ObservableObject {
     let adapter = self.claudeAdapter
     let clock = self.now
     let transientSnapshots = self.transientSnapshots
+    let connectionRevision = self.claudeConnectionRevision
+    let cancellation = self.claudeRefreshCancellation
+    let queue = self.workerQueue
     Task {
       let snapshot: ProviderSnapshot? = await withCheckedContinuation { continuation in
-        Self.providerQueue.async {
+        queue.async {
+          guard !cancellation.isCancelled else {
+            continuation.resume(returning: nil)
+            return
+          }
           let previous = SnapshotScenarioOverlay.currentSnapshot(
             for: .claude,
             stored: (try? store.load(.claude)) ?? nil,
@@ -309,6 +395,7 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           guard
+            !cancellation.isCancelled,
             force
               || ClaudeAutomaticAdapter.shouldRefresh(
                 lastAttemptAt: localPrevious?.lastAttemptAt,
@@ -319,20 +406,25 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           continuation.resume(
-            returning: adapter.refresh(previous: localPrevious, now: now, forceLiveProbe: force))
+            returning: adapter.refresh(
+              previous: localPrevious, now: now, forceLiveProbe: force,
+              isCancelled: { cancellation.isCancelled }))
         }
       }
-      if let snapshot {
-        self.persist(snapshot)
-      } else {
-        self.finishInitialDetectionAttempt(.claude)
+      if self.claudeConnectionRevision == connectionRevision {
+        if let snapshot {
+          self.persist(snapshot)
+        } else {
+          self.finishInitialDetectionAttempt(.claude)
+        }
       }
       self.activeClaudeRefresh = nil
       let pending = self.pendingClaudeRefresh
       self.pendingClaudeRefresh = nil
       if let pending {
         // Re-enter the gate and current selection, consuming the request once.
-        self.refreshClaude(trigger: pending.trigger, force: pending.force)
+        self.refreshClaude(
+          trigger: pending.trigger, force: pending.force, localOnly: pending.localOnly)
       }
       self.updateRefreshInFlight()
     }
@@ -341,6 +433,13 @@ final class LiveQuotaModel: ObservableObject {
   private func updateRefreshInFlight() {
     self.refreshInFlight = self.codexRefreshInFlight || self.activeClaudeRefresh != nil
   }
+}
+
+private final class ClaudeRefreshCancellation: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+  var isCancelled: Bool { lock.withLock { cancelled } }
+  func cancel() { lock.withLock { cancelled = true } }
 }
 
 enum LaunchPresentationPolicy {
@@ -572,10 +671,14 @@ private struct QuotaTempoApplicationContent: View {
       ),
       loginItemState: self.settings.loginItemState,
       loginItemChangeFailed: self.settings.loginItemChangeFailed,
+      browserDisconnectInFlight: self.model.browserDisconnectInFlight,
+      browserDisconnectFailed: self.model.browserDisconnectFailed,
+      browserDisconnectCleanupFailed: self.model.browserDisconnectCleanupFailed,
       onSetProviderEnabled: { provider, enabled in
         self.model.setProviderEnabled(provider, enabled: enabled)
       },
       onRefresh: { self.model.explicitRefresh() },
+      onDisconnectBrowser: { Task { await self.model.disconnectClaudeBrowser() } },
       onCheckForUpdates: self.updater.isEnabled ? { self.updater.checkForUpdates() } : nil,
       onCopyDiagnostics: { self.copyDiagnostics() },
       onOpenWindow: { self.appDelegate.presentApplicationWindow() },

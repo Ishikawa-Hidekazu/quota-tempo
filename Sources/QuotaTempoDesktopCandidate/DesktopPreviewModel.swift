@@ -39,7 +39,7 @@ final class DesktopPreviewModel: ObservableObject {
   private var lastResult: DesktopUsageCandidateResult?
 
   init(
-    service: any DesktopPreviewServing = DesktopUsageCandidateService(),
+    service: any DesktopPreviewServing,
     clock: @escaping @Sendable () -> Date = Date.init,
     interval: Duration = .seconds(30),
     displayInterval: Duration = .seconds(1),

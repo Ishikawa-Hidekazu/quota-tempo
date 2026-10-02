@@ -32,12 +32,32 @@ struct DesktopCandidateLocalProbe {
       do {
         let result = try DesktopThrottleFileStore.recoverApplicationSupport(now: Date())
         switch result {
+        case .notNeeded: print("{\"status\":\"scheduling_state_fresh_no_repair_needed\"}")
         case .preserved: print("{\"status\":\"scheduling_state_preserved\"}")
         case .repaired: print("{\"status\":\"scheduling_state_repaired_recheck_required\"}")
         case .unsupportedVersion: print("{\"status\":\"scheduling_state_requires_newer_version\"}")
         }
+      } catch let error as DesktopThrottleStoreError {
+        switch error {
+        case .locked:
+          print("{\"status\":\"scheduling_repair_unavailable_close_preview_first\"}")
+        case .unsafePath:
+          print("{\"status\":\"scheduling_repair_unsafe_path\"}")
+        case .invalidRecord:
+          print("{\"status\":\"scheduling_repair_invalid_record\"}")
+        case .ioFailure:
+          print("{\"status\":\"scheduling_repair_io_failure\"}")
+        case .unavailable:
+          print("{\"status\":\"scheduling_repair_unavailable\"}")
+        case .missingRecord:
+          print("{\"status\":\"scheduling_repair_missing_record\"}")
+        case .changed:
+          print("{\"status\":\"scheduling_repair_changed\"}")
+        case .inputTooLarge:
+          print("{\"status\":\"scheduling_repair_input_too_large\"}")
+        }
       } catch {
-        print("{\"status\":\"scheduling_repair_unavailable_close_preview_first\"}")
+        print("{\"status\":\"scheduling_repair_unavailable\"}")
       }
       return
     }

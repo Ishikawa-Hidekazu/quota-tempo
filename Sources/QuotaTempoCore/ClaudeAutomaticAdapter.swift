@@ -167,11 +167,12 @@ public struct ClaudeAutomaticAdapter: Sendable {
   }
 
   public func refresh(
-    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false
+    previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool = false,
+    isCancelled: @Sendable () -> Bool = { false }
   ) -> ProviderSnapshot {
     self.refresh(
       previous: previous, now: now, forceLiveProbe: forceLiveProbe, localOnly: false,
-      accountBeforeRefresh: try? self.readAccountIdentity())
+      accountBeforeRefresh: try? self.readAccountIdentity(), isCancelled: isCancelled)
   }
 
   public func observeLocalChanges(previous: ProviderSnapshot?, now: Date) -> ProviderSnapshot? {
@@ -224,7 +225,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
 
   private func refresh(
     previous: ProviderSnapshot?, now: Date, forceLiveProbe: Bool, localOnly: Bool,
-    accountBeforeRefresh: ClaudeAccountIdentity?
+    accountBeforeRefresh: ClaudeAccountIdentity?, isCancelled: @Sendable () -> Bool = { false }
   ) -> ProviderSnapshot {
     let effectivePrevious = Self.previousCompatibleWithCurrentAccount(
       previous, currentAccount: accountBeforeRefresh)
@@ -236,6 +237,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
       try self.readDesktopAccountFingerprint()
     }
     let desktopAccount = desktopAccountRead.fingerprint
+    let localOnly = localOnly || isCancelled()
     let cliExecutable =
       localOnly
       ? nil : (self.resolveCLIOnRefresh ? self.cliResolver() : self.cliExecutable)
@@ -279,6 +281,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
         return Self.success(retained, attemptedAt: now)
       }
       do {
+        guard !isCancelled() else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
         let observed = try self.readPTY(executable: cliExecutable)
         let accountAfterProbe = try? self.readAccountIdentity()
         guard accountBeforeRefresh == accountAfterProbe else {
@@ -388,6 +391,7 @@ public struct ClaudeAutomaticAdapter: Sendable {
     }
 
     do {
+      guard !isCancelled() else { throw ClaudeAutomaticAdapterError.sourceUnavailable }
       return Self.success(try self.readCLI(now: now), attemptedAt: now)
     } catch BoundedProcessError.timeout {
       return self.fallback(

@@ -1458,6 +1458,93 @@ test("429 backs off at least 15 minutes and Disconnect sends a value-free envelo
   assert.equal(h.native[2].weekly, null);
 });
 
+test("app revocation after a lost Connect ACK retires the pending control rather than retrying forever", async t => {
+  for (const command of ["connect", "disconnect"]) {
+    await t.test(command, async () => {
+      const h = harness();
+      h.acks.push(null);
+      await h.message({ type: "connect" });
+      assert.equal(h.stored.pendingConnect, true);
+      const retired = h.stored.connectionID;
+      const deadline = Date.now() + 15 * 60 * 1000;
+      h.editStored(value => { value.pollNotBefore = deadline; });
+      h.acks.push({ ok: false, error: "connectionMismatch" });
+      await h.message({ type: command });
+      assert.equal(h.stored.status, "connectRequired");
+      assert.equal(h.stored.pendingConnect, false);
+      assert.equal(h.stored.pendingDisconnect, false);
+      assert.equal(h.stored.pendingConnectedMessage, null);
+      assert.equal(h.stored.connectionID, null);
+      assert.equal(h.stored.enabled, false);
+      assert.equal(h.stored.pollNotBefore, deadline);
+      h.reload();
+      await h.flush();
+      await h.message({ type: "connect" });
+      assert.notEqual(h.stored.connectionID, retired);
+      assert.equal(h.stored.enabled, true);
+      assert.equal(h.stored.pollNotBefore, deadline);
+      assert.equal(h.requests.length, 0);
+    });
+  }
+});
+
+test("app revocation retires a pending disconnect and a pending signout control", async t => {
+  for (const control of ["disconnect", "signedOut"]) {
+    await t.test(control, async () => {
+      const h = harness();
+      await h.message({ type: "connect" });
+      h.acks.push(null);
+      if (control === "disconnect") await h.message({ type: "disconnect" });
+      else await h.observe({ status: "signedOut" });
+      assert.notEqual(h.stored.pendingRevocation, null);
+      h.acks.push({ ok: false, error: "connectionMismatch" });
+      if (control === "disconnect") await h.message({ type: "disconnect" });
+      else { h.fireDueAlarm(); await h.flush(); }
+      assert.equal(h.stored.status, "connectRequired");
+      assert.equal(h.stored.enabled, false);
+      assert.equal(h.stored.pendingRevocation, null);
+      assert.equal(h.stored.connectionID, null);
+      assert.equal(h.stored.pendingDisconnect, false);
+    });
+  }
+});
+
+test("app-side revocation stops the worker after the rejected observation and preserves waits", async t => {
+  for (const status of ["ok", "rateLimited", "signedOut"]) {
+    await t.test(status, async () => {
+      const h = harness();
+      await h.message({ type: "connect" });
+      const oldConnection = h.stored.connectionID;
+      h.acks.push({ ok: false, error: "connectionMismatch" });
+      await h.observe(status === "ok" ? h.result(HASH_A) : { status });
+      assert.equal(h.stored.enabled, false);
+      assert.equal(h.stored.status, "connectRequired");
+      assert.equal(h.stored.pin, null);
+      assert.equal(h.stored.connectionID, null);
+      assert.equal(h.stored.pendingRevocation, null);
+      assert.equal(h.stored.inFlight, null);
+      assert.equal(h.stored.nextAt, null);
+      const notBefore = h.stored.pollNotBefore;
+      assert.ok(notBefore > Date.now());
+      if (status === "rateLimited") assert.ok(notBefore - Date.now() >= 15 * 60 * 1000 - 1000);
+      const calls = h.requests.length;
+      h.reload();
+      await h.flush();
+      h.fireAlarm();
+      await h.flush();
+      assert.equal(h.requests.length, calls);
+      await h.message({ type: "connect" });
+      assert.notEqual(h.stored.connectionID, oldConnection);
+      assert.equal(h.stored.pollNotBefore, notBefore);
+      assert.equal(h.requests.length, calls);
+      h.advanceTo(notBefore);
+      h.fireAlarm();
+      await h.flush();
+      assert.equal(h.requests.length, calls + 1);
+    });
+  }
+});
+
 test("reconnect and consent toggles preserve provider polling deadlines", async t => {
   const start = Date.parse("2026-10-01T00:00:00.000Z");
   for (const status of ["ok", "rateLimited", "unavailable"]) {

@@ -703,8 +703,11 @@ owner-confirmed. It does not use the released app's SwiftUI view. See below.
 
 A single long-lived service handles startup, a 30-second context/acquisition tick,
 wake and manual refresh. Opening the native menu does not trigger acquisition.
-Network requests retain the coordinator's
-five-minute interval, authentication-generation refusals and service backoff.
+Network requests retain the coordinator's standard five-minute interval,
+authentication-generation refusals and service backoff. Verified context renewal
+or an account change can shorten only a successful polling wait to the 60-second
+attempt floor; the upcoming weekly reset can also advance that successful wait.
+Neither exception shortens a provider deadline or failure backoff.
 An independent one-second display clock expires values even while acquisition is
 waiting. Display ticks never count as successful observations or invoke transport.
 No login item is installed. Quitting cancels the loop and withdraws local consent.
@@ -1282,6 +1285,58 @@ cleaned. An independent read-only static pass found no additional P1/P2 regressi
 it did not independently rerun the tests. Existing Keychain deprecation warnings
 remain. The running signed helper and its real checkpoint were not modified.
 
+#### Integration groundwork after the cfa36ca independent review, October 2
+
+The reviewed checkpoint remains the base; the following changes are a new diff,
+not a repeated claim that the same checkpoint passed a new review:
+
+- The Desktop service now requires a scheduling store. Production construction
+  cannot silently fall through a default `nil`; synthetic callers explicitly
+  inject a test-only store.
+- Offline repair of an unused checkpoint is a no-op rather than an artificial
+  stop. Existing initialization markers still distinguish lost records. Repair
+  diagnostics distinguish lock contention, unsafe paths, invalid data and I/O
+  without exposing paths or secrets.
+- A restored finite provider wait is displayed as `waitingForProvider`, with
+  its deadline. Known Retry-After deadlines are not capped or erased, including
+  multi-year waits. Recheck, repair, restart and consent changes are not an
+  override. This policy favors respecting the provider over speculative retries.
+- The app's browser details expose a confirmed disconnect, without requiring
+  extension availability. Revocation and native-host writes share `host.lock`.
+  Browser quota/owner fields clear immediately; stale asynchronous app results
+  are discarded. Queued live work is cancelled before queue entry and again
+  after local reads/before live calls; work already inside a provider operation
+  is not claimed to be forcibly stopped. Only local metadata is read afterward, never an immediate live
+  fallback request or a transfer of the browser's reset.
+- Initial presentation and reload validate browser snapshots against the bridge
+  record. A failed normalized-store cleanup cannot resurrect revoked values on
+  restart, even when acquisition is disabled. Cleanup failure is reported
+  separately from revocation failure; local write errors remain visible.
+- The native host acknowledges a later explicit Disconnect for the same revoked
+  generation without altering the tombstone. An old queued Connect cannot
+  predate that tombstone. A surviving extension stops on connection rejection
+  and preserves its polling deadline for a new explicit Connect. There is no
+  host-to-Chrome push: an in-flight or next scheduled observation may run before
+  rejection; browser-side Disconnect/disable stops it immediately.
+
+The Desktop candidate is still outside shipped product dependency graphs.
+Desktop consent/revocation/reapproval UI, source arbitration, signed distribution
+acceptance and provider-policy disposition remain release gates. This work does
+not replace the installed app, signed preview or real scheduling checkpoint.
+The conservative 15-minute post-recheck wait and unknown-window Codex restriction
+retention remain unchanged; they are not reported as resolved.
+
+Integration-groundwork validation: **681 Swift tests / 24 suites** passed normally
+and with outbound networking denied. Browser extension fixtures passed **239**,
+installer fixtures **81**, native-host fixtures **7**, and synthetic offline-repair
+handler cases **13**. Strict formatting, product-dependency isolation and release /
+distribution policies passed. The validation helper built and passed **24** inert
+argument vectors. Japanese and English fixture-only images showed the disconnect
+and failure copy without overlap; they do not test native dialog interactions.
+The independent static review's new P1 and P2 findings were corrected and reviewed
+again, with no unresolved P0/P1/P2 in this new diff. This is not a public-release
+approval or evidence for the current signed preview.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before
@@ -1320,9 +1375,9 @@ env DEVELOPER_DIR=/Library/Developer/CommandLineTools swift test \
 
 No framework-path workaround is committed to the package or CI. One local
 manifest-check attempt timed out while SwiftPM was holding its build lock;
-running it after the build completed passed. The coordinator is in-memory only;
-production integration would also need a durable nonsecret service-backoff
-deadline so restarting the app cannot evade a rate limit.
+running it after the build completed passed. At that first checkpoint the
+coordinator was in-memory only; the later restart-persistence work documented
+above adds a durable nonsecret service-backoff deadline.
 
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift

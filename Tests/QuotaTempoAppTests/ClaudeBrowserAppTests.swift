@@ -233,6 +233,149 @@ struct ClaudeBrowserAppTests {
     #expect(fixture.io.readPaths.allSatisfy { $0.hasPrefix(fixture.root.path + "/") })
   }
 
+  @Test("App disconnect works after silent extension removal and only reads local metadata")
+  func appDisconnectAfterExtensionRemoval() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(remaining: 57, offset: -120)
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let model = fixture.model(liveProbes: true, now: { fixture.now })
+    try await self.waitFor(model) { model.scenario.snapshots.first?.source == .claudeBrowser }
+    await model.disconnectClaudeBrowser()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 37 }
+    #expect(!model.browserDisconnectInFlight)
+    #expect(!model.browserDisconnectFailed)
+    #expect(try fixture.browser.load()?.enabled == false)
+    let local = try #require(try fixture.store.load(.claude))
+    #expect(local.source == .claudeDesktopHistory)
+    #expect(local.weekly?.resetAt == nil)
+    #expect(local.claudeAccountFingerprint == nil)
+    #expect(local.claudeOrganizationFingerprint != String(repeating: "b", count: 64))
+    #expect(local.fiveHour == nil)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+    let restarted = fixture.model(liveProbes: false)
+    try await self.waitFor(restarted) {
+      restarted.scenario.snapshots.first?.source != .claudeBrowser
+    }
+    #expect(restarted.scenario.snapshots.first?.weekly?.resetAt == nil)
+  }
+
+  @Test("A failed app disconnect reports failure without clearing the connected observation")
+  func appDisconnectFailureIsVisible() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(offset: -60)
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { model.scenario.snapshots.first?.source == .claudeBrowser }
+    let prior = model.scenario.snapshots.first
+    let bytes = try Data(contentsOf: fixture.browser.url)
+    let lock = fixture.browser.url.deletingLastPathComponent().appendingPathComponent("host.lock")
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: lock.path)
+    await model.disconnectClaudeBrowser()
+    #expect(model.browserDisconnectFailed)
+    #expect(!model.browserDisconnectInFlight)
+    #expect(model.scenario.snapshots.first == prior)
+    #expect(try Data(contentsOf: fixture.browser.url) == bytes)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test(
+    "Disconnect invalidates an old in-flight refresh and drains only a local observation",
+    arguments: [false, true])
+  func disconnectInvalidatesPendingRefresh(live: Bool) async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.store.save(fixture.localSnapshot(remaining: 41))
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    if live { model.explicitRefresh() } else { model.clockAdvanced() }
+    try await read.waitUntilEntered()
+    model.explicitRefresh()
+    try fixture.ingest(remaining: 63, offset: -1)
+    await model.disconnectClaudeBrowser()
+    #expect(model.scenario.snapshots.first?.weekly == nil)
+    read.release()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 37 }
+    #expect(try fixture.browser.load()?.enabled == false)
+    #expect(model.scenario.snapshots.first?.weekly?.resetAt == nil)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Disconnect cancels a live request queued before browser selection")
+  func disconnectCancelsQueuedLiveRefresh() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(offset: -60)
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let queue = DispatchQueue(label: "QuotaTempo.synthetic-blocked-provider")
+    let model = fixture.model(liveProbes: true, providerQueue: queue)
+    try await self.waitFor(model) { model.scenario.snapshots.first?.source == .claudeBrowser }
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    queue.async { barrier.pause() }
+    try await barrier.waitUntilEntered()
+    model.explicitRefresh()
+    await Task.yield()
+    await model.disconnectClaudeBrowser()
+    #expect(try fixture.browser.load()?.enabled == false)
+    barrier.release()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 37 }
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test(
+    "Revocation hides old persisted browser values after cleanup failure and an acquisition-disabled restart"
+  )
+  func disconnectCleanupFailureCannotResurrectAfterRestart() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(offset: -60)
+    let old = try #require(fixture.browser.selectedSnapshot(now: fixture.now))
+    try fixture.store.save(old)
+    let failing = NormalizedSnapshotStore(
+      directory: fixture.store.directory, writer: BrowserCleanupFailingWriter())
+    let model = fixture.model(liveProbes: true, storeOverride: failing)
+    try await self.waitFor(model) { model.scenario.snapshots.first?.source == .claudeBrowser }
+    await model.disconnectClaudeBrowser()
+    try await self.waitFor(model) { model.browserDisconnectCleanupFailed }
+    #expect(!model.browserDisconnectFailed)
+    #expect(try fixture.browser.load()?.enabled == false)
+    #expect(try fixture.store.load(.claude) == old)
+    #expect(model.scenario.snapshots.first?.weekly == nil)
+    let restarted = fixture.model(acquisitionEnabled: false, storeOverride: failing)
+    #expect(restarted.scenario.snapshots.first?.weekly == nil)
+    #expect(restarted.scenario.snapshots.first?.claudeAccountFingerprint == nil)
+    #expect(restarted.scenario.snapshots.first?.source != .claudeBrowser)
+    restarted.clockAdvanced()
+    try await self.waitFor(restarted) { restarted.scenario.snapshots.first?.weekly == nil }
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Validating browser presentation does not hide a normalized write failure")
+  func browserPresentationKeepsStorageFailure() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(offset: -60)
+    let failing = NormalizedSnapshotStore(
+      directory: fixture.store.directory, writer: BrowserCleanupFailingWriter())
+    let model = fixture.model(storeOverride: failing)
+    try await self.waitFor(model) {
+      model.scenario.snapshots.first?.errorCode == .atomicWriteFailed
+    }
+    #expect(model.scenario.snapshots.first?.source == .claudeBrowser)
+    #expect(model.scenario.snapshots.first?.weekly?.remainingPercent == 73)
+    #expect(fixture.io.readCount == 0)
+    fixture.expectIsolated()
+  }
+
   @Test("A malformed browser store clears previous browser W/P instead of falling through")
   func corruptStoreFailsClosedInModel() async throws {
     let fixture = try BrowserAppFixture()
@@ -592,11 +735,13 @@ private struct BrowserAppFixture {
 
   func model(
     acquisitionEnabled: Bool = true, liveProbes: Bool = false,
-    now: @escaping @Sendable () -> Date = { Date() }
+    now: @escaping @Sendable () -> Date = { Date() },
+    storeOverride: NormalizedSnapshotStore? = nil, providerQueue: DispatchQueue? = nil
   ) -> LiveQuotaModel {
     let io = self.io
     return LiveQuotaModel(
-      store: self.store, acquisitionEnabled: acquisitionEnabled, preferences: self.preferences,
+      store: storeOverride ?? self.store, acquisitionEnabled: acquisitionEnabled,
+      preferences: self.preferences,
       claudeAdapter: ClaudeAutomaticAdapter(
         reader: io, runner: io, cliExecutable: nil, resolveCLIOnRefresh: liveProbes,
         cliResolver: { io.resolve() },
@@ -604,7 +749,8 @@ private struct BrowserAppFixture {
         cacheURL: self.root.appendingPathComponent("synthetic-cache.json"),
         desktopConfigURL: self.root.appendingPathComponent("synthetic-config.json"),
         cliFallbackEnabled: liveProbes, ptyProbeEnabled: liveProbes, ptyProbe: io,
-        probeDirectory: self.root.appendingPathComponent("synthetic-probe")), now: now)
+        probeDirectory: self.root.appendingPathComponent("synthetic-probe")), now: now,
+      providerQueue: providerQueue)
   }
 
   func setHistory(remaining: Double, capturedAt: Date) throws {
@@ -680,6 +826,10 @@ private struct BrowserAppFixture {
     try self.browser.ingest(
       JSONSerialization.data(withJSONObject: object), now: receivedAt ?? self.now)
   }
+}
+
+private struct BrowserCleanupFailingWriter: AtomicDataWriting {
+  func write(_ data: Data, to url: URL) throws { throw CocoaError(.fileWriteUnknown) }
 }
 
 private final class BrowserAppClock: @unchecked Sendable {
