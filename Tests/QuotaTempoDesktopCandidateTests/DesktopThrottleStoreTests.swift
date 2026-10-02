@@ -55,10 +55,125 @@ private final class ThrottleCounter: @unchecked Sendable {
     value += 1
     return value
   }
+
+  func current() -> Int {
+    mutex.lock()
+    defer { mutex.unlock() }
+    return value
+  }
+}
+
+private final class ThrottleBorrowedDescriptor: @unchecked Sendable {
+  private let mutex = NSLock()
+  private var descriptor: Int32 = -1
+
+  func duplicate(_ original: Int32) -> Bool {
+    mutex.lock()
+    defer { mutex.unlock() }
+    descriptor = fcntl(original, F_DUPFD_CLOEXEC, 0)
+    return descriptor >= 0
+  }
+
+  deinit { if descriptor >= 0 { Darwin.close(descriptor) } }
 }
 
 @Suite("Desktop restart throttle metadata store")
 struct DesktopThrottleStoreTests {
+  @Test func interruptedLockAcquisitionRetriesWithoutReportingAnotherOwner() throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      if operation == (LOCK_EX | LOCK_NB), calls.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return flock(descriptor, operation)
+    }
+    let store = try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    try store.save(throttleRecord())
+    #expect(try store.load() == throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    withExtendedLifetime(store) {}
+  }
+
+  @Test(arguments: [EBADF, EINVAL, ENOTSUP, EIO, EWOULDBLOCK])
+  func lockFailureDoesNotMisreportSystemErrorsAsContention(code: Int32) throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { _, operation in
+      #expect(operation == (LOCK_EX | LOCK_NB))
+      #expect(calls.next() == 1)
+      errno = code
+      return -1
+    }
+    let expected: DesktopThrottleStoreError = code == EWOULDBLOCK ? .locked : .ioFailure
+    #expect(throws: expected) {
+      try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    }
+    let reopened = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try reopened.load() == nil)
+  }
+
+  @Test func interruptedUnlockRetriesAndDoesNotUnlockTheNextOwner() throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      if operation == LOCK_UN, calls.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return flock(descriptor, operation)
+    }
+    var owner: DesktopThrottleFileStore? = try .init(directory: fixture.directory, io: io)
+    try owner?.save(throttleRecord())
+    owner = nil
+    #expect(calls.current() == 2)
+    let next = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try next.load() == throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    withExtendedLifetime(next) {}
+  }
+
+  @Test(arguments: [false, true])
+  func ownerExitReleasesLockEvenWhileDescriptorReferenceRemains(failedInitialization: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let borrowed = ThrottleBorrowedDescriptor()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      let result = flock(descriptor, operation)
+      if result == 0 && operation == (LOCK_EX | LOCK_NB) {
+        #expect(borrowed.duplicate(descriptor))
+      }
+      return result
+    }
+    if failedInitialization {
+      // Lock acquisition precedes record validation; the failing constructor
+      // must release its ownership too, without removing the lock inode.
+      try fixture.write(Data([1]), to: fixture.lockURL)
+      #expect(throws: DesktopThrottleStoreError.missingRecord) {
+        try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+      }
+      try fixture.writeRecord()
+    } else {
+      var owner: DesktopThrottleFileStore? = try .init(directory: fixture.directory, io: io)
+      try owner?.save(throttleRecord())
+      #expect(throws: DesktopThrottleStoreError.locked) {
+        try DesktopThrottleFileStore(directory: fixture.directory)
+      }
+      owner = nil
+    }
+    let reopened = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try reopened.load() == throttleRecord())
+    withExtendedLifetime(borrowed) {}
+  }
+
   @Test func preparedStoreCreatesTwoPrivateDirectoriesAndRetainsItsLock() throws {
     let fixture = try ThrottleFixture(mode: 0o755)
     let parent = fixture.directory.appendingPathComponent("QuotaTempoIntegrationPreview")

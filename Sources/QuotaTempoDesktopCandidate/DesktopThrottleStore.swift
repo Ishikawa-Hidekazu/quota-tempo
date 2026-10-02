@@ -24,7 +24,7 @@ enum DesktopThrottleRecoveryResult: Equatable, Sendable {
   case unsupportedVersion
 }
 
-// Retain this store for the process lifetime. Closing it releases, but never
+// Retain this store for the process lifetime. Destroying it releases, but never
 // removes, the lock file. All persisted fields are explicitly listed below.
 final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendable {
   private static let recordName = "desktop-throttle.json"
@@ -33,6 +33,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
 
   // Narrow syscall seams for synthetic short-write/EINTR and durability tests.
   struct IO: Sendable {
+    var lock: @Sendable (Int32, Int32) -> Int32 = { flock($0, $1) }
     var write: @Sendable (Int32, UnsafeRawPointer, Int) -> Int = {
       Darwin.write($0, $1, $2)
     }
@@ -144,7 +145,13 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       opened.fd, Self.lockName, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC,
       S_IRUSR | S_IWUSR)
     guard lock >= 0 else { throw DesktopThrottleStoreError.unavailable }
-    defer { if !retained { Darwin.close(lock) } }
+    var ownsLock = false
+    defer {
+      if !retained {
+        if ownsLock { Self.releaseLock(lock, io: io) }
+        Darwin.close(lock)
+      }
+    }
     let info = try Self.fileInfo(lock, maximumBytes: 1)
     if info.st_size == 1 {
       var marker: UInt8 = 0
@@ -153,9 +160,13 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       }
     }
     let stamp = DesktopFileStamp(info)
-    guard flock(lock, LOCK_EX | LOCK_NB) == 0 else {
-      throw DesktopThrottleStoreError.locked
+    while io.lock(lock, LOCK_EX | LOCK_NB) != 0 {
+      let code = errno
+      if code == EINTR { continue }
+      throw code == EWOULDBLOCK
+        ? DesktopThrottleStoreError.locked : DesktopThrottleStoreError.ioFailure
     }
+    ownsLock = true
     try Self.requireFile(opened.fd, name: Self.lockName, stamp: stamp, maximumBytes: 1)
     let checked = try Self.openDirectory(directory)
     defer { Darwin.close(checked.fd) }
@@ -184,8 +195,17 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
   }
 
   deinit {
+    Self.releaseLock(lockFD, io: io)
     Darwin.close(lockFD)
     Darwin.close(directoryFD)
+  }
+
+  private static func releaseLock(_ descriptor: Int32, io: IO) {
+    // close() alone leaves a flock held by duplicated/inherited references.
+    // Release only our successfully acquired lock at the end of ownership.
+    while io.lock(descriptor, LOCK_UN) != 0 {
+      if errno != EINTR { return }
+    }
   }
 
   func load() throws -> DesktopThrottleRecord? {

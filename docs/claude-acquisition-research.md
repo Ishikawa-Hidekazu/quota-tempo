@@ -135,7 +135,7 @@ Independent static review identified a cancellation path after OS permission
 which could leave the connection enabled. It now disconnects before returning,
 with a regression test; the reviewed scope has no remaining P0/P1/P2 findings.
 
-Final runs passed 743 tests / 28 suites in the default graph and 749 / 29 in the
+At `90775bc`, runs passed 743 tests / 28 suites in the default graph and 749 / 29 in the
 preview graph, including 749 / 29 with outbound networking denied. The signed
 builder's 64 synthetic checks passed. A local Developer ID build passed deep,
 strict signature verification, but was not launched, installed or notarized.
@@ -148,6 +148,47 @@ and the full default and network-denied preview runs passed. The cause of that
 single failure remains unconfirmed. It is retained as an open QA finding, not
 described as repaired; no lock bypass, retry-until-success assertion or release
 gate relaxation was introduced.
+
+### Explicit scheduling-lock lifetime
+
+Follow-up investigation reproduced a separate, concrete ownership problem:
+duplicating a store's locked file descriptor retained the lock after either
+normal destruction or a constructor failure after successful acquisition. Both
+synthetic cases failed before the fix and passed afterwards. This matches
+Apple's [flock reference](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/flock.2.html):
+duplicated descriptors share a lock rather than acquiring independent locks.
+
+The store now explicitly unlocks only its successfully acquired lock when its
+ownership ends, before closing its descriptor. It never deletes/replaces the
+lock file or unlocks a failed acquisition. `EINTR` retries the interrupted
+syscall; only `EWOULDBLOCK` reports an existing owner. Other acquisition errors
+remain failures and no longer falsely display another running owner.
+
+Regression coverage includes both duplicate-reference cases, interrupted
+acquisition/unlock, system-error classification and preserving the next owner's
+exclusive lock. The 61-test store suite passed, followed by five consecutive
+747-test default runs and a 753-test integration run with outbound networking
+denied. The earlier intermittent failure's exact cause remains unconfirmed:
+this reproducer proves the corrected defect, not that the earlier run contained
+a duplicated descriptor. Native lifecycle and provider acceptance gates remain.
+
+The reviewed Developer ID preview also passed a five-second background-process
+smoke check with both `--provider-disabled` and a fresh `--storage-directory`.
+The app's output was discarded, the synthetic store stayed empty, and only the
+spawned child was stopped. Cleanup completed and no preview process remained.
+The harness's 54 synthetic tests verify its preflight/termination boundaries.
+Run it only on a reviewed local preview, never an arbitrary signed application:
+
+```sh
+node scripts/test-desktop-integration-startup.mjs \
+  --app /absolute/reviewed-preview.app --team-id YOURTEAMID --seconds 5
+```
+
+This confirms bounded process survival, not UI readiness, observed focus,
+interactive Quit, Keychain permission, real acquisition, or weekly rollover.
+It does not launch through `open`, alter quarantine, install an app, or stop the
+existing helper. A transient menu-bar item is expected; native-tool failures
+stop before launch, and unconfirmed child termination retains the test directory.
 
 ### Test helper crash prevention
 
