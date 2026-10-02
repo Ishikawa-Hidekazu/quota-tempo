@@ -49,6 +49,7 @@ final class LiveQuotaModel: ObservableObject {
   private let acquisitionGate: ProviderAcquisitionGate
   private let preferences: ProviderSelectionPreferences?
   private let claudeAdapter: ClaudeAutomaticAdapter
+  private let now: @Sendable () -> Date
   private var selection: ProviderSelection
   private var initialDetectionPending: Bool
   private var initialDetectionTracker = InitialProviderDetectionTracker()
@@ -67,13 +68,15 @@ final class LiveQuotaModel: ObservableObject {
       cliExecutable: nil,
       resolveCLIOnRefresh: true,
       ptyProbeEnabled: true
-    )
+    ),
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
     self.preferences = preferences
     self.claudeAdapter = claudeAdapter
-    let storedScenario = self.store.scenario(now: Date())
+    self.now = now
+    let storedScenario = self.store.scenario(now: now())
     if let configured = preferences?.load() {
       self.selection = configured
       self.initialDetectionPending = false
@@ -99,7 +102,7 @@ final class LiveQuotaModel: ObservableObject {
 
   func clockAdvanced() {
     self.refreshClaude(trigger: .scheduledRefresh, force: false, localOnly: true)
-    let now = Date()
+    let now = self.now()
     self.scenario = FixtureScenario(
       id: self.scenario.id,
       now: now,
@@ -164,7 +167,7 @@ final class LiveQuotaModel: ObservableObject {
   private func reload() {
     self.scenarioRevision += 1
     let revision = self.scenarioRevision
-    let now = Date()
+    let now = self.now()
     let store = self.store
     let transientSnapshots = self.transientSnapshots
     let selection = self.selection
@@ -282,6 +285,7 @@ final class LiveQuotaModel: ObservableObject {
     self.updateRefreshInFlight()
     let store = self.store
     let adapter = self.claudeAdapter
+    let clock = self.now
     let transientSnapshots = self.transientSnapshots
     Task {
       let snapshot: ProviderSnapshot? = await withCheckedContinuation { continuation in
@@ -291,7 +295,7 @@ final class LiveQuotaModel: ObservableObject {
             stored: (try? store.load(.claude)) ?? nil,
             overrides: transientSnapshots
           )
-          let now = Date()
+          let now = clock()
           let browser = ClaudeBrowserStore(
             directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
           if let observed = browser.selectedSnapshot(now: now) {

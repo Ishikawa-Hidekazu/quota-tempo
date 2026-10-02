@@ -17,6 +17,12 @@ enum DesktopThrottleStoreError: Error, Equatable, Sendable {
   case ioFailure
 }
 
+enum DesktopThrottleRecoveryResult: Equatable, Sendable {
+  case preserved
+  case repaired
+  case unsupportedVersion
+}
+
 // Retain this store for the process lifetime. Closing it releases, but never
 // removes, the lock file. All persisted fields are explicitly listed below.
 final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendable {
@@ -59,6 +65,26 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
   static func applicationSupport(
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
   ) throws -> DesktopThrottleFileStore {
+    try applicationSupport(homeDirectory: homeDirectory, recovering: false)
+  }
+
+  // Explicit offline operation: acquiring the same lifetime flock refuses a
+  // running owner. Recovery never removes the lock or enables automatic requests.
+  static func recoverApplicationSupport(
+    now: Date, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) throws -> DesktopThrottleRecoveryResult {
+    let store = try applicationSupport(homeDirectory: homeDirectory, recovering: true)
+    return try store.recover(now: now)
+  }
+
+  static func recover(directory: URL, now: Date) throws -> DesktopThrottleRecoveryResult {
+    let store = try DesktopThrottleFileStore(directory: directory, io: IO(), recovering: true)
+    return try store.recover(now: now)
+  }
+
+  private static func applicationSupport(
+    homeDirectory: URL, recovering: Bool
+  ) throws -> DesktopThrottleFileStore {
     let parentURL = homeDirectory.appendingPathComponent(
       "Library/Application Support", isDirectory: true)
     let parent = try openDirectory(parentURL)
@@ -81,7 +107,8 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     defer { Darwin.close(checked.fd) }
     guard checked.ancestry == parent.ancestry else { throw DesktopThrottleStoreError.changed }
     let store = try DesktopThrottleFileStore(
-      directory: parentURL.appendingPathComponent(childName, isDirectory: true))
+      directory: parentURL.appendingPathComponent(childName, isDirectory: true),
+      io: IO(), recovering: recovering)
     // The path-based initializer must have opened the same parent and child.
     guard store.ancestry == parent.ancestry + [Identity(info)] else {
       throw DesktopThrottleStoreError.changed
@@ -90,7 +117,11 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     return store
   }
 
-  init(directory: URL, io: IO = IO()) throws {
+  convenience init(directory: URL, io: IO = IO()) throws {
+    try self.init(directory: directory, io: io, recovering: false)
+  }
+
+  private init(directory: URL, io: IO, recovering: Bool) throws {
     let opened = try Self.openDirectory(directory)
     var retained = false
     defer { if !retained { Darwin.close(opened.fd) } }
@@ -123,7 +154,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       initialStamp = DesktopFileStamp(existing)
     } else {
       guard errno == ENOENT else { throw DesktopThrottleStoreError.unsafePath }
-      guard info.st_size == 0 else { throw DesktopThrottleStoreError.missingRecord }
+      guard recovering || info.st_size == 0 else { throw DesktopThrottleStoreError.missingRecord }
       initialStamp = nil
     }
     self.directory = directory
@@ -133,7 +164,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     lockStamp = stamp
     self.io = io
     recordStamp = initialStamp
-    hasSeenRecord = info.st_size == 1 || initialStamp != nil
+    hasSeenRecord = (!recovering && info.st_size == 1) || initialStamp != nil
     retained = true
   }
 
@@ -145,6 +176,26 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
   func load() throws -> DesktopThrottleRecord? {
     mutex.lock()
     defer { mutex.unlock() }
+    guard let data = try readData() else { return nil }
+    let record = try Self.decode(data)
+    try markInitialized()
+    return record
+  }
+
+  private static func decode(_ data: Data) throws -> DesktopThrottleRecord {
+    do {
+      let record = try JSONDecoder().decode(Metadata.self, from: data).record
+      guard record.schemaVersion == 1, record.isValid else {
+        throw DesktopThrottleStoreError.invalidRecord
+      }
+      return record
+    } catch {
+      // Never propagate decoder diagnostics containing stored values or paths.
+      throw DesktopThrottleStoreError.invalidRecord
+    }
+  }
+
+  private func readData() throws -> Data? {
     guard !uncertainCommit else { throw DesktopThrottleStoreError.ioFailure }
     try validateEnvironment()
     guard let before = try observeRecord() else {
@@ -178,20 +229,53 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       directoryFD, name: Self.recordName, stamp: before, maximumBytes: Self.maximumBytes)
     try validateEnvironment()
     data.count = count
-    do {
-      let record = try JSONDecoder().decode(Metadata.self, from: data).record
-      guard record.schemaVersion == 1, record.isValid else {
-        throw DesktopThrottleStoreError.invalidRecord
+    return data
+  }
+
+  private func recover(now: Date) throws -> DesktopThrottleRecoveryResult {
+    // This private instance cannot escape; its flock spans inspection and save.
+    let data = try readData()
+    let inspected = recordStamp
+    if let data {
+      if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        object["schemaVersion"] != nil
+      {
+        struct Version: Decodable { let schemaVersion: Int }
+        guard let version = try? JSONDecoder().decode(Version.self, from: data) else {
+          throw DesktopThrottleStoreError.invalidRecord
+        }
+        guard version.schemaVersion == 1 else { return .unsupportedVersion }
       }
-      try markInitialized()
-      return record
-    } catch {
-      // Never propagate decoder diagnostics containing stored values or paths.
+      if (try? Self.decode(data)) != nil {
+        try markInitialized()
+        return .preserved
+      }
+    }
+    guard now.timeIntervalSince1970.isFinite, now.timeIntervalSince1970 > 0 else {
       throw DesktopThrottleStoreError.invalidRecord
     }
+    let recovered = data.flatMap { try? JSONDecoder().decode(RecoveryMetadata.self, from: $0) }
+    let reference = max(now, recovered?.recordedAt ?? now, recovered?.lastAttemptAt ?? now)
+    let floor = reference.addingTimeInterval(15 * 60)
+    let record = DesktopThrottleRecord(
+      recordedAt: reference, lastAttemptAt: reference,
+      localNextAllowedAt: max(floor, recovered?.localNextAllowedAt ?? floor),
+      successfulNextAllowedAt: recovered?.successfulNextAllowedAt,
+      serviceNotBefore: recovered?.serviceNotBefore, unsupportedServiceWait: true,
+      failureCount: 0, interruptedUntil: max(floor, recovered?.interruptedUntil ?? floor),
+      authRefusal: recovered?.authRefusal, authRefusalExpiresAt: recovered?.authRefusalExpiresAt)
+    // Unrepresentable retained deadlines fail closed rather than being shortened.
+    try save(record, repairing: true, expectedRecord: inspected)
+    return .repaired
   }
 
   func save(_ record: DesktopThrottleRecord) throws {
+    try save(record, repairing: false)
+  }
+
+  private func save(
+    _ record: DesktopThrottleRecord, repairing: Bool, expectedRecord: DesktopFileStamp? = nil
+  ) throws {
     mutex.lock()
     defer { mutex.unlock() }
     guard !uncertainCommit else { throw DesktopThrottleStoreError.ioFailure }
@@ -209,6 +293,10 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     guard data.count <= Self.maximumBytes else { throw DesktopThrottleStoreError.inputTooLarge }
     try validateEnvironment()
     let previous = try observeRecord()
+    if repairing, previous != expectedRecord { throw DesktopThrottleStoreError.changed }
+    if !repairing, let data = try readData() {
+      _ = try Self.decode(data)
+    }
     let temporaryName = ".desktop-throttle-\(UUID().uuidString).tmp"
     let fd = openat(
       directoryFD, temporaryName, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
@@ -398,11 +486,12 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     let failureCount: Int
     let interruptedUntil: Date?
     let authRefusal: DesktopAuthRefusal?
+    let authRefusalExpiresAt: Date?
 
     enum CodingKeys: String, CodingKey, CaseIterable {
       case schemaVersion, recordedAt, lastAttemptAt, localNextAllowedAt
       case successfulNextAllowedAt, serviceNotBefore, unsupportedServiceWait
-      case failureCount, interruptedUntil, authRefusal
+      case failureCount, interruptedUntil, authRefusal, authRefusalExpiresAt
     }
 
     private struct AnyKey: CodingKey {
@@ -423,6 +512,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       failureCount = record.failureCount
       interruptedUntil = record.interruptedUntil
       authRefusal = record.authRefusal
+      authRefusalExpiresAt = record.authRefusalExpiresAt
     }
 
     init(from decoder: Decoder) throws {
@@ -443,6 +533,7 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
       failureCount = try values.decode(Int.self, forKey: .failureCount)
       interruptedUntil = try values.decodeIfPresent(Date.self, forKey: .interruptedUntil)
       authRefusal = try values.decodeIfPresent(DesktopAuthRefusal.self, forKey: .authRefusal)
+      authRefusalExpiresAt = try values.decodeIfPresent(Date.self, forKey: .authRefusalExpiresAt)
     }
 
     var record: DesktopThrottleRecord {
@@ -450,7 +541,39 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
         schemaVersion: schemaVersion, recordedAt: recordedAt, lastAttemptAt: lastAttemptAt,
         localNextAllowedAt: localNextAllowedAt, successfulNextAllowedAt: successfulNextAllowedAt,
         serviceNotBefore: serviceNotBefore, unsupportedServiceWait: unsupportedServiceWait,
-        failureCount: failureCount, interruptedUntil: interruptedUntil, authRefusal: authRefusal)
+        failureCount: failureCount, interruptedUntil: interruptedUntil, authRefusal: authRefusal,
+        authRefusalExpiresAt: authRefusalExpiresAt)
+    }
+  }
+
+  // Salvage known constraints independently of unrelated corrupt fields. Invalid
+  // expiry becomes nil (indefinite refusal), never permission to retry sooner.
+  private struct RecoveryMetadata: Decodable {
+    let recordedAt: Date?
+    let lastAttemptAt: Date?
+    let localNextAllowedAt: Date?
+    let successfulNextAllowedAt: Date?
+    let serviceNotBefore: Date?
+    let interruptedUntil: Date?
+    let authRefusal: DesktopAuthRefusal?
+    let authRefusalExpiresAt: Date?
+
+    init(from decoder: Decoder) throws {
+      let values = try decoder.container(keyedBy: Metadata.CodingKeys.self)
+      func date(_ key: Metadata.CodingKeys) -> Date? {
+        guard let value = try? values.decode(Date.self, forKey: key),
+          value.timeIntervalSince1970.isFinite, value.timeIntervalSince1970 > 0
+        else { return nil }
+        return value
+      }
+      recordedAt = date(.recordedAt)
+      lastAttemptAt = date(.lastAttemptAt)
+      localNextAllowedAt = date(.localNextAllowedAt)
+      successfulNextAllowedAt = date(.successfulNextAllowedAt)
+      serviceNotBefore = date(.serviceNotBefore)
+      interruptedUntil = date(.interruptedUntil)
+      authRefusal = try? values.decode(DesktopAuthRefusal.self, forKey: .authRefusal)
+      authRefusalExpiresAt = authRefusal == nil ? nil : date(.authRefusalExpiresAt)
     }
   }
 }

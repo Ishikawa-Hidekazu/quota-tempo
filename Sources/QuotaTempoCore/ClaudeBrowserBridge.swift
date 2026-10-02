@@ -227,6 +227,7 @@ public struct ClaudeBrowserRecord: Codable, Equatable, Sendable {
 
 public struct ClaudeBrowserStore: Sendable {
   public static let filename = "browser-observation.json"
+  public static let observationMaximumAge: TimeInterval = 15 * 60
   public let url: URL
 
   public init(directory: URL) { self.url = directory.appendingPathComponent(Self.filename) }
@@ -299,6 +300,17 @@ public struct ClaudeBrowserStore: Sendable {
       let snapshot = record.snapshot
       guard record.lastMessageAt <= now.addingTimeInterval(30) else {
         throw ClaudeBrowserBridgeError.invalidMessage
+      }
+      if let capturedAt = snapshot.capturedAt,
+        now.timeIntervalSince(capturedAt) > Self.observationMaximumAge
+      {
+        // Expiry hides values, not ownership. Returning nil would allow a
+        // different local account/probe to bypass browser pinning or 429 waits.
+        // Neither error traffic nor UI refresh renews the successful capture.
+        return ProviderSnapshot(
+          provider: .claude, source: .claudeBrowser, capturedAt: nil, weekly: nil,
+          lastAttemptAt: snapshot.lastAttemptAt, sourceState: .attemptFailed,
+          errorCode: snapshot.errorCode ?? .sourceUnavailable)
       }
       return snapshot
     } catch {

@@ -14,7 +14,7 @@ struct DesktopPreviewMenuTests {
     let preview = makeMenu()
     preview.update(scenario: scenario(), refreshing: false)
     #expect(!preview.menu.autoenablesItems)
-    #expect(preview.menu.numberOfItems == 12)
+    #expect(preview.menu.numberOfItems == 13)
     #expect(preview.menu.items.allSatisfy { $0.view == nil && $0.submenu == nil })
     #expect(preview.menu.items.allSatisfy { $0.title.count <= 72 })
     for row in DesktopPreviewMenu.Row.allCases {
@@ -24,7 +24,7 @@ struct DesktopPreviewMenuTests {
     }
     for command in DesktopPreviewMenu.Command.allCases {
       let item = try #require(preview.menu.item(withTag: command.rawValue))
-      #expect(item.isEnabled)
+      #expect(item.isEnabled == (command != .recheck))
       #expect(item.target === preview)
       guard let action = item.action else {
         Issue.record("Missing command selector")
@@ -73,9 +73,11 @@ struct DesktopPreviewMenuTests {
     var calls: [String] = []
     let preview = DesktopPreviewMenu(
       onRefresh: { calls.append("refresh") }, onQuit: { calls.append("quit") },
+      onRecheck: { calls.append("recheck") },
       cancelTracking: { _ in calls.append("dismiss") })
     for (command, expected): (DesktopPreviewMenu.Command, [String]) in [
       (.refresh, ["dismiss", "refresh"]), (.close, ["dismiss"]), (.quit, ["dismiss", "quit"]),
+      (.recheck, ["dismiss", "recheck"]),
     ] {
       calls.removeAll()
       let item = try #require(preview.menu.item(withTag: command.rawValue))
@@ -86,6 +88,37 @@ struct DesktopPreviewMenuTests {
       }
       _ = preview.perform(action)
       #expect(calls == expected)
+    }
+  }
+
+  @Test("Healthy waiting names the next update, not a login failure")
+  func waitingCopy() {
+    let preview = makeMenu()
+    preview.update(
+      scenario: scenario(available: false), refreshing: false,
+      state: .waitingForNextRefresh, nextAllowedAt: now.addingTimeInterval(60))
+    #expect(title(.status, preview) == "Claude Desktop: Waiting for next update")
+    #expect(title(.error, preview)?.hasPrefix("Next update: ") == true)
+    #expect(title(.error, preview)?.contains("--") == false)
+    #expect(
+      preview.menu.item(withTag: DesktopPreviewMenu.Command.recheck.rawValue)?.isHidden == true)
+  }
+
+  @Test("Recheck is explicit and disabled until the persisted floor")
+  func recheckAvailability() {
+    let preview = DesktopPreviewMenu(onRefresh: {}, onQuit: {}, onRecheck: {})
+    for state: DesktopUsageState in [
+      .waitingForDesktopRenewal, .accessDenied, .serviceWaitUnavailable,
+    ] {
+      preview.update(
+        scenario: scenario(available: false), refreshing: false, state: state,
+        nextAllowedAt: now.addingTimeInterval(60))
+      #expect(
+        preview.menu.item(withTag: DesktopPreviewMenu.Command.recheck.rawValue)?.isEnabled == false)
+      preview.update(
+        scenario: scenario(available: false), refreshing: false, state: state, nextAllowedAt: now)
+      #expect(
+        preview.menu.item(withTag: DesktopPreviewMenu.Command.recheck.rawValue)?.isEnabled == true)
     }
   }
 

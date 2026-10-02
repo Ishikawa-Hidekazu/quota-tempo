@@ -56,7 +56,8 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
     if !qa {
       let menu = DesktopPreviewMenu(
         onRefresh: { [weak self] in Task { await self?.model.refresh() } },
-        onQuit: { [weak self] in self?.finish(code: 0) })
+        onQuit: { [weak self] in self?.finish(code: 0) },
+        onRecheck: { [weak self] in Task { await self?.model.refresh(trigger: .recheck) } })
       previewMenu = menu
       item.menu = menu.menu
     }
@@ -64,7 +65,9 @@ final class DesktopPreviewApplication: NSObject, NSApplicationDelegate {
       [weak self] scenario, refreshing, state in
       let title = MenuBarTitleFormatter.title(scenario: scenario, mode: .full) ?? "Claude"
       self?.statusItem?.button?.title = "QT Desktop | \(title)"
-      self?.previewMenu?.update(scenario: scenario, refreshing: refreshing, state: state)
+      self?.previewMenu?.update(
+        scenario: scenario, refreshing: refreshing, state: state,
+        nextAllowedAt: self?.model.nextAllowedAt)
       self?.checkAutomaticUpdate(scenario)
     }.store(in: &subscriptions)
     if !qa {

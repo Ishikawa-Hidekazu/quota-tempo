@@ -13,11 +13,13 @@ final class DesktopPreviewMenu: NSObject {
     case refresh = 100
     case close
     case quit
+    case recheck
   }
 
   let menu = NSMenu(title: "QuotaTempo Desktop Preview")
   private let onRefresh: () -> Void
   private let onQuit: () -> Void
+  private let onRecheck: (() -> Void)?
   private let cancelTracking: (NSMenu) -> Void
   private let dateFormatter: DateFormatter
 
@@ -25,10 +27,12 @@ final class DesktopPreviewMenu: NSObject {
     timeZone: TimeZone = .current,
     onRefresh: @escaping () -> Void,
     onQuit: @escaping () -> Void,
+    onRecheck: (() -> Void)? = nil,
     cancelTracking: @escaping (NSMenu) -> Void = { $0.cancelTracking() }
   ) {
     self.onRefresh = onRefresh
     self.onQuit = onQuit
+    self.onRecheck = onRecheck
     self.cancelTracking = cancelTracking
     dateFormatter = DateFormatter()
     dateFormatter.locale = Locale(identifier: "en_US_POSIX")
@@ -45,11 +49,15 @@ final class DesktopPreviewMenu: NSObject {
     set(.heading, "QuotaTempo Desktop Preview (local)")
     menu.addItem(.separator())
     add(.refresh, title: "Refresh", action: #selector(refresh))
+    add(.recheck, title: "Recheck Connection Once", action: #selector(recheck))
     add(.close, title: "Close Menu", action: #selector(close))
     add(.quit, title: "Quit Desktop Preview", action: #selector(quit))
   }
 
-  func update(scenario: FixtureScenario, refreshing: Bool, state: DesktopUsageState? = nil) {
+  func update(
+    scenario: FixtureScenario, refreshing: Bool, state: DesktopUsageState? = nil,
+    nextAllowedAt: Date? = nil
+  ) {
     let plan = scenario.snapshots.first(where: { $0.provider == .claude })
       .map { QuotaPlanner.evaluate($0, now: scenario.now) }
     let copy = MenuCopy(languageCode: "en")
@@ -66,6 +74,17 @@ final class DesktopPreviewMenu: NSObject {
     if let state, let notice = DesktopPreviewPresentation.schedulingNotice(state) {
       set(.error, notice)
     }
+    if state == .waitingForNextRefresh {
+      set(.status, "Claude Desktop: Waiting for next update")
+      set(.error, "Next update: \(date(nextAllowedAt))")
+    }
+    let canRecheck =
+      state == .waitingForDesktopRenewal || state == .accessDenied
+      || state == .serviceWaitUnavailable
+    menu.item(withTag: Command.recheck.rawValue)?.isHidden = !canRecheck
+    menu.item(withTag: Command.recheck.rawValue)?.isEnabled =
+      canRecheck && onRecheck != nil && !refreshing
+      && (nextAllowedAt.map { $0 <= scenario.now } ?? true)
     menu.item(withTag: Command.refresh.rawValue)?.isEnabled = !refreshing
     // Close and Quit must remain available even while acquisition is blocked.
     menu.item(withTag: Command.close.rawValue)?.isEnabled = true
@@ -107,6 +126,11 @@ final class DesktopPreviewMenu: NSObject {
   }
 
   @objc private func close() { dismiss() }
+
+  @objc private func recheck() {
+    dismiss()
+    onRecheck?()
+  }
 
   @objc private func quit() {
     dismiss()

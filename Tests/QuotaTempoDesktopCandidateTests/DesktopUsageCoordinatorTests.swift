@@ -12,6 +12,71 @@ struct DesktopUsageCoordinatorTests {
     accountFingerprint: String(repeating: "c", count: 64),
     organizationFingerprint: String(repeating: "b", count: 64))
 
+  @Test("An account change discards values but shortens only a successful polling interval")
+  func ownerChangeUsesAttemptFloor() throws {
+    var coordinator = allowed()
+    let initial = context()
+    let request = try requireRequest(&coordinator, context: initial, now: now)
+    coordinator.complete(request, reply: try success(), context: initial, now: now)
+    let changed = context(owner: otherOwner)
+    #expect(coordinator.begin(context: changed, now: now.addingTimeInterval(30)) == nil)
+    #expect(coordinator.observation == nil)
+    #expect(coordinator.state == .waitingForNextRefresh)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(60))
+    #expect(coordinator.begin(context: changed, now: now.addingTimeInterval(60)) != nil)
+  }
+
+  @Test("Explicit auth recheck cannot bypass a persisted provider deadline")
+  func explicitRecheckHonorsProviderWait() {
+    var coordinator = allowed()
+    let retry = now.addingTimeInterval(7200)
+    #expect(
+      coordinator.restoreThrottle(
+        DesktopThrottleRecord(
+          recordedAt: now, serviceNotBefore: retry, authRefusal: .waitingForDesktopRenewal),
+        now: now) == true)
+    let initial = context(expiresAt: retry.addingTimeInterval(3600))
+    #expect(coordinator.begin(context: initial, now: now, userRequestedRecheck: true) == nil)
+    #expect(coordinator.nextAllowedAt == retry)
+    #expect(coordinator.begin(context: initial, now: retry, userRequestedRecheck: true) != nil)
+    #expect(coordinator.throttleRecord(now: retry).authRefusal != nil)
+    #expect(coordinator.nextAllowedAt == retry.addingTimeInterval(900))
+  }
+
+  @Test("An unsupported wait stops automatic requests but permits a bounded explicit recheck")
+  func unsupportedWaitRecovery() throws {
+    var coordinator = allowed()
+    let initial = context()
+    let request = try requireRequest(&coordinator, context: initial, now: now)
+    coordinator.complete(request, reply: .unsupportedRateLimit, context: initial, now: now)
+    #expect(
+      coordinator.begin(
+        context: initial, now: now.addingTimeInterval(899), userRequestedRecheck: true) == nil)
+    let later = now.addingTimeInterval(900)
+    #expect(coordinator.begin(context: initial, now: later) == nil)
+    let candidate = coordinator.begin(context: initial, now: later, userRequestedRecheck: true)
+    let recheck = try #require(candidate)
+    coordinator.complete(recheck, reply: .networkFailure, context: initial, now: later)
+    #expect(coordinator.throttleRecord(now: later).unsupportedServiceWait)
+    #expect(coordinator.begin(context: initial, now: later.addingTimeInterval(900)) == nil)
+  }
+
+  @Test("Finite Retry-After longer than a year survives restart", arguments: [429, 503])
+  func longServiceDeadline(status: Int) throws {
+    var first = allowed()
+    let initial = context()
+    let request = try requireRequest(&first, context: initial, now: now)
+    let retry = now.addingTimeInterval(400 * 86400)
+    first.complete(request, reply: response(status, retryAfter: retry), context: initial, now: now)
+    var restarted = allowed()
+    #expect(restarted.restoreThrottle(first.throttleRecord(now: now), now: now) == true)
+    #expect(restarted.nextAllowedAt == retry)
+    #expect(!restarted.throttleRecord(now: now).unsupportedServiceWait)
+    #expect(
+      restarted.begin(context: context(expiresAt: retry.addingTimeInterval(3600)), now: retry)
+        != nil)
+  }
+
   @Test("Restart metadata contains no observation, owner, generation or response")
   func boundedRestartRecord() throws {
     var coordinator = allowed()
@@ -26,7 +91,7 @@ struct DesktopUsageCoordinatorTests {
       Set(object.keys).isSubset(of: [
         "schemaVersion", "recordedAt", "lastAttemptAt", "localNextAllowedAt",
         "successfulNextAllowedAt", "serviceNotBefore", "unsupportedServiceWait", "failureCount",
-        "interruptedUntil", "authRefusal",
+        "interruptedUntil", "authRefusal", "authRefusalExpiresAt",
       ]))
     var restarted = allowed()
     #expect(restarted.restoreThrottle(record, now: now) == true)
@@ -155,7 +220,7 @@ struct DesktopUsageCoordinatorTests {
       request, reply: response(429, retryAfter: now.addingTimeInterval(999_999_999_999_999)),
       context: context, now: now)
     #expect(coordinator.state == .serviceWaitUnavailable)
-    #expect(coordinator.nextAllowedAt == nil)
+    #expect(coordinator.nextAllowedAt == now.addingTimeInterval(900))
     #expect(coordinator.throttleRecord(now: now).unsupportedServiceWait)
     coordinator.setPermission(.denied)
     coordinator.setPermission(.allowed)

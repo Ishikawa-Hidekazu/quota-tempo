@@ -83,6 +83,78 @@ struct ClaudeBrowserAppTests {
     #expect(fixture.io.processCount == 0)
   }
 
+  @Test(
+    "Silent browser expiry clears UI and persisted quotas without probing another account",
+    arguments: ["ok", "unavailable", "rateLimited"])
+  func silentBrowserExpiresInModel(status: String) async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    let clock = BrowserAppClock(fixture.now)
+    try fixture.ingest(remaining: 57, offset: -60)
+    if status != "ok" { try fixture.ingest(status: status, offset: -1) }
+    let bridgeBytes = try Data(contentsOf: fixture.browser.url)
+    // A different local observation must not be consulted just because the browser goes silent.
+    try fixture.setHistory(remaining: 99, capturedAt: fixture.now)
+    let model = fixture.model(liveProbes: true, now: { clock.now })
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly?.remainingPercent == 57 }
+    let captured = try #require(model.scenario.snapshots.first)
+
+    clock.set(fixture.now.addingTimeInterval(840))
+    model.clockAdvanced()
+    try await self.waitFor(model) { model.scenario.now == clock.now }
+    #expect(model.scenario.snapshots.first == captured)
+
+    clock.set(fixture.now.addingTimeInterval(841))
+    model.clockAdvanced()
+    try await self.waitFor(model) { model.scenario.snapshots.first?.weekly == nil }
+    let expired = try #require(model.scenario.snapshots.first)
+    #expect(expired.source == .claudeBrowser)
+    #expect(expired.fiveHour == nil)
+    #expect(expired.capturedAt == nil)
+    #expect(expired.lastAttemptAt == captured.lastAttemptAt)
+    #expect(expired.claudeAccountFingerprint == nil)
+    #expect(expired.claudeOrganizationFingerprint == nil)
+    #expect(expired.sourceState == .attemptFailed)
+    #expect(expired.errorCode == (status == "rateLimited" ? .temporaryFailure : .sourceUnavailable))
+    #expect(QuotaPlanner.evaluate(expired, now: clock.now).targetNow == nil)
+    #expect(
+      MenuBarTitleFormatter.title(scenario: model.scenario, mode: .full)?.contains("W57") != true)
+    #expect(try fixture.store.load(.claude) == expired)
+
+    // Manual force, wake, and restart cannot bypass a saved rate-limit/backoff state.
+    model.explicitRefresh()
+    try await self.waitFor(model) { true }
+    model.systemDidWake()
+    try await self.waitFor(model) { true }
+    model.menuOpened()
+    try await self.waitFor(model) { true }
+    clock.set(fixture.now.addingTimeInterval(7_200))
+    model.scheduledRefresh()
+    try await self.waitFor(model) { model.scenario.now == clock.now }
+    let restarted = fixture.model(liveProbes: true, now: { clock.now })
+    try await self.waitFor(restarted) { restarted.scenario.snapshots.first?.weekly == nil }
+    #expect(restarted.scenario.snapshots.first == expired)
+    #expect(try Data(contentsOf: fixture.browser.url) == bridgeBytes)
+    #expect(try fixture.browser.load()?.enabled == true)
+    #expect(fixture.io.readCount == 0)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+
+    try fixture.ingest(remaining: 31, offset: 7_200, receivedAt: clock.now)
+    restarted.clockAdvanced()
+    try await self.waitFor(restarted) {
+      restarted.scenario.snapshots.first?.weekly?.remainingPercent == 31
+    }
+    let recovered = try #require(restarted.scenario.snapshots.first)
+    #expect(recovered.source == .claudeBrowser)
+    #expect(recovered.capturedAt == clock.now)
+    #expect(recovered.errorCode == nil)
+    #expect(recovered.claudeAccountFingerprint == captured.claudeAccountFingerprint)
+    #expect(fixture.io.readCount == 0)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
   @Test("Signout clears displayed and persisted browser quotas without local-source fallback")
   func signoutClearsModel() async throws {
     let fixture = try BrowserAppFixture()
@@ -518,7 +590,10 @@ private struct BrowserAppFixture {
     self.defaults.removePersistentDomain(forName: self.suiteName)
   }
 
-  func model(acquisitionEnabled: Bool = true, liveProbes: Bool = false) -> LiveQuotaModel {
+  func model(
+    acquisitionEnabled: Bool = true, liveProbes: Bool = false,
+    now: @escaping @Sendable () -> Date = { Date() }
+  ) -> LiveQuotaModel {
     let io = self.io
     return LiveQuotaModel(
       store: self.store, acquisitionEnabled: acquisitionEnabled, preferences: self.preferences,
@@ -529,7 +604,7 @@ private struct BrowserAppFixture {
         cacheURL: self.root.appendingPathComponent("synthetic-cache.json"),
         desktopConfigURL: self.root.appendingPathComponent("synthetic-config.json"),
         cliFallbackEnabled: liveProbes, ptyProbeEnabled: liveProbes, ptyProbe: io,
-        probeDirectory: self.root.appendingPathComponent("synthetic-probe")))
+        probeDirectory: self.root.appendingPathComponent("synthetic-probe")), now: now)
   }
 
   func setHistory(remaining: Double, capturedAt: Date) throws {
@@ -571,7 +646,8 @@ private struct BrowserAppFixture {
 
   func ingest(
     status: String = "ok", remaining: Double = 73, resetAfter: TimeInterval = 259_200,
-    offset: TimeInterval, accountFingerprint: String = String(repeating: "a", count: 64)
+    offset: TimeInterval, accountFingerprint: String = String(repeating: "a", count: 64),
+    receivedAt: Date? = nil
   ) throws {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -598,11 +674,23 @@ private struct BrowserAppFixture {
       ]
       object["fiveHour"] = [
         "remainingPercent": 40,
-        "resetAt": formatter.string(from: self.now.addingTimeInterval(3_600)),
+        "resetAt": formatter.string(from: (receivedAt ?? self.now).addingTimeInterval(3_600)),
       ]
     }
-    try self.browser.ingest(JSONSerialization.data(withJSONObject: object), now: self.now)
+    try self.browser.ingest(
+      JSONSerialization.data(withJSONObject: object), now: receivedAt ?? self.now)
   }
+}
+
+private final class BrowserAppClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var date: Date
+
+  init(_ date: Date) { self.date = date }
+
+  var now: Date { self.lock.withLock { self.date } }
+
+  func set(_ date: Date) { self.lock.withLock { self.date = date } }
 }
 
 private final class BrowserAppIsolationStub: BoundedLocalDataReading, BoundedProcessRunning,

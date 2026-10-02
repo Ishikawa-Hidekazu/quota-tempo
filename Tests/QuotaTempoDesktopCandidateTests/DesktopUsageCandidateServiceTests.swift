@@ -62,14 +62,15 @@ private actor SyntheticDesktopReader: DesktopCredentialReading {
   func invalidate() { stillCurrent = false }
   func fail(_ error: DesktopCredentialError) { self.error = error }
   func recover() { error = nil }
-  func renew(otherOwner: Bool = false) throws {
+  func renew(otherOwner: Bool = false, expiresAt: Date? = nil) throws {
     let owner = try DesktopIdentity.owner(
       account: otherOwner
         ? "33333333-3333-4333-8333-333333333333" : "11111111-1111-4111-8111-111111111111",
       organization: "22222222-2222-4222-8222-222222222222")
     lease = try DesktopCredentialLease(
       context: DesktopUsageContext(
-        owner: owner, generation: UUID(), expiresAt: serviceNow.addingTimeInterval(7200),
+        owner: owner, generation: UUID(),
+        expiresAt: expiresAt ?? serviceNow.addingTimeInterval(7200),
         hasProfileScope: true),
       token: Data("synthetic-renewed-token".utf8))
   }
@@ -140,6 +141,169 @@ private final class SyntheticThrottleStore: DesktopThrottleStoring, @unchecked S
 
 @Suite("Desktop candidate service")
 struct DesktopUsageCandidateServiceTests {
+  @Test("Equal expiry is not owner identity: an explicit recheck verifies the new account")
+  func equalExpiryDifferentOwnerRecheck() async throws {
+    let clock = SyntheticServiceClock()
+    let reader = try SyntheticDesktopReader()
+    let expiry = await reader.lease.context.expiresAt
+    let store = SyntheticThrottleStore(
+      DesktopThrottleRecord(
+        recordedAt: serviceNow, authRefusal: .accessDenied, authRefusalExpiresAt: expiry))
+    try await reader.renew(otherOwner: true, expiresAt: expiry)
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store,
+      fetch: { request, _ in successfulReply(request) })
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    #expect(await service.refresh().state == .accessDenied)
+    let observation = await service.recheckConnection().observation
+    let expectedOwner = await reader.lease.context.owner
+    #expect(observation?.owner == expectedOwner)
+    #expect(observation != nil)
+  }
+
+  @Test("The service and real file store preserve renewal across a closed-store restart")
+  func realStoreRenewalIntegration() async throws {
+    let directory = URL(
+      fileURLWithPath: "/private/tmp/QuotaTempo-Throttle-Synthetic-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let clock = SyntheticServiceClock()
+    let reader = try SyntheticDesktopReader()
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    do {
+      let store = try DesktopThrottleFileStore(directory: directory)
+      let service = DesktopUsageCandidateService(
+        reader: reader, clock: { clock.now() }, throttleStore: store,
+        fetch: { _, _ in
+          .response(
+            status: 401, profileOwner: nil, serverDate: nil, cacheAge: nil, retryAfter: nil,
+            body: Data())
+        })
+      await service.setApproval(approval)
+      _ = await service.refresh()
+      clock.advance(by: 10)
+      try await reader.renew(otherOwner: true)
+      #expect(await service.refresh().state == .waitingForNextRefresh)
+      #expect(try store.load()?.authRefusal == nil)
+    }
+    clock.advance(by: 50)
+    let store = try DesktopThrottleFileStore(directory: directory)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store,
+      fetch: { request, _ in successfulReply(request) })
+    await restarted.setApproval(approval)
+    #expect(await restarted.refresh().observation != nil)
+  }
+
+  @Test("Renewal observed during the attempt floor is saved before restart", arguments: [401, 403])
+  func persistRenewalBeforeNextAttempt(status: Int) async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let reader = try SyntheticDesktopReader()
+    let counter = SyntheticFetchCounter()
+    let fetch: DesktopUsageCandidateService.Fetch = { request, _ in
+      await counter.increment()
+      if await counter.count == 1 {
+        return .response(
+          status: status, profileOwner: nil, serverDate: nil, cacheAge: nil,
+          retryAfter: nil, body: Data())
+      }
+      return successfulReply(request)
+    }
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await first.setApproval(approval)
+    _ = await first.refresh()
+    clock.advance(by: 10)
+    try await reader.renew()
+    #expect(await first.refresh().state == .waitingForNextRefresh)
+    #expect(try store.load()?.authRefusal == nil)
+    #expect(await counter.count == 1)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    #expect(await restarted.refresh().observation == nil)
+    clock.advance(by: 50)
+    #expect(await restarted.refresh().observation != nil)
+    #expect(await counter.count == 2)
+  }
+
+  @Test(
+    "A changed expiry during downtime does not inherit the prior refusal", arguments: [false, true])
+  func changedLeaseWhileStopped(otherOwner: Bool) async throws {
+    let clock = SyntheticServiceClock()
+    let store = SyntheticThrottleStore()
+    let reader = try SyntheticDesktopReader()
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store,
+      fetch: { _, _ in
+        .response(
+          status: 401, profileOwner: nil, serverDate: nil, cacheAge: nil, retryAfter: nil,
+          body: Data())
+      })
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    await first.setApproval(approval)
+    _ = await first.refresh()
+    try await reader.renew(otherOwner: otherOwner)
+    clock.advance(by: 60)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store,
+      fetch: { request, _ in successfulReply(request) })
+    await restarted.setApproval(approval)
+    let expectedOwner = await reader.lease.context.owner
+    #expect(await restarted.refresh().observation?.owner == expectedOwner)
+    #expect(try store.load()?.authRefusal == nil)
+  }
+
+  @Test("An ambiguous refusal needs one explicit recheck, persisted across one-shot restarts")
+  func explicitRecheckIsBounded() async throws {
+    let clock = SyntheticServiceClock()
+    let reader = try SyntheticDesktopReader()
+    let store = SyntheticThrottleStore(
+      DesktopThrottleRecord(recordedAt: serviceNow, authRefusal: .waitingForDesktopRenewal))
+    let counter = SyntheticFetchCounter()
+    let fetch: DesktopUsageCandidateService.Fetch = { request, _ in
+      await counter.increment()
+      return await counter.count == 1 ? .networkFailure : successfulReply(request)
+    }
+    let approval = DesktopAccessApproval(userConsented: true, providerApproved: true)
+    let first = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await first.setApproval(approval)
+    #expect(await first.refresh().observation == nil)
+    #expect(await counter.count == 0)
+    _ = await first.recheckConnection()
+    #expect(try store.load()?.authRefusal != nil)
+    let restarted = DesktopUsageCandidateService(
+      reader: reader, clock: { clock.now() }, throttleStore: store, fetch: fetch)
+    await restarted.setApproval(approval)
+    clock.advance(by: 899)
+    _ = await restarted.recheckConnection()
+    #expect(await counter.count == 1)
+    clock.advance(by: 1)
+    _ = await restarted.refresh()
+    #expect(await counter.count == 1)
+    #expect(await restarted.recheckConnection().observation != nil)
+    #expect(await counter.count == 2)
+    #expect(try store.load()?.authRefusal == nil)
+  }
+
+  @Test("Third checkpoint failure cannot publish an unsaved observation")
+  func completionSaveFailure() async throws {
+    let store = SyntheticThrottleStore()
+    store.fail(write: 3)
+    let service = DesktopUsageCandidateService(
+      reader: try SyntheticDesktopReader(), clock: serviceClock, throttleStore: store
+    ) { request, _ in successfulReply(request) }
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    let result = await service.refresh()
+    #expect(result.state == .persistenceUnavailable)
+    #expect(result.observation == nil)
+    #expect(try store.load()?.interruptedUntil != nil)
+  }
+
   @Test("Restart retains the successful polling floor without restoring any observation")
   func restartAfterSuccess() async throws {
     let clock = SyntheticServiceClock()

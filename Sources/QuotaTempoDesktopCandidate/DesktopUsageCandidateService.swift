@@ -35,6 +35,7 @@ actor DesktopUsageCandidateService {
   private let throttleStore: (any DesktopThrottleStoring)?
   private var throttleLoaded = false
   private var persistenceFailed = false
+  private var lastSavedRecord: DesktopThrottleRecord?
   private var approval = DesktopAccessApproval()
   private var approvalRevision = UUID()
   private var coordinator = DesktopUsageCoordinator()
@@ -66,6 +67,16 @@ actor DesktopUsageCandidateService {
   }
 
   func refresh() async -> DesktopUsageCandidateResult {
+    await refresh(userRequestedRecheck: false)
+  }
+
+  // Only an explicit user action reaches this path. It never shortens a stored
+  // provider deadline and admits at most one recheck per persisted 15-minute floor.
+  func recheckConnection() async -> DesktopUsageCandidateResult {
+    await refresh(userRequestedRecheck: true)
+  }
+
+  private func refresh(userRequestedRecheck: Bool) async -> DesktopUsageCandidateResult {
     guard !Task.isCancelled else { return result() }
     do { try approval.requireAccess() } catch {
       return result(error: error as? DesktopCredentialError)
@@ -76,7 +87,9 @@ actor DesktopUsageCandidateService {
     refreshID = id
     // The child covers protected reads as well as HTTP. Caller cancellation must
     // reach every awaited stage, including a reader that returns a lease anyway.
-    let task = Task { await performRefresh(revision: revision) }
+    let task = Task {
+      await performRefresh(revision: revision, userRequestedRecheck: userRequestedRecheck)
+    }
     self.task = task
     defer {
       if refreshID == id {
@@ -94,7 +107,9 @@ actor DesktopUsageCandidateService {
     return completed
   }
 
-  private func performRefresh(revision: UUID) async -> DesktopUsageCandidateResult {
+  private func performRefresh(revision: UUID, userRequestedRecheck: Bool) async
+    -> DesktopUsageCandidateResult
+  {
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
     guard loadThrottle(), !persistenceFailed || saveThrottle() else { return result() }
     let lease: DesktopCredentialLease
@@ -107,12 +122,17 @@ actor DesktopUsageCandidateService {
       default:
         _ = coordinator.begin(context: nil, now: clock())
       }
+      guard saveChangedThrottle() else { return result() }
       return result(error: failure)
     }
     guard !Task.isCancelled, revision == approvalRevision else { return result() }
-    guard let request = coordinator.begin(context: lease.context, now: clock()) else {
-      return result(
-        observation: coordinator.currentObservation(context: lease.context, now: clock()))
+    guard
+      let request = coordinator.begin(
+        context: lease.context, now: clock(), userRequestedRecheck: userRequestedRecheck)
+    else {
+      let observation = coordinator.currentObservation(context: lease.context, now: clock())
+      guard saveChangedThrottle() else { return result() }
+      return result(observation: observation)
     }
     // Persist the attempt before HTTP. Storage failure must not become a network
     // retry, including when another refresh, wake or consent change is queued.
@@ -148,11 +168,12 @@ actor DesktopUsageCandidateService {
   private func loadThrottle() -> Bool {
     guard let throttleStore, !throttleLoaded else { return true }
     do {
-      if let record = try throttleStore.load(),
-        !coordinator.restoreThrottle(record, now: clock())
-      {
-        persistenceFailed = true
-        return false
+      if let record = try throttleStore.load() {
+        guard coordinator.restoreThrottle(record, now: clock()) else {
+          persistenceFailed = true
+          return false
+        }
+        lastSavedRecord = record
       }
       throttleLoaded = true
       persistenceFailed = false
@@ -166,13 +187,24 @@ actor DesktopUsageCandidateService {
   private func saveThrottle() -> Bool {
     guard let throttleStore else { return true }
     do {
-      try throttleStore.save(coordinator.throttleRecord(now: clock()))
+      let record = coordinator.throttleRecord(now: clock())
+      try throttleStore.save(record)
+      lastSavedRecord = record
       persistenceFailed = false
       return true
     } catch {
       persistenceFailed = true
       return false
     }
+  }
+
+  private func saveChangedThrottle() -> Bool {
+    guard let lastSavedRecord else { return saveThrottle() }
+    var candidate = coordinator.throttleRecord(now: clock())
+    // Merely reading the clock is not a durable scheduling change.
+    candidate.recordedAt = lastSavedRecord.recordedAt
+    guard candidate != lastSavedRecord else { return true }
+    return saveThrottle()
   }
 
   private func result(

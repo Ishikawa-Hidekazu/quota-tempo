@@ -5,12 +5,17 @@ import QuotaTempoCore
 protocol DesktopPreviewServing: Sendable {
   func setApproval(_ approval: DesktopAccessApproval) async
   func refresh() async -> DesktopUsageCandidateResult
+  func recheckConnection() async -> DesktopUsageCandidateResult
+}
+
+extension DesktopPreviewServing {
+  func recheckConnection() async -> DesktopUsageCandidateResult { await refresh() }
 }
 
 extension DesktopUsageCandidateService: DesktopPreviewServing {}
 
 enum DesktopPreviewRefreshTrigger: String, Sendable {
-  case startup, scheduled, manual, wake
+  case startup, scheduled, manual, wake, recheck
 }
 
 // Local preview only. A single service owns backoff and credential refusals for
@@ -20,6 +25,7 @@ final class DesktopPreviewModel: ObservableObject {
   @Published private(set) var scenario: FixtureScenario
   @Published private(set) var refreshing = false
   @Published private(set) var state = DesktopUsageState.consentRequired
+  @Published private(set) var nextAllowedAt: Date?
   private(set) var isRunning = false
   private let service: any DesktopPreviewServing
   private let clock: @Sendable () -> Date
@@ -87,11 +93,14 @@ final class DesktopPreviewModel: ObservableObject {
     let expected = generation
     refreshing = true
     defer { if generation == expected { refreshing = false } }
-    let result = await service.refresh()
+    let result =
+      trigger == .recheck
+      ? await service.recheckConnection() : await service.refresh()
     guard generation == expected, isRunning, !Task.isCancelled else { return }
     guard result.disposition == .replaceDisplay else { return }
     lastResult = result
     state = result.state
+    nextAllowedAt = result.nextAllowedAt
     apply(result)
     onResult(result, scenario, trigger)
   }
@@ -106,6 +115,7 @@ final class DesktopPreviewModel: ObservableObject {
     refreshing = false
     lastResult = nil
     state = .consentRequired
+    nextAllowedAt = nil
     scenario = Self.empty(now: clock())
     await service.setApproval(DesktopAccessApproval())
   }

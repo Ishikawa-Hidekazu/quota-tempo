@@ -261,7 +261,7 @@ struct DesktopUsageHTTPTransportTests {
   @Test("Long absolute Retry-After deadlines are preserved", arguments: [false, true])
   func longAbsoluteRetryAfterIsNotCapped(onUsage: Bool) async throws {
     let fixture = try fixture()
-    let expected = now.addingTimeInterval(365 * 86400)
+    let expected = now.addingTimeInterval(400 * 86400)
     let limited = response(status: 429, headers: ["Retry-After": httpDate(expected)])
     StubProtocol.state.install(onUsage ? [profile(), limited] : [limited])
     let reply = await transport.fetch(request: fixture.request, lease: fixture.lease)
@@ -292,7 +292,7 @@ struct DesktopUsageHTTPTransportTests {
     arguments: [false, true],
     [
       "999999999999999", "99999999999999999999", String(repeating: "9", count: 400),
-      "Thu, 01 Jan 2099 00:00:00 GMT",
+      "Fri, 01 Jan 9999 00:00:00 GMT",
     ])
   func unsupportedRetryAfter(onUsage: Bool, value: String) async throws {
     let fixture = try fixture()

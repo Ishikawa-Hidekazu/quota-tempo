@@ -14,18 +14,6 @@ import Security
 struct DesktopCandidateLocalProbe {
   @MainActor static func main() {
     setbuf(stdout, nil)
-    if Array(CommandLine.arguments.dropFirst()) == ["--keychain-status-only"] {
-      var keychain: SecKeychain?
-      var status: SecKeychainStatus = 0
-      guard SecKeychainCopyDefault(&keychain) == errSecSuccess,
-        let keychain, SecKeychainGetStatus(keychain, &status) == errSecSuccess
-      else {
-        print("{\"status\":\"keychain_status_unavailable\"}")
-        return
-      }
-      print("{\"keychainUnlocked\":\(status & SecKeychainStatus(kSecUnlockStateStatus) != 0)}")
-      return
-    }
     let arguments = Array(CommandLine.arguments.dropFirst())
     let requiredArguments = [
       "--consent-desktop-read-only", "--acknowledge-provider-permission-unconfirmed",
@@ -33,8 +21,24 @@ struct DesktopCandidateLocalProbe {
     let interactive = arguments == requiredArguments + ["--request-keychain-access"]
     let preview = arguments == requiredArguments + ["--menu-bar-preview"]
     let previewQA = arguments == requiredArguments + ["--menu-bar-preview-qa"]
-    guard arguments == requiredArguments || interactive || preview || previewQA else {
+    let recheck = arguments == requiredArguments + ["--recheck-connection-once"]
+    let repair = arguments == requiredArguments + ["--repair-scheduling-state"]
+    guard arguments == requiredArguments || interactive || preview || previewQA || recheck || repair
+    else {
       print("{\"status\":\"explicit_local_consent_required\"}")
+      return
+    }
+    if repair {
+      do {
+        let result = try DesktopThrottleFileStore.recoverApplicationSupport(now: Date())
+        switch result {
+        case .preserved: print("{\"status\":\"scheduling_state_preserved\"}")
+        case .repaired: print("{\"status\":\"scheduling_state_repaired_recheck_required\"}")
+        case .unsupportedVersion: print("{\"status\":\"scheduling_state_requires_newer_version\"}")
+        }
+      } catch {
+        print("{\"status\":\"scheduling_repair_unavailable_close_preview_first\"}")
+      }
       return
     }
     let throttleStore: DesktopThrottleFileStore
@@ -100,14 +104,14 @@ struct DesktopCandidateLocalProbe {
     // AppKit's preview event loop starts synchronously above, never inside an
     // already-running MainActor task. Only the headless one-shot is async.
     Task {
-      await runOneShot(interactive: interactive, throttleStore: throttleStore)
+      await runOneShot(interactive: interactive, recheck: recheck, throttleStore: throttleStore)
       exit(0)
     }
     dispatchMain()
   }
 
   @MainActor private static func runOneShot(
-    interactive: Bool, throttleStore: DesktopThrottleFileStore
+    interactive: Bool, recheck: Bool, throttleStore: DesktopThrottleFileStore
   ) async {
     let watchdog = Task.detached {
       try? await Task.sleep(for: .seconds(interactive ? 180 : 45))
@@ -140,7 +144,7 @@ struct DesktopCandidateLocalProbe {
       })
     await service.setApproval(
       DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true))
-    let result = await service.refresh()
+    let result = recheck ? await service.recheckConnection() : await service.refresh()
     watchdog.cancel()
     var fields: [String: Any] = [
       "status": result.state.rawValue,

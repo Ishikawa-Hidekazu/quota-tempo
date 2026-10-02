@@ -888,10 +888,7 @@ public struct CodexRateLimitAdapter: Sendable {
     candidate: CodexExecutableCandidate?,
     version: String?
   ) -> ProviderSnapshot {
-    // A failed observation cannot prove that a prior provider restriction ended.
-    let retainsRestriction =
-      previous?.provider == .codex && previous?.source == .codexAppServer
-      && previous?.sourceState == .accessRestricted
+    let retainsRestriction = Self.retainsRestriction(previous, now: now)
     return ProviderSnapshot(
       provider: .codex,
       source: .codexAppServer,
@@ -904,6 +901,21 @@ public struct CodexRateLimitAdapter: Sendable {
       codexExecutableSource: candidate?.source,
       codexExecutableVersion: candidate == nil ? nil : version
     )
+  }
+
+  private static func retainsRestriction(_ previous: ProviderSnapshot?, now: Date) -> Bool {
+    guard let previous, previous.provider == .codex, previous.source == .codexAppServer,
+      previous.sourceState == .accessRestricted
+    else { return false }
+    let exhausted = [previous.weekly, previous.fiveHour].compactMap { $0 }
+      .filter { $0.remainingPercent == 0 }
+    // Unknown restrictions have no safe expiry. Known exhaustion is bounded by
+    // its exhausted windows, not by a later reset of an unexhausted window.
+    guard !exhausted.isEmpty else { return true }
+    return exhausted.contains { window in
+      guard let resetAt = window.resetAt, !window.isResetEstimated else { return true }
+      return now < resetAt
+    }
   }
 
   private static func failurePriority(_ error: AcquisitionErrorCode) -> Int {

@@ -31,6 +31,11 @@ const cases = [
   [...required, "--menu-bar-preview-qa", "--request-keychain-access"],
   [...required, "--render-preview-fixtures"],
   ["--render-preview-fixtures"],
+  ["--keychain-status-only"], ["--recheck-connection-once"],
+  [required[0], "--recheck-connection-once"],
+  [...required, "--recheck-connection-once", "--unexpected"],
+  ["--repair-scheduling-state"], [required[0], "--repair-scheduling-state"],
+  [...required, "--repair-scheduling-state", "--unexpected"],
 ];
 for (const args of cases) {
   const output = execFileSync(binary, args, {

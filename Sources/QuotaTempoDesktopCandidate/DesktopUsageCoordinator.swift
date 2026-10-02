@@ -2,9 +2,13 @@ import Foundation
 
 // Pure admission/acceptance state machine. The isolated service supplies verified
 // reader/transport metadata; no shipped application depends on this target.
-struct DesktopUsageOwner: Equatable, Sendable {
+struct DesktopUsageOwner: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible
+{
   let accountFingerprint: String
   let organizationFingerprint: String
+
+  var description: String { "DesktopUsageOwner(redacted)" }
+  var debugDescription: String { description }
 
   var isValid: Bool {
     [accountFingerprint, organizationFingerprint].allSatisfy { value in
@@ -64,6 +68,7 @@ enum DesktopUsageState: String, Sendable {
   case invalidClock
   case serviceWaitUnavailable
   case persistenceUnavailable
+  case waitingForNextRefresh
 }
 
 enum DesktopUsageReply: Sendable {
@@ -101,17 +106,19 @@ struct DesktopThrottleRecord: Codable, Equatable, Sendable {
   var failureCount = 0
   var interruptedUntil: Date? = nil
   var authRefusal: DesktopAuthRefusal? = nil
+  var authRefusalExpiresAt: Date? = nil
 
   var isValid: Bool {
     let reference = max(recordedAt, lastAttemptAt ?? recordedAt)
     return schemaVersion == 1 && (0...5).contains(failureCount)
       && [
         recordedAt, lastAttemptAt, localNextAllowedAt, successfulNextAllowedAt,
-        serviceNotBefore, interruptedUntil,
+        serviceNotBefore, interruptedUntil, authRefusalExpiresAt,
       ].compactMap { $0 }.allSatisfy {
         $0.timeIntervalSince1970.isFinite && $0.timeIntervalSince1970 > 0
       }
       && (interruptedUntil == nil || lastAttemptAt != nil)
+      && (authRefusalExpiresAt == nil || authRefusal != nil)
       && (localNextAllowedAt.map { $0.timeIntervalSince(reference) <= 900 } ?? true)
       && (successfulNextAllowedAt.map { $0.timeIntervalSince(reference) <= 300 } ?? true)
       && (interruptedUntil.map {
@@ -128,7 +135,8 @@ struct DesktopUsageCoordinator: Sendable {
   static let requestTimeout: TimeInterval = 30
   static let refreshInterval: TimeInterval = 5 * 60
   static let observationMaximumAge: TimeInterval = 15 * 60
-  static let maximumSupportedServiceWait: TimeInterval = 366 * 86400
+  // Preserve finite service deadlines, including waits longer than one year.
+  static let maximumSupportedServiceWait: TimeInterval = 100 * 366 * 86400
 
   private(set) var permission: DesktopUsagePermission = .notRequested
   private(set) var state: DesktopUsageState = .consentRequired
@@ -136,7 +144,6 @@ struct DesktopUsageCoordinator: Sendable {
   private(set) var activeRequest: DesktopUsageRequest?
   private(set) var lastAttemptAt: Date?
   var nextAllowedAt: Date? {
-    guard !unsupportedServiceWait else { return nil }
     return [localNextAllowedAt, successfulNextAllowedAt, serviceNotBefore].compactMap { $0 }.max()
   }
   private var localNextAllowedAt: Date?
@@ -146,6 +153,8 @@ struct DesktopUsageCoordinator: Sendable {
   private var interruptedUntil: Date?
   private var authRefusal: DesktopAuthRefusal?
   private var authRefusalGeneration: UUID?
+  private var authRefusalExpiresAt: Date?
+  private var recheckRequestID: UUID?
   private var context: DesktopUsageContext?
   private var suspendedState: DesktopUsageState?
   private var rejectedGenerations: [(generation: UUID, state: DesktopUsageState)] = []
@@ -163,6 +172,7 @@ struct DesktopUsageCoordinator: Sendable {
     failureCount = record.failureCount
     authRefusal = record.authRefusal
     authRefusalGeneration = nil
+    authRefusalExpiresAt = record.authRefusalExpiresAt
     latestClock = record.recordedAt
     // No observation is restored. An interrupted attempt gets a bounded quiet
     // period, not an immediate retry or a permanently unrecoverable pending bit.
@@ -178,7 +188,8 @@ struct DesktopUsageCoordinator: Sendable {
       lastAttemptAt: lastAttemptAt, localNextAllowedAt: localNextAllowedAt,
       successfulNextAllowedAt: successfulNextAllowedAt, serviceNotBefore: serviceNotBefore,
       unsupportedServiceWait: unsupportedServiceWait, failureCount: failureCount,
-      interruptedUntil: interruptedUntil, authRefusal: authRefusal)
+      interruptedUntil: interruptedUntil, authRefusal: authRefusal,
+      authRefusalExpiresAt: authRefusalExpiresAt)
   }
 
   // Called before any suspension after HTTP, so known restrictions can be made
@@ -194,15 +205,18 @@ struct DesktopUsageCoordinator: Sendable {
       let refusal: DesktopAuthRefusal = status == 401 ? .waitingForDesktopRenewal : .accessDenied
       authRefusal = refusal
       authRefusalGeneration = request.context.generation
+      authRefusalExpiresAt = request.context.expiresAt
       reject(request.context.generation, state: refusal.state)
       if context?.generation == request.context.generation { observation = nil }
     case .unsupportedRateLimit:
       unsupportedServiceWait = true
-    case .response(429, _, _, _, let retryAfter, _):
+      extendDelay(until: conservativeClock.addingTimeInterval(900))
+    case .response(let status, _, _, _, let retryAfter, _) where status == 429 || status == 503:
       extendServiceDelay(until: conservativeClock.addingTimeInterval(60))
       if let retryAfter, Self.validDate(retryAfter) {
         if retryAfter.timeIntervalSince(conservativeClock) > Self.maximumSupportedServiceWait {
           unsupportedServiceWait = true
+          extendDelay(until: conservativeClock.addingTimeInterval(900))
         } else {
           extendServiceDelay(until: retryAfter)
         }
@@ -233,10 +247,13 @@ struct DesktopUsageCoordinator: Sendable {
     state = .identityUnavailable
   }
 
-  mutating func begin(context newContext: DesktopUsageContext?, now: Date) -> DesktopUsageRequest? {
+  mutating func begin(
+    context newContext: DesktopUsageContext?, now: Date, userRequestedRecheck: Bool = false
+  ) -> DesktopUsageRequest? {
     guard checkClock(now) else { return nil }
     guard synchronize(newContext, now: now) else { return nil }
-    guard !unsupportedServiceWait else {
+    let recheck = userRequestedRecheck && (authRefusal != nil || unsupportedServiceWait)
+    guard !unsupportedServiceWait || recheck else {
       state = .serviceWaitUnavailable
       return nil
     }
@@ -246,11 +263,18 @@ struct DesktopUsageCoordinator: Sendable {
       fail(.timedOut, now: now)
       return nil
     }
-    if let context, let rejection = rejection(for: context.generation) {
+    if !recheck, let context, let rejection = rejection(for: context.generation) {
       state = rejection
       return nil
     }
-    guard nextAllowedAt.map({ now >= $0 }) ?? true, let context else { return nil }
+    let deadline = [localNextAllowedAt, successfulNextAllowedAt, serviceNotBefore].compactMap { $0 }
+      .max()
+    guard deadline.map({ now >= $0 }) ?? true, let context else {
+      if observation == nil, state == .contextChanged || state == .ready {
+        state = .waitingForNextRefresh
+      }
+      return nil
+    }
     let request = DesktopUsageRequest(
       id: UUID(), context: context, startedAt: now,
       deadline: now.addingTimeInterval(Self.requestTimeout))
@@ -258,7 +282,8 @@ struct DesktopUsageCoordinator: Sendable {
     issuedRequests.append(request)
     issuedRequests = Array(issuedRequests.suffix(8))
     lastAttemptAt = now
-    localNextAllowedAt = now.addingTimeInterval(60)
+    localNextAllowedAt = now.addingTimeInterval(recheck ? 900 : 60)
+    recheckRequestID = recheck ? request.id : nil
     interruptedUntil = now.addingTimeInterval(15 * 60)
     state = .requesting
     return request
@@ -308,7 +333,8 @@ struct DesktopUsageCoordinator: Sendable {
         fail((500...599).contains(status) ? .temporaryFailure : .invalidResponse, now: now)
         return
       }
-      if let rejection = rejection(for: request.context.generation) {
+      if let rejection = rejection(for: request.context.generation), recheckRequestID != request.id
+      {
         observation = nil
         state = rejection
         return
@@ -334,6 +360,14 @@ struct DesktopUsageCoordinator: Sendable {
       observation = DesktopUsageObservation(
         owner: request.context.owner, capturedAt: min(serverDate, now),
         values: Self.currentWindows(values, now: now))
+      if recheckRequestID == request.id {
+        authRefusal = nil
+        authRefusalGeneration = nil
+        authRefusalExpiresAt = nil
+        rejectedGenerations.removeAll { $0.generation == request.context.generation }
+        unsupportedServiceWait = false
+        recheckRequestID = nil
+      }
       failureCount = 0
       state = .current
       successfulNextAllowedAt = min(reset, now.addingTimeInterval(Self.refreshInterval))
@@ -375,7 +409,7 @@ struct DesktopUsageCoordinator: Sendable {
       let sameOwner = newContext.owner == context?.owner
       activeRequest = nil
       if !sameOwner { observation = nil }
-      if sameOwner, newContext.generation != context?.generation {
+      if let context, newContext.generation != context.generation || !sameOwner {
         // Renewal can retry after the normal attempt floor, but never bypasses
         // a failure backoff or a provider's Retry-After deadline.
         successfulNextAllowedAt = nil
@@ -398,12 +432,22 @@ struct DesktopUsageCoordinator: Sendable {
     if let authRefusal {
       // A new process's random generation is not proof of renewal. Bind the
       // restored refusal only after a valid read, then require a later change.
-      if authRefusalGeneration == nil { authRefusalGeneration = newContext.generation }
+      if authRefusalGeneration == nil, let expiry = authRefusalExpiresAt,
+        expiry != newContext.expiresAt
+      {
+        // A different expiry proves this is not the rejected lease. Equality
+        // proves nothing about the owner; explicit recheck covers that ambiguity.
+        self.authRefusal = nil
+        authRefusalExpiresAt = nil
+      } else if authRefusalGeneration == nil {
+        authRefusalGeneration = newContext.generation
+      }
       if authRefusalGeneration == newContext.generation {
         reject(newContext.generation, state: authRefusal.state)
       } else if rejection(for: newContext.generation) == nil {
         self.authRefusal = nil
         authRefusalGeneration = nil
+        authRefusalExpiresAt = nil
       }
     }
     if let rejection = rejection(for: newContext.generation) {

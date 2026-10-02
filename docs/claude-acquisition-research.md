@@ -1217,6 +1217,71 @@ this session. The revised candidate remains outside shipped products. Public
 integration, natural-rollover/renewal/second-Mac acceptance, product recovery and
 the unconfirmed provider-permission gate are not closed by these results.
 
+#### Independent QA corrections (2026-10-02)
+
+The review of `20fb780` correctly classified the candidate as REWORK. A restored
+authentication refusal could bind to an already-renewed lease or another account;
+an in-process renewal discovered during backoff was not saved until the next HTTP
+attempt. Earlier checkpoint test passes did not cover those transitions.
+
+The correction checkpoints scheduling changes even when no request starts. A
+refusal stores only its expiry timestamp in addition to its fixed category. A
+different expiry on restart releases that refusal; equal or absent expiry does
+not prove identity or renewal. The explicit **Recheck Connection Once** action
+covers that ambiguity. It re-verifies the provider profile, retains the refusal
+until a valid response is accepted, persists a 15-minute attempt floor, and never
+shortens a known provider deadline. Startup, timer, wake, ordinary Refresh and
+consent changes cannot invoke this action. One-shot diagnosis has the equivalent
+`--recheck-connection-once` option behind both existing consent flags.
+
+Healthy startup/owner-change waits now have a separate `waitingForNextRefresh`
+state and next-update time. Account changes clear old values immediately and
+shorten only a successful polling interval to the 60-second attempt floor;
+failure backoff and service deadlines are unchanged. No observations or owner
+fingerprints are restored from the scheduling checkpoint.
+
+Finite Retry-After deadlines beyond 366 days are no longer converted into a
+permanent stop: the representable range is 100 years, preserved without capping.
+429 and 503 both retain those deadlines. Out-of-range/overflow waits still stop
+automatic traffic. Only an explicit recheck, after a persisted 15-minute floor
+and any known service deadline, may test recovery. A failed recheck does not
+resume automatic traffic.
+
+The helper's `--repair-scheduling-state` option, also behind both consent flags,
+is an offline repair, not a request or sign-in operation. Close the preview first:
+repair must obtain the same lifetime lock. Valid records (including refusals and
+long deadlines) are preserved unchanged. Unknown versions report that a newer
+helper is required, not a destructive downgrade. Missing/corrupt version-1
+records are repaired atomically into a stopped state with a 15-minute floor and
+salvaged known constraints; the user must separately request a recheck afterward.
+Unrepresentable constraints or unsafe paths remain blocked. Do not delete the
+JSON or lock manually. The ungated `--keychain-status-only` diagnostic was removed.
+
+Two other review findings are corrected independently of the Desktop candidate:
+Codex exhaustion is retained only until the known exhausted windows reset (an
+unknown restriction remains conservative), and browser values expire 15 minutes
+after their last successful capture even when the extension disappears. Browser
+expiry hides values without silently selecting a possibly different local
+account, clearing connection consent, or bypassing a browser service wait.
+
+Synthetic regressions cover renewal-before-save/restart, switched owners with
+different and equal expiries, explicit recheck after a one-shot restart, third
+checkpoint write failure, real file-store/service integration, safe repair and
+lock contention, healthy waiting, provider deadlines, browser expiry/recovery,
+and Codex reset boundaries. This is not evidence of natural provider rollover,
+real authentication failures, sleep/wake, native dismissal, or public integration.
+The existing signed preview is not replaced by these source edits.
+
+Correction validation: **669 Swift tests / 24 suites** passed normally and with
+outbound networking denied. Browser fixtures (229), installer fixtures (81),
+native-host fixtures (7), strict formatting, release/distribution policies,
+candidate isolation (manifest and four leak fixtures), validation-helper build,
+and 24 inert argument vectors passed. Bundle verification passed with launch,
+provider-trigger and window checks explicitly skipped; temporary bundles were
+cleaned. An independent read-only static pass found no additional P1/P2 regression;
+it did not independently rerun the tests. Existing Keychain deprecation warnings
+remain. The running signed helper and its real checkpoint were not modified.
+
 #### First offline checkpoint QA result
 
 The independent code review found and corrected race/freshness defects before

@@ -719,6 +719,93 @@ struct ClaudeBrowserBridgeTests {
     }
   }
 
+  @Test(
+    "Silent browser observations expire without releasing the connection or renewing timestamps")
+  func silentObservationExpires() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ClaudeBrowserStore(directory: root)
+    try self.connect(store)
+    try store.ingest(self.data(self.envelope()), now: self.now)
+    let original = try #require(try store.load())
+    let bytes = try Data(contentsOf: store.url)
+    #expect(store.selectedSnapshot(now: self.now.addingTimeInterval(900)) == original.snapshot)
+
+    for age in [901.0, 3_601, 604_800] {
+      let expired = try #require(store.selectedSnapshot(now: self.now.addingTimeInterval(age)))
+      #expect(expired.source == .claudeBrowser)
+      #expect(expired.weekly == nil)
+      #expect(expired.fiveHour == nil)
+      #expect(expired.capturedAt == nil)
+      #expect(expired.lastAttemptAt == original.snapshot.lastAttemptAt)
+      #expect(expired.sourceState == .attemptFailed)
+      #expect(expired.errorCode == .sourceUnavailable)
+      #expect(expired.claudeAccountFingerprint == nil)
+      #expect(expired.claudeOrganizationFingerprint == nil)
+    }
+    #expect(try store.load() == original)
+    #expect(try Data(contentsOf: store.url) == bytes)
+    #expect(original.enabled)
+  }
+
+  @Test("Error messages cannot rejuvenate old quotas or turn saved 429 waits into fallback")
+  func errorMessagesDoNotRenewQuotaAge() throws {
+    for status in ["unavailable", "rateLimited"] {
+      let root = try self.temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: root) }
+      let store = ClaudeBrowserStore(directory: root)
+      try self.connect(store)
+      try store.ingest(self.data(self.envelope()), now: self.now)
+      let later = self.now.addingTimeInterval(901)
+      try store.ingest(self.data(self.envelope(status: status, offset: 901)), now: later)
+      let bytes = try Data(contentsOf: store.url)
+      for age in [901.0, 1_801, 4_502] {
+        let expired = try #require(store.selectedSnapshot(now: self.now.addingTimeInterval(age)))
+        #expect(expired.weekly == nil)
+        #expect(expired.fiveHour == nil)
+        #expect(expired.capturedAt == nil)
+        #expect(expired.lastAttemptAt == later)
+        #expect(
+          expired.errorCode == (status == "rateLimited" ? .temporaryFailure : .sourceUnavailable))
+      }
+      #expect(try Data(contentsOf: store.url) == bytes)
+      #expect(try store.load()?.lastStatus.rawValue == status)
+    }
+  }
+
+  @Test(
+    "Expiry preserves replay and owner guards, and only fresh same-owner success restores quotas")
+  func expiredConnectionRetainsBinding() throws {
+    let root = try self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ClaudeBrowserStore(directory: root)
+    try self.connect(store)
+    try store.ingest(self.data(self.envelope()), now: self.now)
+    let later = self.now.addingTimeInterval(901)
+    #expect(try #require(store.selectedSnapshot(now: later)).weekly == nil)
+    #expect(throws: ClaudeBrowserBridgeError.connectionMismatch) {
+      try store.ingest(
+        self.data(
+          self.envelope(
+            status: "connected", offset: 901,
+            connectionID: "40000000-0000-4000-8000-000000000004")), now: later)
+    }
+    #expect(throws: ClaudeBrowserBridgeError.staleMessage) {
+      try store.ingest(self.data(self.envelope(offset: 901, sequence: 301)), now: later)
+    }
+    var mismatch = self.envelope(offset: 901)
+    mismatch["principalFingerprint"] = String(repeating: "d", count: 64)
+    #expect(throws: ClaudeBrowserBridgeError.accountMismatch) {
+      try store.ingest(self.data(mismatch), now: later)
+    }
+    #expect(store.selectedSnapshot(now: later)?.weekly == nil)
+    try store.ingest(self.data(self.envelope(offset: 902)), now: later.addingTimeInterval(1))
+    let recovered = try #require(store.selectedSnapshot(now: later.addingTimeInterval(1)))
+    #expect(recovered.weekly?.remainingPercent == 73.5)
+    #expect(recovered.capturedAt == later.addingTimeInterval(1))
+    #expect(recovered.claudeAccountFingerprint == String(repeating: "a", count: 64))
+  }
+
   @Test("Signout, account ambiguity and disconnect clear both windows without resurrecting them")
   func clearSnapshots() throws {
     let original = try self.apply(self.envelope(offset: -120))
@@ -950,7 +1037,7 @@ struct ClaudeBrowserBridgeTests {
     let reset = self.now.addingTimeInterval(60)
     message["weekly"] = ["remainingPercent": 73.5, "resetAt": self.iso(reset)]
     try store.ingest(self.data(message), now: self.now)
-    for date in [reset, reset.addingTimeInterval(1), reset.addingTimeInterval(604_800)] {
+    for date in [reset, reset.addingTimeInterval(1)] {
       let snapshot = try #require(store.selectedSnapshot(now: date))
       let plan = QuotaPlanner.evaluate(snapshot, now: date)
       #expect(snapshot.weekly?.resetAt == reset)
@@ -961,6 +1048,9 @@ struct ClaudeBrowserBridgeTests {
       #expect(plan.vsTarget == nil)
       #expect(plan.availableUntilCheckpoint == nil)
     }
+    let expired = try #require(store.selectedSnapshot(now: reset.addingTimeInterval(604_800)))
+    #expect(expired.weekly == nil)
+    #expect(expired.capturedAt == nil)
     self.expectInvalidSnapshot(store.selectedSnapshot(now: self.now.addingTimeInterval(-31)))
   }
 

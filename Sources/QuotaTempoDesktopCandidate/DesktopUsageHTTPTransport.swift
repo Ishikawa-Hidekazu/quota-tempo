@@ -279,7 +279,9 @@ struct DesktopUsageHTTPTransport: Sendable {
     }
 
     func reply(owner: DesktopUsageOwner?) -> DesktopUsageReply {
-      if status == 429, case .unsupported = retryAfter { return .unsupportedRateLimit }
+      if status == 429 || status == 503, case .unsupported = retryAfter {
+        return .unsupportedRateLimit
+      }
       return .response(
         status: status, profileOwner: owner, serverDate: serverDate,
         cacheAge: cacheAge, retryAfter: retryAfter.date, body: status == 200 ? body : Data())

@@ -43,13 +43,20 @@ owner-only permissions and a process-lifetime lock. The lock contains only a
 one-byte initialization marker to detect checkpoint loss after restart. The
 checkpoint's allowlisted fields are
 schema version, checkpoint/attempt times, local and provider wait deadlines,
-failure count, an interrupted-attempt deadline, an unsupported-wait flag, and a
-fixed authentication-refusal category.
+failure count, an interrupted-attempt deadline, an unsupported-wait flag, a
+fixed authentication-refusal category, and the refused lease's expiry timestamp.
+The expiry is only evidence of change when different; equality never establishes
+an account identity. A legacy or equal-expiry refusal can be checked through an
+explicit one-attempt action, with a persisted 15-minute floor and all known
+provider deadlines preserved. Automatic polling does not invoke that action.
 No identity, ownership fingerprint, credential revision or usage value is stored
 there. Provider requests stop while the checkpoint cannot be validated or saved.
 The crash boundary between an HTTP response and its durable checkpoint still
-needs acceptance, as does recovery from an unsupported service wait. Restart
-safety therefore remains a release gate. Public integration must include consent,
+needs acceptance. The isolated helper has an explicit offline scheduling-repair
+command: it requires the same exclusive lock, preserves valid records, refuses
+unknown schema versions, and repairs a missing/corrupt record into a stopped state
+with a 15-minute floor. It makes no provider request and does not repair permissions.
+Restart safety therefore remains a release gate. Public integration must include consent,
 revocation, recovery and an updated privacy contract before this path can be shipped.
 
 ## Experimental opt-in browser connection

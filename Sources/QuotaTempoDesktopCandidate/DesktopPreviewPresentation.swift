@@ -8,6 +8,8 @@ enum DesktopPreviewPresentation {
     switch state {
     case .serviceWaitUnavailable: "Provider wait unsupported; automatic requests stopped."
     case .persistenceUnavailable: "Local scheduling state could not be saved or verified."
+    case .waitingForNextRefresh: "Waiting for the next scheduled update."
+    case .waitingForDesktopRenewal: "Previous sign-in refused; renew or recheck connection."
     default: nil
     }
   }
@@ -17,7 +19,8 @@ enum DesktopPreviewPresentation {
     let observation = currentObservation(result, now: now)
     let error =
       validDate(now)
-      ? failure(result) ?? (observation == nil ? .sourceUnavailable : nil)
+      ? failure(result)
+        ?? (observation == nil && result.state != .waitingForNextRefresh ? .sourceUnavailable : nil)
       : .invalidResponse
     let state: SourceState
     switch error {
@@ -41,7 +44,7 @@ enum DesktopPreviewPresentation {
       fiveHour: fiveHour,
       // The result does not carry the actual attempt time. A display/backoff read
       // must not manufacture one from now or nextAllowedAt.
-      sourceState: state,
+      sourceState: result.state == .waitingForNextRefresh ? .neverObserved : state,
       errorCode: error
     )
   }
@@ -51,7 +54,8 @@ enum DesktopPreviewPresentation {
   ) -> DesktopUsageObservation? {
     guard result.credentialError == nil, validDate(now) else { return nil }
     switch result.state {
-    case .current, .contextChanged, .requesting, .rateLimited, .temporaryFailure, .timedOut,
+    case .current, .contextChanged, .waitingForNextRefresh, .requesting, .rateLimited,
+      .temporaryFailure, .timedOut,
       .invalidResponse:
       break
     default:
@@ -107,7 +111,7 @@ enum DesktopPreviewPresentation {
     case .consentRequired, .permissionDenied, .identityUnavailable, .contextChanged, .ready, .stale,
       .resetElapsed:
       return .sourceUnavailable
-    case .current, .requesting: return nil
+    case .current, .requesting, .waitingForNextRefresh: return nil
     }
   }
 }
