@@ -10,9 +10,8 @@
   struct DesktopAcceptanceCommandTests {
     private let arguments = DesktopAcceptanceCommand.requiredArguments
 
-    @Test("Only the exact consent array runs; malformed reserved flags create nothing")
-    func invalidArgumentsDoNotConstructConnection() async {
-      let invalid: [[String]] = [
+    private var invalidArguments: [[String]] {
+      [
         [String](), ["--desktop-acceptance"], Array(arguments.dropLast()),
         Array(arguments.reversed()), arguments + ["--request-keychain-access"],
         arguments + ["--recheck-connection-once"], arguments + ["--repair-scheduling-state"],
@@ -20,8 +19,16 @@
         ["--desktop-acceptance=true"], ["--desktop-acceptance-unknown"],
         ["QuotaTempo"] + arguments, Array(arguments.dropFirst()),
         ["--consent-desktop-read-only"], ["--acknowledge-provider-permission-unconfirmed"],
+        ["--provider-disabled"], arguments + ["--provider-disabled"],
+        ["--provider-disabled"] + arguments,
+        ["--storage-directory", "/unused"] + arguments,
+        arguments + ["--provider-disabled", "--storage-directory", "/unused"],
       ]
-      for args in invalid {
+    }
+
+    @Test("Only the exact consent array runs; malformed reserved flags create nothing")
+    func invalidArgumentsDoNotConstructConnection() async {
+      for args in invalidArguments {
         let harness = AcceptanceHarness()
         let code = await harness.runner.run(arguments: args)
         #expect(code == 64)
@@ -30,6 +37,104 @@
         #expect(harness.clock.sleeps.isEmpty)
         #expect(harness.statuses == ["invalidArguments"])
       }
+    }
+
+    @Test("Production entry point rejects default and disabled modes before resolving dependencies")
+    func commandAdmissionPrecedesProductionConstruction() async {
+      let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      for args in invalidArguments {
+        let harness = AcceptanceHarness()
+        // Fail promptly even if admission regresses and the factory is reached.
+        harness.connection.currentStatus = .consentRequired
+        var resolutions = 0
+        let code = await DesktopAcceptanceCommand.run(
+          arguments: args,
+          supportDirectory: {
+            resolutions += 1
+            return support
+          },
+          makeConnection: { _, _ in
+            harness.constructions += 1
+            return harness.connection
+          },
+          output: { harness.lines.append($0) })
+        #expect(code == 64)
+        #expect(resolutions == 0)
+        #expect(harness.constructions == 0)
+        #expect(harness.connection.connects == 0)
+        #expect(harness.connection.disconnects == 0)
+        #expect(harness.statuses == ["invalidArguments"])
+      }
+      #expect(!FileManager.default.fileExists(atPath: support.path))
+    }
+
+    @Test("Production construction shares the app schedule and never supplies persisted consent")
+    func commandUsesSharedScheduleAndProcessOnlyConsent() async {
+      let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let normalApp = DesktopIntegrationConfiguration(arguments: [], supportDirectory: support)
+      let harness = AcceptanceHarness()
+      harness.connection.currentStatus = .consentRequired
+      var resolutions = 0
+      var directories: [URL] = []
+      let code = await DesktopAcceptanceCommand.run(
+        arguments: arguments,
+        supportDirectory: {
+          resolutions += 1
+          return support
+        },
+        makeConnection: { directory, consentDefaults in
+          #expect(resolutions == 1)
+          // The real constructor maps non-nil defaults to remembered app consent.
+          // Inspect its inputs without ever opening a store or a live service.
+          #expect(consentDefaults == nil)
+          directories.append(directory)
+          harness.constructions += 1
+          return harness.connection
+        },
+        output: { harness.lines.append($0) })
+      #expect(code == 1)
+      #expect(resolutions == 1)
+      #expect(harness.constructions == 1)
+      #expect(directories == [normalApp.schedulingDirectory])
+      #expect(
+        directories == [
+          support.appendingPathComponent("QuotaTempoDesktopPreview", isDirectory: true)
+        ])
+      #expect(directories.first != normalApp.appDirectory)
+      #expect(harness.connection.connects == 1)
+      #expect(harness.connection.refreshes == 0)
+      #expect(harness.connection.disconnects == 1)
+      #expect(harness.statuses == ["consentRequired"])
+      #expect(!harness.lines.joined().contains(support.path))
+      #expect(!FileManager.default.fileExists(atPath: support.path))
+    }
+
+    @Test("Cancellation at the production entry point resolves and constructs nothing")
+    func cancelledCommandDoesNotConstructConnection() async {
+      let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let harness = AcceptanceHarness()
+      harness.connection.currentStatus = .consentRequired
+      var resolutions = 0
+      let task = Task { @MainActor in
+        await DesktopAcceptanceCommand.run(
+          arguments: arguments,
+          supportDirectory: {
+            resolutions += 1
+            return support
+          },
+          makeConnection: { _, _ in
+            harness.constructions += 1
+            return harness.connection
+          },
+          output: { harness.lines.append($0) })
+      }
+      task.cancel()
+      #expect(await task.value == 130)
+      #expect(resolutions == 0)
+      #expect(harness.constructions == 0)
+      #expect(harness.connection.connects == 0)
+      #expect(harness.statuses == ["cancelled"])
+      #expect(!FileManager.default.fileExists(atPath: support.path))
     }
 
     @Test("Two exact captures pass only after normal five-minute spacing")

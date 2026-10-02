@@ -61,6 +61,17 @@ clocks, within 660 seconds; a separate 690-second process watchdog bounds stalle
 work. Only normalized quota/timing metadata and fixed statuses are reported.
 Default builds reject this mode without starting the UI.
 
+The application lifecycle handlers now share a small, testable adapter: startup
+uses remembered-consent admission, while timer, wake and manual refresh use
+normal admission only. Acquisition eligibility is checked when queued work runs;
+turning Claude off still revokes consent synchronously, and turning it back on
+does not grant consent or reconnect. Synthetic tests exercise these handlers with
+both a spy and the real controller backed by a fake service. The production
+headless entry point also has lazy dependency tests proving exact-argument and
+cancellation rejection before directory resolution or controller construction,
+the shared scheduling directory, and process-only consent. These tests do not
+establish native event delivery, OS permissions, sleep/wake or live acquisition.
+
 A signed local execution rejected an existing store owner as `storeInUse`.
 After the old isolated helper exited, the final signed app returned
 `permissionRequired`, with zero accepted captures and no automatic retry or

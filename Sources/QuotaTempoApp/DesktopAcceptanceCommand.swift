@@ -27,23 +27,32 @@
     ]
 
     @MainActor
-    static func run(arguments: [String]) async -> Int32 {
+    static func run(
+      arguments: [String],
+      supportDirectory: @escaping @MainActor () -> URL = {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      },
+      makeConnection: @escaping @MainActor (URL, UserDefaults?) -> any DesktopAcceptanceConnecting =
+        {
+          DesktopConnectionController(directory: $0, consentDefaults: $1)
+        },
+      output: @escaping @MainActor (String) -> Void = { print($0) }
+    ) async -> Int32 {
       let clock = ContinuousClock()
       let origin = clock.now
       return await DesktopAcceptanceRunner(
         makeConnection: {
           let configuration = DesktopIntegrationConfiguration(
-            arguments: arguments,
-            supportDirectory: FileManager.default.urls(
-              for: .applicationSupportDirectory, in: .userDomainMask)[0])
+            arguments: arguments, supportDirectory: supportDirectory())
           // Keep the real scheduling namespace and standard admission/service.
-          // Omit consentDefaults: this explicit consent is process-only.
-          return DesktopConnectionController(directory: configuration.schedulingDirectory)
+          // No persisted app consent is supplied: consent is process-only.
+          // Both dependencies remain lazy until the runner admits the arguments.
+          return makeConnection(configuration.schedulingDirectory, nil)
         },
         now: Date.init,
         monotonicNow: { origin.duration(to: clock.now) },
         sleep: { try await Task.sleep(for: $0) },
-        output: { print($0) }
+        output: output
       ).run(arguments: arguments)
     }
   }

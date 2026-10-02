@@ -686,9 +686,9 @@ struct QuotaTempoApplicationContent: View {
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
     model.setProviderEnabled(provider, enabled: enabled)
     #if DESKTOP_INTEGRATION_PREVIEW
-      if !model.enabledProviders.contains(.claude) {
-        desktopConnection.revokeConsent()
-      }
+      DesktopIntegrationLifecycle(
+        connection: desktopConnection, acquisitionAllowed: { self.desktopActionsAllowed }
+      ).providersChanged(model.enabledProviders)
     #endif
   }
 
@@ -795,7 +795,9 @@ struct QuotaTempoApp: App {
   @StateObject private var presentation: QuotaTempoPresentationModel
   #if DESKTOP_INTEGRATION_PREVIEW
     @StateObject private var desktopConnection: DesktopConnectionController
-    private let desktopClock = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private let desktopClock = Timer.publish(
+      every: DesktopIntegrationLifecycle.schedulingInterval, on: .main, in: .common
+    ).autoconnect()
   #endif
   private let providerDisabled: Bool
   private let updater: QuotaTempoUpdater
@@ -897,16 +899,12 @@ struct QuotaTempoApp: App {
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
       #if DESKTOP_INTEGRATION_PREVIEW
         .task {
-          await self.desktopConnection.resumeIfConsented(
-            acquisitionAllowed: !self.providerDisabled
-              && self.model.enabledProviders.contains(.claude))
+          await self.desktopLifecycle.start()
         }
         .onReceive(self.desktopClock) { _ in self.refreshDesktop() }
         .onReceive(self.wakeNotifications) { _ in self.refreshDesktop() }
         .onChange(of: self.model.enabledProviders) { _, providers in
-          if !providers.contains(.claude) {
-            self.desktopConnection.revokeConsent()
-          }
+          self.desktopLifecycle.providersChanged(providers)
         }
       #endif
       .onAppear {
@@ -978,10 +976,16 @@ struct QuotaTempoApp: App {
   }
 
   #if DESKTOP_INTEGRATION_PREVIEW
+    private var desktopLifecycle: DesktopIntegrationLifecycle {
+      DesktopIntegrationLifecycle(
+        connection: desktopConnection,
+        acquisitionAllowed: {
+          !self.providerDisabled && self.model.enabledProviders.contains(.claude)
+        })
+    }
+
     private func refreshDesktop() {
-      self.desktopConnection.updateDisplay()
-      guard !providerDisabled, model.enabledProviders.contains(.claude) else { return }
-      Task { await self.desktopConnection.refresh() }
+      Task { await self.desktopLifecycle.refresh() }
     }
   #endif
 
