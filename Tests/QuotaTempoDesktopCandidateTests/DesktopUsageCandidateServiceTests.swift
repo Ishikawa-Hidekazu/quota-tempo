@@ -142,6 +142,55 @@ final class SyntheticThrottleStore: DesktopThrottleStoring, @unchecked Sendable 
 
 @Suite("Desktop candidate service")
 struct DesktopUsageCandidateServiceTests {
+  @Test func offlineRepairPreparationRequiresRevocationButAllowsNeverLoadedInvalidStorage()
+    async throws
+  {
+    let reader = try SyntheticDesktopReader()
+    let store = SyntheticThrottleStore()
+    store.fail(write: 1, read: true)
+    let counter = SyntheticFetchCounter()
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: store
+    ) { _, _ in
+      await counter.increment()
+      return .networkFailure
+    }
+    #expect(await service.prepareForOfflineRepair())
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    #expect(await service.prepareForOfflineRepair() == false)
+    #expect(await service.refresh().state == .persistenceUnavailable)
+    #expect(await reader.loads == 0)
+    await service.setApproval(DesktopAccessApproval())
+    #expect(await service.prepareForOfflineRepair())
+    #expect(await reader.loads == 0)
+    #expect(await counter.count == 0)
+  }
+
+  @Test func offlineRepairPreparationRefusesCancelledWorkUntilItActuallyFinishes() async throws {
+    let reader = try SyntheticDesktopReader()
+    let gate = SyntheticFetchGate()
+    let store = SyntheticThrottleStore()
+    let deadline = serviceNow.addingTimeInterval(7200)
+    let service = DesktopUsageCandidateService(
+      reader: reader, clock: serviceClock, throttleStore: store
+    ) { _, _ in
+      await gate.pause()
+      return .response(
+        status: 429, profileOwner: nil, serverDate: serviceNow, cacheAge: nil,
+        retryAfter: deadline, body: Data())
+    }
+    await service.setApproval(DesktopAccessApproval(userConsented: true, providerApproved: true))
+    let pending = Task { await service.refresh() }
+    await gate.waitForEntry()
+    await service.setApproval(DesktopAccessApproval())
+    #expect(await service.prepareForOfflineRepair() == false)
+    await gate.release()
+    _ = await pending.value
+    #expect(await service.prepareForOfflineRepair())
+    #expect(try store.load()?.serviceNotBefore == deadline)
+    #expect(await reader.loads == 1)
+  }
+
   @Test("Equal expiry is not owner identity: an explicit recheck verifies the new account")
   func equalExpiryDifferentOwnerRecheck() async throws {
     let clock = SyntheticServiceClock()

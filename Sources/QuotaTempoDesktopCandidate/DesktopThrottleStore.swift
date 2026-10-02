@@ -83,6 +83,20 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     return try store.recover(now: now)
   }
 
+  // Explicit connection only. Create at most the two trailing managed directories,
+  // never missing system/home ancestors or changes to existing permissions.
+  static func prepared(directory: URL) throws -> DesktopThrottleFileStore {
+    let opened = try openDirectory(directory, creatingManagedDirectories: true)
+    defer { Darwin.close(opened.fd) }
+    let store = try DesktopThrottleFileStore(directory: directory)
+    guard store.ancestry == opened.ancestry else { throw DesktopThrottleStoreError.changed }
+    try store.validateEnvironment()
+    var info = stat()
+    guard fstat(store.directoryFD, &info) == 0 else { throw DesktopThrottleStoreError.ioFailure }
+    guard info.st_mode & 0o7777 == 0o700 else { throw DesktopThrottleStoreError.unsafePath }
+    return store
+  }
+
   private static func applicationSupport(
     homeDirectory: URL, recovering: Bool
   ) throws -> DesktopThrottleFileStore {
@@ -404,7 +418,9 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     try Self.requireFile(directoryFD, name: Self.lockName, stamp: lockStamp, maximumBytes: 1)
   }
 
-  private static func openDirectory(_ url: URL) throws -> (fd: Int32, ancestry: [Identity]) {
+  private static func openDirectory(
+    _ url: URL, creatingManagedDirectories: Bool = false
+  ) throws -> (fd: Int32, ancestry: [Identity]) {
     guard url.isFileURL, url.host == nil || url.host == "" || url.host == "localhost",
       url.path.hasPrefix("/"), !url.path.utf8.contains(0)
     else { throw DesktopThrottleStoreError.unsafePath }
@@ -420,15 +436,51 @@ final class DesktopThrottleFileStore: DesktopThrottleStoring, @unchecked Sendabl
     guard fstat(fd, &root) == 0 else { throw DesktopThrottleStoreError.unavailable }
     try validateDirectory(root, final: false)
     var ancestry = [Identity(root)]
+    var parentURL = URL(fileURLWithPath: "/", isDirectory: true)
     for (index, component) in components.enumerated() {
-      let next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+      var next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+      var created = false
+      if next < 0, errno == ENOENT, creatingManagedDirectories {
+        guard components.count - index <= 2 else { throw DesktopThrottleStoreError.unsafePath }
+        // Opening the parent as a final directory requires the current owner,
+        // not merely a root-owned or sticky ancestor accepted during traversal.
+        let checked = try openDirectory(parentURL)
+        defer { Darwin.close(checked.fd) }
+        guard checked.ancestry == ancestry else { throw DesktopThrottleStoreError.changed }
+        if mkdirat(fd, component, 0o700) != 0 {
+          guard errno == EEXIST else { throw DesktopThrottleStoreError.ioFailure }
+        }
+        next = openat(fd, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        created = true
+      }
       guard next >= 0 else { throw DesktopThrottleStoreError.unsafePath }
+      var accepted = false
+      defer { if !accepted { Darwin.close(next) } }
+      var info = stat()
+      guard fstat(next, &info) == 0 else { throw DesktopThrottleStoreError.unavailable }
+      try validateDirectory(info, final: index == components.count - 1)
+      if creatingManagedDirectories {
+        if created || index == components.count - 1 {
+          guard info.st_mode & 0o7777 == 0o700 else { throw DesktopThrottleStoreError.unsafePath }
+        }
+        var named = stat()
+        guard fstatat(fd, component, &named, AT_SYMLINK_NOFOLLOW) == 0,
+          Identity(named) == Identity(info)
+        else { throw DesktopThrottleStoreError.changed }
+        if created {
+          while Darwin.fsync(fd) != 0 {
+            guard errno == EINTR else { throw DesktopThrottleStoreError.ioFailure }
+          }
+          let checked = try openDirectory(parentURL)
+          defer { Darwin.close(checked.fd) }
+          guard checked.ancestry == ancestry else { throw DesktopThrottleStoreError.changed }
+        }
+      }
       Darwin.close(fd)
       fd = next
-      var info = stat()
-      guard fstat(fd, &info) == 0 else { throw DesktopThrottleStoreError.unavailable }
-      try validateDirectory(info, final: index == components.count - 1)
+      accepted = true
       ancestry.append(Identity(info))
+      parentURL.appendPathComponent(component, isDirectory: true)
     }
     retained = true
     return (fd, ancestry)

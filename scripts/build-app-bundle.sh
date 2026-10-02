@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+if [[ "${QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW:-}" == 1 ]]; then
+  echo 'Desktop integration preview cannot be packaged as a distribution app.' >&2
+  exit 2
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${1:-$repo_root/dist/QuotaTempo.app}"
 parent="$(dirname "$output")"

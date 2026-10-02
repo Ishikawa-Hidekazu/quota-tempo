@@ -8,6 +8,26 @@ import Testing
 @Suite("Claude browser application integration", .serialized)
 @MainActor
 struct ClaudeBrowserAppTests {
+  @Test("Exclusive Desktop integration never starts a CLI or imports browser values")
+  func exclusiveDesktopSuppressesOtherAcquisition() async throws {
+    let fixture = try BrowserAppFixture()
+    defer { fixture.cleanup() }
+    try fixture.ingest(remaining: 73, offset: -1)
+    let model = fixture.model(liveProbes: true, localClaudeAcquisitionEnabled: false)
+    model.menuOpened()
+    model.clockAdvanced()
+    model.scheduledRefresh()
+    model.systemDidWake()
+    model.explicitRefresh()
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(fixture.io.readCount == 0)
+    #expect(fixture.io.processCount == 0)
+    #expect(fixture.io.probeCount == 0)
+    #expect(fixture.io.resolverCount == 0)
+    #expect(try fixture.store.load(.claude) == nil)
+    #expect(!model.refreshInFlight)
+  }
+
   @Test("Minute clock imports newly ingested browser W/P without waiting for CLI refresh")
   func minuteClockUpdatesBrowserPlan() async throws {
     let fixture = try BrowserAppFixture()
@@ -736,7 +756,8 @@ private struct BrowserAppFixture {
   func model(
     acquisitionEnabled: Bool = true, liveProbes: Bool = false,
     now: @escaping @Sendable () -> Date = { Date() },
-    storeOverride: NormalizedSnapshotStore? = nil, providerQueue: DispatchQueue? = nil
+    storeOverride: NormalizedSnapshotStore? = nil, providerQueue: DispatchQueue? = nil,
+    localClaudeAcquisitionEnabled: Bool = true
   ) -> LiveQuotaModel {
     let io = self.io
     return LiveQuotaModel(
@@ -750,7 +771,7 @@ private struct BrowserAppFixture {
         desktopConfigURL: self.root.appendingPathComponent("synthetic-config.json"),
         cliFallbackEnabled: liveProbes, ptyProbeEnabled: liveProbes, ptyProbe: io,
         probeDirectory: self.root.appendingPathComponent("synthetic-probe")), now: now,
-      providerQueue: providerQueue)
+      providerQueue: providerQueue, localClaudeAcquisitionEnabled: localClaudeAcquisitionEnabled)
   }
 
   func setHistory(remaining: Double, capturedAt: Date) throws {

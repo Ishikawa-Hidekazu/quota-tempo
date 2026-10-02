@@ -41,6 +41,8 @@ actor DesktopUsageCandidateService {
   private var coordinator = DesktopUsageCoordinator()
   private var refreshID: UUID?
   private var task: Task<DesktopUsageCandidateResult, Never>?
+  private var activeRefreshes = 0
+  private var activeApprovalChanges = 0
 
   init(
     reader: any DesktopCredentialReading = DesktopCredentialReader(),
@@ -57,6 +59,8 @@ actor DesktopUsageCandidateService {
   }
 
   func setApproval(_ approval: DesktopAccessApproval) async {
+    activeApprovalChanges += 1
+    defer { activeApprovalChanges -= 1 }
     self.approval = approval
     approvalRevision = UUID()
     task?.cancel()
@@ -64,6 +68,22 @@ actor DesktopUsageCandidateService {
     refreshID = nil
     coordinator.setPermission(approval.allowsAccess ? .allowed : .denied)
     await reader.setApproval(approval)
+  }
+
+  // Offline metadata only. Revocation cancels work but cannot prove that a
+  // non-cooperative reader/fetch has returned or finished recording restrictions.
+  func prepareForOfflineRepair() async -> Bool {
+    guard !Task.isCancelled, !approval.allowsAccess, activeApprovalChanges == 0,
+      activeRefreshes == 0,
+      refreshID == nil, task == nil
+    else { return false }
+    // No successful throttle load means acquisition never started; invalid
+    // storage can be handed to the offline recovery path without dropping waits.
+    guard throttleLoaded else { return true }
+    // Failed writes may leave a new provider wait only in memory. Never treat
+    // equality with the previous checkpoint as proof of a successful commit.
+    if persistenceFailed { return saveThrottle() }
+    return saveChangedThrottle()
   }
 
   func refresh() async -> DesktopUsageCandidateResult {
@@ -85,6 +105,7 @@ actor DesktopUsageCandidateService {
     let id = UUID()
     let revision = approvalRevision
     refreshID = id
+    activeRefreshes += 1
     // The child covers protected reads as well as HTTP. Caller cancellation must
     // reach every awaited stage, including a reader that returns a lease anyway.
     let task = Task {
@@ -92,6 +113,7 @@ actor DesktopUsageCandidateService {
     }
     self.task = task
     defer {
+      activeRefreshes -= 1
       if refreshID == id {
         refreshID = nil
         self.task = nil

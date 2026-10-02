@@ -20,7 +20,7 @@ continuous availability. The browser extension prototype is tracked in a
 separate pull request from Draft PR #42. A working browser-session bridge would
 not, by itself, satisfy the Desktop-only requirement.
 
-The currently authorized research and observation preserve these boundaries.
+The initial metadata-only research and observation preserved these boundaries.
 Studying public code that crosses them does not authorize running that code or
 changing QuotaTempo's privacy contract:
 
@@ -35,6 +35,72 @@ changing QuotaTempo's privacy contract:
   explicitly labeled under the freshness contract; never chain them. When an
   account-compatible reset is unavailable, keep eligible dated `W` observations
   and withhold exact-reset-dependent planning.
+
+## Local application integration (2026-10-02)
+
+The Desktop candidate now has an opt-in application integration, not a public
+release. `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1` adds the candidate only to the
+application and its tests. Default product graphs still exclude it; the normal
+bundle builder rejects preview mode. Manifest regression tests verify both graphs
+and reject unintended exports or dependencies. The dedicated preview builder
+uses a different bundle ID, app-state directory and preference domain, disables
+Sparkle updates and login-item registration, and never launches or replaces an
+installed app. Desktop scheduling deliberately shares the existing helper's
+`QuotaTempoDesktopPreview` store and lifetime lock, retaining known provider waits
+when switching UIs and rejecting simultaneous owners. A custom storage-directory
+argument in the integration app disables all provider acquisition for synthetic QA.
+
+The integration starts disconnected. Explicit per-launch consent creates a
+controller with a required durable scheduling store. App code receives only a
+normalized snapshot, fixed status and next-update deadline, never credential or
+account identity objects. Disconnect clears values before awaiting revocation,
+cancels in-flight work and rejects late results. Reconnect cannot reset provider
+backoff. Repair is an explicit offline operation that revokes consent, releases
+an idle store owner, preserves known waits and requires fresh consent afterwards.
+An unresolved owner or request is never force-unlocked.
+
+Claude in this preview is exclusively Desktop-sourced, including its disconnected
+state. It does not fall back to a browser/CLI account or merge their reset times.
+The app's 30-second scheduling tick consults the existing service admission rules;
+it is not a 30-second provider poll. Display expiry is independent of HTTP.
+Desktop observations and consent are not restored from disk; the scheduling
+checkpoint remains durable. This conservative preview contract is not a promise
+of unattended reconnection across application restarts in a released product.
+
+Remaining acceptance includes native consent/cancel/dismissal flows, the final
+signed build with Desktop authentication, sleep/wake, Keychain lock, natural
+credential renewal and weekly rollover, and another Mac. Provider permission
+remains unconfirmed; technical success does not settle it.
+
+Integration QA: the default graph passed **715 tests / 26 suites**; the opt-in
+graph passed **719 / 27**, both normally and with outbound networking denied for
+the opt-in run. SwiftPM's nested manifest sandbox could not start inside the
+outer network-denying sandbox, so that run used `--disable-sandbox` for the inner
+SwiftPM sandbox only; an independent socket control returned `EPERM`, confirming
+the outer outbound denial. Both default and preview graphs, seven non-opt-in
+environment values and 57 intentional manifest regressions passed. The runner's
+17 synthetic cases, browser extension/installer/host suites (239/81/7), strict
+Swift formatting, shell checks and release/distribution policies passed.
+
+Independent static review found and fixed a lost in-memory provider wait during
+repair and stale retained-window presentation/action permissions. Repair now
+requires a successful offline checkpoint flush before releasing its service;
+failed persistence retains the owner and known wait. Retained hosting-root tests
+cover quota updates, disconnect clearing and live provider-toggle authorization.
+The revised reviewed scope has no outstanding P0/P1/P2 findings. Offscreen
+Japanese/English disconnected controls were rendered without overlap; these are
+not evidence of native clicks, consent dialogs or live acquisition.
+
+### Test helper crash prevention
+
+Local isolated QA exposed a SwiftPM helper abort before tests ran: the Command
+Line Tools `Testing.framework` could not locate `@rpath/lib_TestingInterop.dylib`.
+`scripts/test-swift.sh` now checks the runtime locations and supplies both
+framework and companion-library rpaths when CLT is selected. Use this wrapper
+for filtered runs and temporary checkouts too. It preserves test failures and
+does not disable crash reporting, accept an Xcode license, or change the global
+developer selection. Missing runtimes stop before invoking Swift, and CLT
+`--skip-build` is rejected so an old bundle cannot bypass the runtime-path build.
 
 ## Five shipped competitors
 
@@ -1373,7 +1439,8 @@ env DEVELOPER_DIR=/Library/Developer/CommandLineTools swift test \
   -Xlinker -rpath -Xlinker /Library/Developer/CommandLineTools/Library/Developer/usr/lib
 ```
 
-No framework-path workaround is committed to the package or CI. One local
+At that checkpoint the framework-path setup was command-local; the integration
+work above now uses the common test wrapper in CI and local QA. One local
 manifest-check attempt timed out while SwiftPM was holding its build lock;
 running it after the build completed passed. At that first checkpoint the
 coordinator was in-memory only; the later restart-persistence work documented

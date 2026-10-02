@@ -59,6 +59,147 @@ private final class ThrottleCounter: @unchecked Sendable {
 
 @Suite("Desktop restart throttle metadata store")
 struct DesktopThrottleStoreTests {
+  @Test func preparedStoreCreatesTwoPrivateDirectoriesAndRetainsItsLock() throws {
+    let fixture = try ThrottleFixture(mode: 0o755)
+    let parent = fixture.directory.appendingPathComponent("QuotaTempoIntegrationPreview")
+    let directory = parent.appendingPathComponent("DesktopConnection")
+    var first: DesktopThrottleFileStore? = try .prepared(directory: directory)
+    for url in [parent, directory] {
+      var info = stat()
+      #expect(lstat(url.path, &info) == 0)
+      #expect(info.st_uid == geteuid())
+      #expect(info.st_mode & 0o7777 == 0o700)
+    }
+    var existing = stat()
+    #expect(lstat(fixture.directory.path, &existing) == 0)
+    #expect(existing.st_mode & 0o7777 == 0o755)
+    #expect(try first?.load() == nil)
+    #expect(try fixture.names() == ["QuotaTempoIntegrationPreview"])
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        == ["desktop-throttle.lock"])
+    try first?.save(throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    first = nil
+    let reopened = try DesktopThrottleFileStore.prepared(directory: directory)
+    #expect(try reopened.load() == throttleRecord())
+  }
+
+  @Test func preparedStoreWillNotCreateThreeMissingDirectories() throws {
+    let fixture = try ThrottleFixture()
+    let directory = fixture.directory.appendingPathComponent("missing/preview/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(try fixture.names().isEmpty)
+  }
+
+  @Test func preparedStoreSharesExistingHelperDeadlinesAndExclusiveLock() throws {
+    let fixture = try ThrottleFixture()
+    let support = fixture.directory.appendingPathComponent("Library/Application Support")
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let directory = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    var helper: DesktopThrottleFileStore? = try .applicationSupport(
+      homeDirectory: fixture.directory)
+    let record = throttleRecord()
+    try helper?.save(record)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    helper = nil
+    let prepared = try DesktopThrottleFileStore.prepared(directory: directory)
+    #expect(try prepared.load() == record)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: support.path)
+        == ["QuotaTempoDesktopPreview"])
+  }
+
+  @Test func preparedStoreKeepsSafeExistingParentPermissionsUnchanged() throws {
+    let fixture = try ThrottleFixture()
+    let parent = fixture.directory.appendingPathComponent("existing")
+    try FileManager.default.createDirectory(
+      at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+    #expect(chmod(parent.path, 0o755) == 0)
+    let store = try DesktopThrottleFileStore.prepared(
+      directory: parent.appendingPathComponent("DesktopConnection"))
+    #expect(try store.load() == nil)
+    var info = stat()
+    #expect(lstat(parent.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == 0o755)
+  }
+
+  @Test(arguments: [mode_t(0o777), mode_t(0o775), mode_t(0o770)])
+  func preparedStoreRejectsWritableExistingParentWithoutChangingIt(mode: mode_t) throws {
+    let fixture = try ThrottleFixture()
+    let parent = fixture.directory.appendingPathComponent("unsafe")
+    try FileManager.default.createDirectory(
+      at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    #expect(chmod(parent.path, mode) == 0)
+    let directory = parent.appendingPathComponent("preview/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    var info = stat()
+    #expect(lstat(parent.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == mode)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty)
+  }
+
+  @Test(arguments: [mode_t(0o755), mode_t(0o750), mode_t(0o770), mode_t(0o777), mode_t(0o1700)])
+  func preparedStoreRequiresExistingFinalDirectoryToBeExactlyPrivate(mode: mode_t) throws {
+    let fixture = try ThrottleFixture()
+    let directory = fixture.directory.appendingPathComponent("DesktopConnection")
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    #expect(chmod(directory.path, mode) == 0)
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    var info = stat()
+    #expect(lstat(directory.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == mode)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+  }
+
+  @Test(arguments: ["ancestor", "parent", "final"])
+  func preparedStoreRejectsExistingSymlinksWithoutTouchingTheirTarget(position: String) throws {
+    let fixture = try ThrottleFixture()
+    let target = fixture.directory.appendingPathComponent("target")
+    try FileManager.default.createDirectory(
+      at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let link = fixture.directory.appendingPathComponent("link")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    let directory: URL
+    switch position {
+    case "ancestor": directory = link.appendingPathComponent("preview/DesktopConnection")
+    case "parent": directory = link.appendingPathComponent("DesktopConnection")
+    default: directory = link
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+    var info = stat()
+    #expect(lstat(link.path, &info) == 0)
+    #expect(info.st_mode & S_IFMT == S_IFLNK)
+    #expect(try fixture.names() == ["target", "link"])
+  }
+
+  @Test func preparedStoreRefusesCreationDirectlyUnderAStickySystemParent() throws {
+    let directory = URL(fileURLWithPath: "/private/tmp")
+      .appendingPathComponent("QuotaTempo-Unowned-\(UUID().uuidString)/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(!FileManager.default.fileExists(atPath: directory.deletingLastPathComponent().path))
+  }
+
   @Test func applicationSupportCreatesOnlyPrivateCandidateDirectory() throws {
     let fixture = try ThrottleFixture()
     let library = fixture.directory.appendingPathComponent("Library")

@@ -65,6 +65,23 @@ time; repair and recheck cannot erase it. Ordinary successful polling waits five
 minutes, with a 60-second minimum for verified context renewal/account changes
 or an upcoming reset. These exceptions never shorten a provider/failure wait.
 
+The opt-in **Desktop integration preview** compiles this same candidate into the
+application only when `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1`. Default product
+builds exclude it, and distribution packaging rejects this switch. The preview
+has a separate app identifier, preferences and `QuotaTempoIntegrationPreview`
+directory for non-Desktop app state. It starts disconnected, requires explicit consent on each
+launch, and provides disconnect, bounded recheck and offline repair controls.
+Disconnect clears in-memory observations; repair disconnects first and never
+erases a known provider deadline. The preview does not silently fall back from
+Desktop to a CLI or browser account, persist Desktop observations, register a
+login item, or enable automatic application updates. Its Desktop scheduling metadata
+shares the existing helper's `QuotaTempoDesktopPreview` directory and lifetime
+lock: switching UIs cannot erase a known provider wait or run two Desktop clients
+against independent schedules. A custom `--storage-directory` disables all provider
+acquisition in this preview and is reserved for synthetic QA. The same allowlist
+and locking rules above apply. This is a local acceptance build, not a public
+release or a statement of provider permission.
+
 ## Experimental opt-in browser connection
 
 The development browser bridge is separate from the released local/CLI acquisition path. Installing its Chrome extension and native-host registration does not sign you in. After you explicitly connect a Claude tab, an isolated content script requests account, organization, and aggregate usage metadata from the same `https://claude.ai` origin. Chrome supplies its existing session normally; the extension does not access cookie values, cookie databases, authentication storage, or Keychain. No page text, conversation, prompt, or transcript is inspected.

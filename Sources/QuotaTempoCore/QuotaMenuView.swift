@@ -92,6 +92,8 @@ public struct QuotaMenuView: View {
   private let browserDisconnectInFlight: Bool
   private let browserDisconnectFailed: Bool
   private let browserDisconnectCleanupFailed: Bool
+  private let connectionControls: AnyView?
+  private let onboardingPrivacyText: String?
   @Binding private var menuBarDisplayMode: MenuBarDisplayMode
   @Binding private var onboardingPresented: Bool
   @Binding private var launchAtLogin: Bool
@@ -122,6 +124,8 @@ public struct QuotaMenuView: View {
     browserDisconnectInFlight: Bool = false,
     browserDisconnectFailed: Bool = false,
     browserDisconnectCleanupFailed: Bool = false,
+    connectionControls: AnyView? = nil,
+    onboardingPrivacyText: String? = nil,
     onSetProviderEnabled: ((ProviderID, Bool) -> Void)? = nil,
     onRefresh: (() -> Void)? = nil,
     onDisconnectBrowser: (() -> Void)? = nil,
@@ -158,6 +162,8 @@ public struct QuotaMenuView: View {
     self.browserDisconnectInFlight = browserDisconnectInFlight
     self.browserDisconnectFailed = browserDisconnectFailed
     self.browserDisconnectCleanupFailed = browserDisconnectCleanupFailed
+    self.connectionControls = connectionControls
+    self.onboardingPrivacyText = onboardingPrivacyText
     self.onCheckForUpdates = onCheckForUpdates
     self.onCopyDiagnostics = onCopyDiagnostics
     self.onOpenWindow = onOpenWindow
@@ -287,6 +293,8 @@ public struct QuotaMenuView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+
+      if let connectionControls { connectionControls }
 
       VStack(alignment: .leading, spacing: 8) {
         Text(self.copy.text("providers"))
@@ -463,7 +471,7 @@ public struct QuotaMenuView: View {
         self.onboardingRow("scope", "onboarding.plan")
         self.onboardingRow("approximately.equal", "onboarding.estimate")
         self.onboardingRow("arrow.up.arrow.down", "onboarding.difference")
-        self.onboardingRow("lock.shield", "onboarding.privacy")
+        self.onboardingRow("lock.shield", "onboarding.privacy", text: onboardingPrivacyText)
       }
 
       self.menuBarModeGuide
@@ -554,12 +562,13 @@ public struct QuotaMenuView: View {
     .accessibilityElement(children: .combine)
   }
 
-  private func onboardingRow(_ systemImage: String, _ key: String) -> some View {
+  private func onboardingRow(_ systemImage: String, _ key: String, text: String? = nil) -> some View
+  {
     GridRow {
       Image(systemName: systemImage)
         .frame(width: 20)
         .foregroundStyle(.secondary)
-      Text(self.copy.text(key))
+      Text(text ?? self.copy.text(key))
         .fixedSize(horizontal: false, vertical: true)
     }
     .font(.callout)

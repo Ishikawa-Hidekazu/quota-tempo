@@ -116,14 +116,26 @@ Requirements: macOS 14 or later and Swift 6.
 
 ```bash
 swift build
-swift test
+bash scripts/test-swift.sh
 ./scripts/test-release-policy.sh
 ./scripts/test-distribution-policy.sh
 ./scripts/render-fixture-proof.sh
 ./scripts/test-menu-bar-refresh.sh
 ```
 
-The final command launches a provider-disabled, isolated QA bundle and verifies through macOS accessibility metadata that a closed menu-bar label adopts a newly available reset time through its one-minute clock. It does not click the menu or read the installed app's storage.
+On macOS Command Line Tools, use
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools bash scripts/test-swift.sh`.
+The wrapper supplies both Swift Testing runtime search paths; use it for filtered
+tests and temporary checkouts too. It does not change the global Xcode selection.
+
+The unreleased Desktop integration can be built locally with
+`bash scripts/build-desktop-integration-preview.sh`. It starts disconnected and
+requires consent per launch. It does not replace or launch the installed app.
+Default builds and distribution packaging exclude this path. See
+[acquisition research and release gates](docs/claude-acquisition-research.md)
+before interpreting synthetic QA as release readiness.
+
+`test-menu-bar-refresh.sh` launches a provider-disabled, isolated QA bundle and verifies through macOS accessibility metadata that a closed menu-bar label adopts a newly available reset time through its one-minute clock. It does not click the menu or read the installed app's storage.
 
 Build a local menu-bar-only macOS app bundle with a deterministic file inventory:
 

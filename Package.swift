@@ -1,6 +1,11 @@
 // swift-tools-version: 6.0
 
+import Foundation
 import PackageDescription
+
+// Opt-in local integration only. Distribution scripts reject this environment.
+let desktopIntegrationPreview =
+  ProcessInfo.processInfo.environment["QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW"] == "1"
 
 let package = Package(
   name: "QuotaTempo",
@@ -21,7 +26,7 @@ let package = Package(
       name: "QuotaTempoCore",
       exclude: ["Resources"]
     ),
-    // Isolated acquisition candidate; no application product depends on it.
+    // Excluded from all default product graphs; local integration is opt-in.
     .target(
       name: "QuotaTempoDesktopCandidate",
       dependencies: ["QuotaTempoCore"]
@@ -31,7 +36,8 @@ let package = Package(
       dependencies: [
         "QuotaTempoCore",
         .product(name: "Sparkle", package: "Sparkle"),
-      ]
+      ] + (desktopIntegrationPreview ? [.target(name: "QuotaTempoDesktopCandidate")] : []),
+      swiftSettings: desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : []
     ),
     .executableTarget(
       name: "QuotaTempoFixtureRenderer",
@@ -53,6 +59,8 @@ let package = Package(
     .testTarget(
       name: "QuotaTempoAppTests",
       dependencies: ["QuotaTempoApp", "QuotaTempoCore"]
+        + (desktopIntegrationPreview ? [.target(name: "QuotaTempoDesktopCandidate")] : []),
+      swiftSettings: desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : []
     ),
     .testTarget(
       name: "QuotaTempoDesktopCandidateTests",
