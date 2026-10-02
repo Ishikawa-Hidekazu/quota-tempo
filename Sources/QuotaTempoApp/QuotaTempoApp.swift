@@ -38,6 +38,7 @@ final class LiveQuotaModel: ObservableObject {
     let trigger: ProviderAcquisitionTrigger
     let force: Bool
     let localOnly: Bool
+    let connectionRevision: Int
   }
 
   private static let providerQueue = DispatchQueue(
@@ -169,10 +170,7 @@ final class LiveQuotaModel: ObservableObject {
     browserDisconnectInFlight = true
     browserDisconnectFailed = false
     browserDisconnectCleanupFailed = false
-    claudeConnectionRevision += 1
-    claudeRefreshCancellation.cancel()
-    claudeRefreshCancellation = ClaudeRefreshCancellation()
-    pendingClaudeRefresh = nil
+    invalidateClaudeRefresh()
     defer { browserDisconnectInFlight = false }
     let browser = ClaudeBrowserStore(
       directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
@@ -198,7 +196,8 @@ final class LiveQuotaModel: ObservableObject {
     browserDisconnectInFlight = false
     if activeClaudeRefresh != nil {
       pendingClaudeRefresh = ClaudeRefreshRequest(
-        trigger: .explicitRefresh, force: false, localOnly: true)
+        trigger: .explicitRefresh, force: false, localOnly: true,
+        connectionRevision: claudeConnectionRevision)
     } else {
       refreshClaude(trigger: .explicitRefresh, force: false, localOnly: true)
     }
@@ -207,6 +206,7 @@ final class LiveQuotaModel: ObservableObject {
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
     let next = self.selection.setting(provider, enabled: enabled)
     guard next != self.selection else { return }
+    if provider == .claude && !enabled { invalidateClaudeRefresh() }
     self.selection = next
     self.enabledProviders = next.enabled
     self.initialDetectionPending = false
@@ -359,11 +359,16 @@ final class LiveQuotaModel: ObservableObject {
     guard !browserDisconnectInFlight else { return }
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
-    let request = ClaudeRefreshRequest(trigger: trigger, force: force, localOnly: localOnly)
+    let request = ClaudeRefreshRequest(
+      trigger: trigger, force: force, localOnly: localOnly,
+      connectionRevision: claudeConnectionRevision)
     if let active = self.activeClaudeRefresh {
       // Local reads cannot satisfy a live request. An active live request only
-      // needs a follow-up when a manual request upgrades it to force.
-      guard !localOnly, active.localOnly || (force && !active.force) else { return }
+      // needs a follow-up when force is upgraded or an off/on invalidated it.
+      guard
+        active.connectionRevision != request.connectionRevision
+          || (!localOnly && (active.localOnly || (force && !active.force)))
+      else { return }
       if self.pendingClaudeRefresh?.force != true {
         self.pendingClaudeRefresh = request
       }
@@ -442,6 +447,13 @@ final class LiveQuotaModel: ObservableObject {
 
   private func updateRefreshInFlight() {
     self.refreshInFlight = self.codexRefreshInFlight || self.activeClaudeRefresh != nil
+  }
+
+  private func invalidateClaudeRefresh() {
+    claudeConnectionRevision += 1
+    claudeRefreshCancellation.cancel()
+    claudeRefreshCancellation = ClaudeRefreshCancellation()
+    pendingClaudeRefresh = nil
   }
 }
 

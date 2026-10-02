@@ -658,6 +658,101 @@ struct ClaudeBrowserAppTests {
     fixture.expectIsolated()
   }
 
+  @Test(
+    "Turning Claude off cancels queued work before any source is acquired",
+    arguments: [false, true])
+  func disabledQueuedRefreshDoesNotAcquire(browserConnected: Bool) async throws {
+    let fixture = try BrowserAppFixture(enabled: [.claude, .codex])
+    defer { fixture.cleanup() }
+    try fixture.saveRecentCodex()
+    let previous = fixture.localSnapshot(
+      remaining: 41, attemptedAt: fixture.now.addingTimeInterval(-3_600))
+    try fixture.store.save(previous)
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    if browserConnected { try fixture.ingest(remaining: 63, offset: -1) }
+    let queue = DispatchQueue(label: "ClaudeBrowserAppTests.queued.\(UUID().uuidString)")
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    queue.async { barrier.pause() }
+    try await barrier.waitUntilEntered()
+    let model = fixture.model(liveProbes: true, providerQueue: queue)
+    #expect(model.refreshInFlight)
+    model.setProviderEnabled(.claude, enabled: false)
+    barrier.release()
+
+    try await self.waitFor(model) { model.scenario.snapshots.map(\.provider) == [.codex] }
+    #expect(try fixture.store.load(.claude) == previous)
+    #expect(fixture.io.readCount == 0)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test("Turning Claude off rejects a completed local read and clears its pending request")
+  func disabledInFlightRefreshDoesNotPersist() async throws {
+    let fixture = try BrowserAppFixture(enabled: [.claude, .codex])
+    defer { fixture.cleanup() }
+    try fixture.saveRecentCodex()
+    let previous = fixture.localSnapshot(remaining: 41)
+    try fixture.store.save(previous)
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let read = fixture.pauseNextHistoryRead()
+    defer { read.release() }
+    model.clockAdvanced()
+    try await read.waitUntilEntered()
+    model.scheduledRefresh()
+    model.setProviderEnabled(.claude, enabled: false)
+    read.release()
+
+    try await self.waitFor(model) { model.scenario.snapshots.map(\.provider) == [.codex] }
+    #expect(try fixture.store.load(.claude) == previous)
+    #expect(fixture.historyReadCount == 1)
+    #expect(fixture.io.resolverCount == 0)
+    fixture.expectIsolated()
+  }
+
+  @Test(
+    "Off/on rejects the old result but permits exactly one newly authorized refresh",
+    arguments: [false, true])
+  func reenabledClaudeDoesNotAcceptCancelledResult(forcedLive: Bool) async throws {
+    let fixture = try BrowserAppFixture(enabled: [.claude, .codex])
+    defer { fixture.cleanup() }
+    try fixture.saveRecentCodex()
+    let previous = fixture.localSnapshot(remaining: 41)
+    try fixture.store.save(previous)
+    let model = fixture.model(liveProbes: true)
+    try await self.waitFor(model) { true }
+    try fixture.setHistory(remaining: 37, capturedAt: fixture.now.addingTimeInterval(-10))
+    let first = fixture.pauseNextHistoryRead()
+    defer { first.release() }
+    if forcedLive {
+      model.setProviderEnabled(.claude, enabled: false)
+      model.setProviderEnabled(.claude, enabled: true)
+    } else {
+      model.clockAdvanced()
+    }
+    try await first.waitUntilEntered()
+    model.setProviderEnabled(.claude, enabled: false)
+    model.setProviderEnabled(.claude, enabled: true)
+    let second = fixture.pauseNextHistoryRead()
+    defer { second.release() }
+    first.release()
+    try await second.waitUntilEntered()
+    #expect(try fixture.store.load(.claude) == previous)
+
+    try fixture.setHistory(remaining: 22, capturedAt: fixture.now.addingTimeInterval(-1))
+    second.release()
+    try await self.waitFor(model) {
+      model.scenario.snapshots.first(where: { $0.provider == .claude })?.weekly?.remainingPercent
+        == 22
+    }
+    #expect(try fixture.store.load(.claude)?.weekly?.remainingPercent == 22)
+    #expect(fixture.historyReadCount == 2)
+    #expect(fixture.io.resolverCount == 1)
+    fixture.expectIsolated()
+  }
+
   @Test("Disabled Claude is not ingested by minute ticks even when browser data is available")
   func disabledClaudeIsNotAcquired() async throws {
     let fixture = try BrowserAppFixture(enabled: [.codex])
@@ -784,6 +879,16 @@ private struct BrowserAppFixture {
       ]
     ])
     self.io.setData(data, for: self.root.appendingPathComponent("synthetic-history.json"))
+  }
+
+  func saveRecentCodex() throws {
+    try store.save(
+      ProviderSnapshot(
+        provider: .codex, source: .codexAppServer, capturedAt: now,
+        weekly: QuotaWindow(
+          remainingPercent: 90, durationSeconds: 604_800,
+          resetAt: now.addingTimeInterval(259_200)),
+        lastAttemptAt: now, sourceState: .observationSucceeded))
   }
 
   var historyReadCount: Int {
