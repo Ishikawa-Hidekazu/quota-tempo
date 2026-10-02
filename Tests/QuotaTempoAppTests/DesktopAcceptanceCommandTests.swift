@@ -134,6 +134,46 @@
       }
     }
 
+    @Test("A 299-second capture gap cannot pass even after 300 monotonic seconds")
+    func captureSpacingIsIndependentlyRequired() async {
+      let harness = AcceptanceHarness()
+      let initial = harness.clock.wall
+      harness.connection.refresh = {
+        harness.connection.value = harness.snapshot(capturedAt: initial.addingTimeInterval(299))
+      }
+      let task = harness.start(arguments)
+      await harness.connection.waitForRead()
+      let reads = harness.connection.reads
+      await harness.clock.advance(by: .seconds(300))
+      await harness.connection.waitForRead(after: reads)
+      #expect(harness.clock.elapsed == .seconds(300))
+      #expect(harness.statuses == ["captured", "captured"])
+      task.cancel()
+      #expect(await task.value == 130)
+      #expect(!harness.statuses.contains("success"))
+    }
+
+    @Test("A 300-second capture gap cannot pass after only 299 monotonic seconds")
+    func monotonicSpacingIsIndependentlyRequired() async {
+      let harness = AcceptanceHarness()
+      let initial = harness.clock.wall
+      harness.connection.refresh = {
+        harness.connection.value = harness.snapshot(capturedAt: initial.addingTimeInterval(300))
+      }
+      let task = harness.start(arguments)
+      await harness.connection.waitForRead()
+      harness.clock.wall = initial.addingTimeInterval(1)
+      let reads = harness.connection.reads
+      await harness.clock.advance(by: .seconds(299))
+      await harness.connection.waitForRead(after: reads)
+      #expect(harness.clock.elapsed == .seconds(299))
+      #expect(harness.clock.wall.timeIntervalSince(initial) == 300)
+      #expect(harness.statuses == ["captured", "captured"])
+      task.cancel()
+      #expect(await task.value == 130)
+      #expect(!harness.statuses.contains("success"))
+    }
+
     @Test("Terminal states stop immediately without refresh, retry or a quota record")
     func terminalStops() async {
       let cases: [(DesktopConnectionController.Status, String)] = [

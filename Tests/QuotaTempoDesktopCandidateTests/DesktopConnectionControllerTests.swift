@@ -263,6 +263,57 @@ struct DesktopConnectionControllerTests {
     #expect(!third.isConnected && creations == 2)
   }
 
+  @Test(
+    "An initial store failure disconnects and permits an explicit retry after recovery",
+    arguments: [false, true],
+    [DesktopThrottleStoreError.unsafePath, .missingRecord, .ioFailure, .invalidRecord])
+  func initialStoreFailureCanReconnect(resuming: Bool, error: DesktopThrottleStoreError) async {
+    let consent = ConnectionConsentStub()
+    consent.accepted = resuming
+    let service = ConnectionServiceStub()
+    var creations = 0
+    let model = DesktopConnectionController(
+      clock: { connectionNow }, displayInterval: .seconds(3600),
+      makeService: {
+        creations += 1
+        if creations == 1 { throw error }
+        return service
+      }, repairStore: { _ in .notNeeded }, consentStore: consent)
+    if resuming {
+      await model.resumeIfConsented(acquisitionAllowed: true)
+    } else {
+      await model.connect(localExperimentAuthorized: true)
+    }
+    #expect(model.status == .storageUnavailable && !model.isConnected)
+    #expect(!consent.accepted && model.snapshot == nil)
+    await model.refresh()
+    await model.refresh(recheck: true)
+    #expect(creations == 1)
+    #expect(await service.approvals.isEmpty)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(creations == 2 && model.isConnected && consent.accepted)
+    #expect(model.status == .current && model.snapshot?.weekly?.remainingPercent == 81)
+    #expect(await service.refreshes == 1)
+    await model.disconnect()
+  }
+
+  @Test("Initial store errors never hide a failure to revoke remembered consent")
+  func initialStoreFailureReportsRevocationFailure() async {
+    let consent = ConnectionConsentStub()
+    let model = DesktopConnectionController(
+      makeService: {
+        consent.fails = true
+        throw DesktopThrottleStoreError.ioFailure
+      }, repairStore: { _ in .notNeeded }, consentStore: consent)
+    await model.connect(localExperimentAuthorized: true)
+    #expect(!model.isConnected && model.consentPersistenceFailed)
+    #expect(model.status == .consentStorageUnavailable)
+    #expect(consent.writes == [true, false])
+    #expect(model.snapshot == nil)
+    consent.fails = false
+    await model.disconnect()
+  }
+
   @Test func disabledStartupAndRevocationBeforeStartupDoNotReadConsentOrCreateService() async {
     let consent = ConnectionConsentStub()
     consent.accepted = true
@@ -669,7 +720,7 @@ struct DesktopConnectionControllerTests {
     await model.connect(localExperimentAuthorized: true)
     await model.refresh(recheck: true)
     #expect(creations == 1)
-    #expect(model.isConnected)
+    #expect(!model.isConnected)
     #expect(model.status == .storageUnavailable)
     #expect(!model.statusText.contains("synthetic-private"))
     #expect(model.snapshot == nil && !model.isRefreshing)

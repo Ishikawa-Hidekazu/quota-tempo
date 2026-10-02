@@ -77,6 +77,9 @@ The preference contains no credential, account identifier, observation, or reset
 It provides disconnect, bounded recheck and offline repair controls. Disconnect,
 turning Claude off, and repair revoke remembered consent. Storage failures stop
 the connection and visibly report that persistence could not be confirmed.
+A failure to open scheduling storage, including a lock held by another preview,
+returns to a disconnected state and revokes remembered consent. A later explicit
+connection may reopen storage; polling never silently retries initialization.
 When noninteractive access reports that macOS permission is missing, the app
 offers a separate, explicit **Allow macOS access** action. Only that user action
 may show the system Keychain dialog for the specific Claude Safe Storage item.
@@ -87,6 +90,11 @@ moment. This does not prove a permanent OS grant or access after a restart;
 missing permission still requires a new explicit user action. Cancellation
 or connection revocation cannot approve a late result. OS approval never clears
 provider refusal or retry deadlines and is not provider permission.
+The dialog requires **Always Allow** for background operation. One-time **Allow**
+does not complete this connection because it does not authorize the subsequent
+noninteractive read. Always Allow grants this app ongoing access to the Claude
+Safe Storage protection key. Disconnecting or turning Claude off stops usage
+acquisition and automatic reconnection but does not revoke that macOS grant.
 Disconnect clears in-memory observations; repair disconnects first and never
 erases a known provider deadline. The preview does not silently fall back from
 Desktop to a CLI or browser account, persist Desktop observations, register a

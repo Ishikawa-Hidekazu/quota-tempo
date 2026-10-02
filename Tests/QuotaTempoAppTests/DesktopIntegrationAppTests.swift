@@ -11,6 +11,23 @@
   struct DesktopIntegrationAppTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test(
+      "Permission copy distinguishes ongoing macOS access from one-time Allow",
+      arguments: ["en", "ja"])
+    func permissionCopyExplainsContinuingAccess(language: String) {
+      let copy = DesktopIntegrationConsentCopy(languageCode: language)
+      #expect(copy.keychainAccess.contains(language == "ja" ? "常に許可" : "Always Allow"))
+      #expect(copy.keychainAccess.contains(language == "ja" ? "1回限り" : "only once"))
+      #expect(copy.keychainAccess.contains(language == "ja" ? "再度許可" : "permission again"))
+      #expect(copy.consent.contains("Claude Safe Storage"))
+      #expect(copy.consent.contains(language == "ja" ? "継続的なアクセス" : "ongoing access"))
+      #expect(
+        copy.consent.contains(
+          language == "ja"
+            ? "取得と自動接続を停止" : "stops acquisition and automatic reconnection"))
+      #expect(copy.consent.contains(language == "ja" ? "取り消しません" : "does not revoke macOS"))
+    }
+
     @Test("Restart does not hide memory-only Desktop because only Codex has a saved observation")
     @MainActor
     func savedCodexDoesNotDisableDesktopOnRestart() throws {

@@ -44,6 +44,22 @@
     }
   }
 
+  struct DesktopIntegrationConsentCopy {
+    let languageCode: String
+
+    var keychainAccess: String {
+      languageCode == "ja"
+        ? "バックグラウンド取得には、macOSの確認画面で「常に許可」を選んでください。「許可」は1回限りのため接続を完了できません。許可後に非対話でのアクセスを確認します。macOSから再度許可を求められる場合があります。キャンセルすると接続は再開しません。"
+        : "Choose Always Allow in the macOS dialog for background updates. Allow grants access only once and cannot complete this connection. Background access is checked afterwards; macOS may require permission again. Cancelling does not resume the connection."
+    }
+
+    var consent: String {
+      languageCode == "ja"
+        ? "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回起動後も自動接続します。接続解除またはClaudeをOFFにすると取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。"
+        : "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission."
+    }
+  }
+
   struct DesktopIntegrationControls: View {
     @ObservedObject var connection: DesktopConnectionController
     @Environment(\.locale) private var locale
@@ -51,6 +67,9 @@
     @State private var confirmsConnection = false
     @State private var confirmsRepair = false
     private var japanese: Bool { locale.language.languageCode?.identifier == "ja" }
+    private var consentCopy: DesktopIntegrationConsentCopy {
+      DesktopIntegrationConsentCopy(languageCode: locale.language.languageCode?.identifier ?? "en")
+    }
     private func text(_ ja: String, _ en: String) -> String { japanese ? ja : en }
     private var statusText: String {
       guard japanese else { return connection.statusText }
@@ -119,15 +138,10 @@
           } label: {
             Label(text("macOSアクセスを許可", "Allow macOS access"), systemImage: "lock.open")
           }.disabled(!allowsConnection())
-          Text(
-            text(
-              "macOSの確認画面でアクセスを許可してください。許可後にバックグラウンド取得を確認します。macOSから再度許可を求められる場合があります。キャンセルすると接続は再開しません。",
-              "Allow access in the macOS dialog. Background access is checked afterwards; macOS may require permission again. Cancelling does not resume the connection."
-            )
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+          Text(consentCopy.keychainAccess)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
         HStack(spacing: 12) {
           if connection.isConnected {
@@ -178,11 +192,7 @@
         }
         Button(text("キャンセル", "Cancel"), role: .cancel) {}
       } message: {
-        Text(
-          text(
-            "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回のアプリ起動後も自動接続します。接続解除またはClaudeをOFFにすると同意を取り消します。",
-            "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off revokes consent."
-          ))
+        Text(consentCopy.consent)
       }
       .confirmationDialog(
         text("取得記録を修復しますか？", "Repair scheduling state?"),

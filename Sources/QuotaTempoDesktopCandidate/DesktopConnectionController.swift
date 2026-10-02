@@ -194,7 +194,8 @@ public final class DesktopConnectionController: ObservableObject {
       if persistConsent(false) { status = .storeInUse }
       return
     } catch {
-      status = .storageUnavailable
+      isConnected = false
+      if persistConsent(false) { status = .storageUnavailable }
       return
     }
     await setApproval(DesktopAccessApproval(userConsented: true, localExperimentAuthorized: true))

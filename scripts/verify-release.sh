@@ -82,6 +82,7 @@ fi
 ditto -x -k "$release_dir/$archive" "$tmp"
 app="$tmp/QuotaTempo.app"
 test -d "$app"
+bash "$(dirname "$0")/check-desktop-artifact-isolation.sh" "$app"
 while IFS= read -r link; do
   case "$link" in
     "$app/Contents/Frameworks/Sparkle.framework/"*) ;;

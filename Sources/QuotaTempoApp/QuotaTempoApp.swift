@@ -469,6 +469,8 @@ enum QuotaTempoAppDefaults {
   static let menuBarDisplayMode = MenuBarDisplayMode.iconOnly
   static var defaults: UserDefaults {
     #if DESKTOP_INTEGRATION_PREVIEW
+      // Retain the original preview preference suite so existing versioned
+      // consent is not silently discarded by a cosmetic bundle-ID alignment.
       return UserDefaults(suiteName: "com.ishikawa.QuotaTempo.IntegrationPreview")!
     #else
       return .standard

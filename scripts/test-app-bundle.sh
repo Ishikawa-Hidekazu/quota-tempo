@@ -22,8 +22,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+node "$repo_root/scripts/test-desktop-artifact-isolation.mjs"
 "$repo_root/scripts/build-app-bundle.sh" "$first"
 "$repo_root/scripts/build-app-bundle.sh" "$second"
+bash "$repo_root/scripts/check-desktop-artifact-isolation.sh" "$first"
+bash "$repo_root/scripts/check-desktop-artifact-isolation.sh" "$second"
 
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$first/Contents/Info.plist")" = true
 test -x "$first/Contents/MacOS/QuotaTempo"

@@ -135,6 +135,12 @@ app restarts; Disconnect, turning Claude off, or scheduling repair revokes it.
 It does not replace or launch the installed app.
 If macOS access is missing, the preview provides an explicit **Allow macOS access**
 action. Startup, timers and ordinary refreshes never open a Keychain dialog.
+Choose **Always Allow**, not the one-time **Allow**, to complete background access.
+This grants the app ongoing access to Claude Desktop's protected storage key.
+Disconnect stops acquisition and automatic reconnection; it does not revoke the
+macOS grant. Permission after restart or a later macOS change is not guaranteed.
+If scheduling storage cannot be opened, the preview disconnects and revokes its
+remembered consent. Resolve the storage problem, then use **Connect Desktop** again.
 For local signed acceptance builds, the preview builder accepts the paired
 `--sign-identity "Developer ID Application: Name (TEAMID)" --team-id TEAMID`
 options. This signs the preview only; it does not notarize or approve a release.
@@ -154,8 +160,12 @@ the following exact argument sequence:
 This bounded headless check uses the application's Desktop connection controller
 and its existing scheduling store. It does not initialize the UI, start Codex or
 the Claude CLI, open a browser, request macOS permission, or save connection
-consent. Close an existing Desktop preview first; never delete its scheduling
-record to avoid a wait. Two new exact observations at least five minutes apart
+consent. Close an existing Desktop preview first and start after its displayed
+**Next allowed update**; never delete its scheduling record to avoid a wait.
+Do not start the UI again during the check: a lock conflict revokes its saved
+consent and requires **Connect Desktop** again. An initial scheduling wait can
+exhaust the fixed check deadline and is not a successful acceptance result.
+Two new exact observations at least five minutes apart
 are required, within eleven minutes. The independent process watchdog stops
 unresponsive work after eleven and a half minutes. Permission, authentication,
 provider-wait and storage errors stop the check. Its output contains only fixed
