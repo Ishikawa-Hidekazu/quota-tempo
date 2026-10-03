@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes are currently prepared for the public-beta 0.1.x line.
+Security fixes are currently prepared for the QuotaTempo 0.1.x line.
 
 ## Reporting
 
@@ -31,7 +31,7 @@ The optional Claude Desktop connection uses bounded reads of Desktop's existing
 encrypted authentication, selected organization and protection key, solely for
 account validation and usage retrieval. It never writes to those provider stores.
 The exact access, consent, retention and removal contract is in [Privacy](PRIVACY.md).
-This unofficial Beta integration is not a statement of Anthropic approval.
+Provider changes may prevent QuotaTempo from retrieving usage data.
 
 Release preparation requires tests, static shell checks, deterministic app-bundle verification, code-signature verification, artifact SHA-256 verification, embedded release-metadata matching, developer-path rejection, and a clean source tree. Public distribution additionally requires Developer ID signing and Apple notarization.
 

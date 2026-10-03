@@ -1,6 +1,6 @@
 # QuotaTempo Product Specification
 
-Status: public-beta baseline
+Status: QuotaTempo product baseline
 
 ## Product contract
 
@@ -60,7 +60,7 @@ Required boundaries:
 - Treat missing and changed upstream shapes as unavailable.
 - Persist no raw provider response, executable path, or raw version output. Store only normalized provenance and a strict three-part semantic version when available for the current attempt.
 
-This adapter is implemented in the public-beta app.
+This adapter is implemented in QuotaTempo.
 
 ## Experimental browser acquisition (unreleased)
 
@@ -72,11 +72,12 @@ An explicitly connected Chrome extension may supply `claudeBrowser` observations
 
 ## Claude acquisition
 
-Version 0.1.10 offers **Automatic** (default) and **Claude Desktop (Beta)**.
+Version 0.1.10 introduced the optional **Claude Desktop** source alongside **Automatic** (default).
 The following local/CLI contract applies only to Automatic. Desktop is separately
 opt-in, uses existing Desktop authentication in memory, and follows the access
 and scheduling contract in `PRIVACY.md`. It does not require a CLI login or a
 Chrome tab. No source silently replaces another when the selected source fails.
+Provider changes may prevent QuotaTempo from retrieving usage data.
 
 QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. It reads Desktop's current-account identifier solely to verify that a newer history observation and an exact cached reset belong to the same account and quota window. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local observation avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.
 
@@ -242,7 +243,7 @@ The first prototype must:
 - contain no telemetry, updater, account switching, prompt routing, session history, package, or release automation
 - contain no provider recommendation, task inference, or provider-selection optimization
 
-These constraints remain regression requirements for fixture rendering in the public-beta implementation.
+These constraints remain regression requirements for fixture rendering in QuotaTempo.
 
 ## Open design decisions
 

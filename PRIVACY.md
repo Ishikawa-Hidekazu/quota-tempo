@@ -5,9 +5,9 @@ QuotaTempo is a local macOS menu-bar app. It has no telemetry, analytics, accoun
 ## Data read
 
 The default Claude source is **Automatic**, the local/CLI path below. The optional
-**Claude Desktop (Beta)** connection has a different access boundary described
+**Claude Desktop** connection has a different access boundary described
 in its own section. It starts disabled and requires explicit consent and macOS
-permission. This connection is available in version 0.1.10; an older installed
+permission. This connection was introduced in version 0.1.10; an older installed
 release does not gain it from this document.
 
 - Codex: rate-limit metadata returned by the installed official `codex app-server` process.
@@ -25,11 +25,11 @@ as newly captured.
 
 ## Opt-in Claude Desktop connection
 
-Version 0.1.10 includes `QuotaTempoDesktopCandidate` only in the main app,
-behind **Claude Desktop (Beta)** source selection and explicit consent. The
-default source remains Automatic. Consent is not a claim of provider approval;
-this is an unofficial integration and its upstream interfaces may change. The
-standalone `QT Desktop` helper and headless acceptance mode remain local test
+Version 0.1.10 introduced `QuotaTempoDesktopCandidate` only in the main app,
+behind **Claude Desktop** source selection and explicit consent. The
+default source remains Automatic.
+Provider changes may prevent QuotaTempo from retrieving usage data.
+The standalone `QT Desktop` helper and headless acceptance mode remain local test
 tools, not publicly distributed entry points.
 
 Unlike the Automatic local/CLI path above, this connection reads Claude Desktop's
@@ -103,7 +103,7 @@ key material and verifies that a subsequent noninteractive read works at that
 moment. This does not prove a permanent OS grant or access after a restart;
 missing permission still requires a new explicit user action. Cancellation
 or connection revocation cannot approve a late result. OS approval never clears
-provider refusal or retry deadlines and is not provider permission.
+provider refusal or retry deadlines.
 The dialog requires **Always Allow** for background operation. One-time **Allow**
 does not complete this connection because it does not authorize the subsequent
 noninteractive read. Always Allow grants this app ongoing access to the Claude
@@ -130,8 +130,8 @@ distribution packaging. Other shipped executables do not contain Desktop
 authentication readers. The same scheduling allowlist and locking rules apply.
 
 The signed integration preview also has an explicit, bounded headless acceptance
-mode. It requires the exact command-line consent and unconfirmed-permission
-acknowledgement, uses the same controller and scheduling namespace, and never
+mode. It requires the exact command-line consent and acknowledgement arguments
+documented in [README](README.md#build-and-test), uses the same controller and scheduling namespace, and never
 initializes the application UI or persists that process-only consent. It does not
 request Keychain permission, recheck a refused credential, repair state, start
 the CLI/browser or fall back to another account. Output is limited to fixed
@@ -143,7 +143,7 @@ private acceptance evidence, not telemetry or a public-release approval.
 
 The development browser bridge is separate from the released local/CLI acquisition path. Installing its Chrome extension and native-host registration does not sign you in. After you explicitly connect a Claude tab, an isolated content script requests account, organization, and aggregate usage metadata from the same `https://claude.ai` origin. Chrome supplies its existing session normally; the extension does not access cookie values, cookie databases, authentication storage, or Keychain. No page text, conversation, prompt, or transcript is inspected.
 
-These web routes are not a stable third-party API. The extension validates the account before and after each usage request, requires an unambiguous organization, and pins the selected account. It sends only normalized percentages, provider-reported reset timestamps, capture time, stable status codes, a random installation identifier, and one-way ownership fingerprints to the local native host. The browser observation is used whole; its reset is never merged with Desktop or CLI observations. The app identifies this source as **Claude browser connection**, which can represent a different account from Claude Desktop.
+Provider changes may prevent QuotaTempo from retrieving usage data. The extension validates the account before and after each usage request, requires an unambiguous organization, and pins the selected account. It sends only normalized percentages, provider-reported reset timestamps, capture time, stable status codes, a random installation identifier, and one-way ownership fingerprints to the local native host. The browser observation is used whole; its reset is never merged with Desktop or CLI observations. The app identifies this source as **Claude browser connection**, which can represent a different account from Claude Desktop.
 
 Polling requires a Claude tab in the connected Chrome profile. It runs no more frequently than every five minutes, backs off after failures, and does not open or foreground a tab. The extension stores connection metadata and ownership fingerprints in `chrome.storage.local`, not Chrome Sync. The native host stores its origin allowlist and normalized connection record in `QuotaTempo/BrowserBridge` under Application Support. A Chrome Native Messaging manifest links the installed extension to the bundled host executable. There is no listening network port, telemetry, or outbound transfer to QuotaTempo servers. Claude's own privacy terms and ordinary network metadata apply to its web requests.
 
@@ -230,4 +230,4 @@ allowing background use.
 
 ## Upstream compatibility
 
-Some provider interfaces and local usage structures are not stable public APIs. QuotaTempo validates recognized shapes and fails closed when they change. Users should verify this policy again before enabling a future adapter or distribution channel.
+Provider changes may prevent QuotaTempo from retrieving usage data. QuotaTempo validates recognized shapes and fails closed when they change. Users should verify this policy again before enabling a future adapter or distribution channel.

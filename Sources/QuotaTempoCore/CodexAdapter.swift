@@ -1081,7 +1081,7 @@ public struct CodexRateLimitAdapter: Sendable {
 
   static let protocolRequest = Data(
     """
-    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.10"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
+    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.11"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
     {"method":"initialized"}
     {"method":"account/rateLimits/read","id":2}
 

@@ -6,7 +6,7 @@ Use **Check for Updates...** in QuotaTempo to check manually. Sparkle presents t
 
 The canonical download location is the [QuotaTempo releases page](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). Download the archive and SHA-256 from the same release. Do not download a build from an unofficial mirror.
 
-The public-beta 0.1.x line may receive compatibility, security, privacy, and display fixes. An update may change or remove an acquisition source when an upstream provider interface changes. The delivery model and pricing of future releases or additional features have not been decided. No particular update, feature, support period, or provider compatibility is promised.
+The QuotaTempo 0.1.x line may receive compatibility, security, privacy, and display fixes. An update may change or remove an acquisition source when an upstream provider interface changes. The delivery model and pricing of future releases or additional features have not been decided. No particular update, feature, support period, or provider compatibility is promised.
 
 The first Sparkle-enabled release must still be installed manually from the canonical release page. Later signed releases can update that installation in place. Homebrew users who installed the published Cask may alternatively run `brew upgrade --cask quotatempo`.
 

@@ -1,6 +1,6 @@
 # Install and use QuotaTempo
 
-This guide applies to the signed and notarized QuotaTempo public beta distributed through the official GitHub Releases page. The public beta has no time limit and remains under active development. The delivery model and pricing of future releases or additional features have not been decided.
+This guide applies to the signed and notarized QuotaTempo release distributed through the official GitHub Releases page. The current release has no time limit, and QuotaTempo remains under active development. The delivery model and pricing of future releases or additional features have not been decided.
 
 ## Requirements
 
@@ -84,14 +84,14 @@ Under **Providers**, enable Codex, Claude, or both. At least one remains enabled
 
 On first launch, QuotaTempo selects providers for which it can find an existing valid observation. If neither provider can be detected, both remain visible until you choose. This selection changes only QuotaTempo; it does not sign out of or reconfigure a provider.
 
-## Claude Desktop connection (Beta)
+## Claude Desktop connection
 
-This connection is available in version 0.1.10. Older releases do not display
+This connection was introduced in version 0.1.10. Older releases do not display
 these controls. It does not require a Claude Code login or an
 open Chrome tab, but Claude Desktop must already be installed and signed in.
 
 1. Below the usage summary, change Claude's source from **Automatic** to
-   **Claude Desktop (Beta)**. Read the access notice and choose **Connect Desktop**.
+   **Claude Desktop**. Read the access notice and choose **Connect Desktop**.
 2. Read the inline notice and choose **Agree and connect**. The notice closes
    immediately and a progress indicator appears while the connection is checked.
    If the app reports missing macOS permission, choose
@@ -104,9 +104,9 @@ open Chrome tab, but Claude Desktop must already be installed and signed in.
 
 This grants QuotaTempo ongoing access to Claude Desktop's protection key, used
 locally to read its existing authentication for usage retrieval. QuotaTempo does
-not save the credentials or read conversations. The connection uses unofficial
-interfaces and can become unavailable if they change. Review [Privacy](../PRIVACY.md)
-before enabling it.
+not save the credentials or read conversations.
+Provider changes may prevent QuotaTempo from retrieving usage data.
+Review [Privacy](../PRIVACY.md) before enabling it.
 
 Desktop is an exclusive source: failures do not silently switch to another
 account in the CLI or browser. **Disconnect**, turning Claude off, or switching
@@ -145,7 +145,7 @@ A failed refresh does not make an older observation look newer. If a bounded res
 
 For Codex, the detail view distinguishes no installation, launch failure, a specifically known-old version, an upstream protocol change, timeout, output safety limit, and a temporary failure. Follow the displayed recovery step before refreshing again. QuotaTempo prefers a verified official desktop copy and can try a bounded fallback candidate, so an older Homebrew installation does not automatically hide a working desktop installation.
 
-The copied diagnostic report contains only the QuotaTempo and macOS versions, enabled providers, normalized source kinds, Codex executable provenance and normalized semantic version when available, freshness, and acquisition states. It excludes quota percentages, reset times, local paths, raw version output, credentials, and session content. Do not send raw provider files, prompts, transcripts, cookies, tokens, credentials, or private URLs with a report. Upstream interfaces can change; QuotaTempo marks its single-window reset projection explicitly and otherwise fails closed instead of inventing missing values.
+The copied diagnostic report contains only the QuotaTempo and macOS versions, enabled providers, normalized source kinds, Codex executable provenance and normalized semantic version when available, freshness, and acquisition states. It excludes quota percentages, reset times, local paths, raw version output, credentials, and session content. Do not send raw provider files, prompts, transcripts, cookies, tokens, credentials, or private URLs with a report. Provider changes may prevent QuotaTempo from retrieving usage data. QuotaTempo marks its single-window reset projection explicitly and otherwise fails closed instead of inventing missing values.
 
 ## Update
 

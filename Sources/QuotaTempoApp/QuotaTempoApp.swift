@@ -863,12 +863,12 @@ struct QuotaTempoApplicationContent: View {
   private var desktopPrivacyText: String? {
     #if DESKTOP_INTEGRATION_PREVIEW
       return Locale.current.language.languageCode?.identifier == "ja"
-        ? "Desktop接続は明示的な同意の後でのみ認証を端末内で使用し、Anthropicへ使用量を照会します。提供元の許諾は未確認のローカル検証版です。"
-        : "Desktop connection uses authentication locally and requests usage from Anthropic only after explicit consent. This local preview has no confirmed provider permission."
+        ? "Desktop接続は明示的な同意の後でのみ認証を端末内で使用し、Anthropicへ使用量を照会します。提供元の変更により、取得できなくなる場合があります。"
+        : "Desktop connection uses authentication locally and requests usage from Anthropic only after explicit consent. Provider changes may prevent QuotaTempo from retrieving usage data."
     #elseif DESKTOP_CONNECTION
       return Locale.current.language.languageCode?.identifier == "ja"
-        ? "通常はローカル情報・CLI・ブラウザ連携を使用します。Claude Desktop (Beta)は任意選択です。明示的な同意後に端末内の認証を使用してAnthropicへ使用量を照会します。非公式の連携で、提供元の許諾は未確認です。"
-        : "Automatic uses local information, CLI or the browser connection. Claude Desktop (Beta) is optional and uses authentication locally to request usage from Anthropic after explicit consent. This is an unofficial integration; provider permission is unconfirmed."
+        ? "通常はローカル情報・CLI・ブラウザ連携を使用します。Claude Desktop接続は任意選択です。明示的な同意後に端末内の認証を使用してAnthropicへ使用量を照会します。提供元の変更により、取得できなくなる場合があります。"
+        : "Automatic uses local information, CLI or the browser connection. Claude Desktop connection is optional and uses authentication locally to request usage from Anthropic after explicit consent. Provider changes may prevent QuotaTempo from retrieving usage data."
     #else
       return nil
     #endif

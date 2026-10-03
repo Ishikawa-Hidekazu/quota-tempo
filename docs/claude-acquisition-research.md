@@ -28,6 +28,15 @@ items; they do not block release of the existing opt-in Desktop connection.
 
 ## Release-scope update (2026-10-03)
 
+### Presentation update (2026-10-04)
+
+The project owner chose to remove Beta and provider-permission labels from
+current product copy. The availability notice is: "Provider changes may prevent
+QuotaTempo from retrieving usage data." Explicit consent, macOS access, source
+isolation and acceptance requirements are unchanged. This wording change is not
+evidence of provider approval or of additional runtime scenarios passing. The
+dated research and release decisions below remain historical records.
+
 The project owner approved preparing the existing Desktop connection for an
 explicitly selected, consent-based beta without waiting for a provider response
 or confirmation of provider permission. Natural weekly-rollover acceptance is
