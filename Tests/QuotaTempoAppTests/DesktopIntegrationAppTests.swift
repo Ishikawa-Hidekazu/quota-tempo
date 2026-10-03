@@ -18,16 +18,17 @@
       interaction.confirmation = .connection
       let gate = AsyncStream<Void>.makeStream()
       var calls = 0
-      let task = try #require(
-        interaction.perform(
-          .connection, allowed: { true },
-          action: {
-            calls += 1
-            for await _ in gate.stream { break }
-          }))
+      let submitted = interaction.perform(
+        .connection, allowed: { true },
+        action: {
+          calls += 1
+          for await _ in gate.stream { break }
+        })
+      let task = try #require(submitted)
       #expect(interaction.confirmation == nil)
       #expect(interaction.pending == .connection)
-      #expect(interaction.perform(.connection, allowed: { true }, action: { calls += 1 }) == nil)
+      let duplicate = interaction.perform(.connection, allowed: { true }, action: { calls += 1 })
+      #expect(duplicate == nil)
       await Task.yield()
       gate.continuation.finish()
       await task.value
@@ -42,12 +43,12 @@
       interaction.confirmation = .connection
       var revision = 0
       var calls = 0
-      let task = try #require(
-        interaction.perform(
-          .connection, allowed: { revision == 0 },
-          action: {
-            calls += 1
-          }))
+      let submitted = interaction.perform(
+        .connection, allowed: { revision == 0 },
+        action: {
+          calls += 1
+        })
+      let task = try #require(submitted)
       revision += 1
       await task.value
       #expect(calls == 0)
