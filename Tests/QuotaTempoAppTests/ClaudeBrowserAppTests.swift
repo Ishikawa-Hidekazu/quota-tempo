@@ -1138,26 +1138,132 @@ private final class BrowserAppIsolationStub: BoundedLocalDataReading, BoundedPro
   }
 }
 
-private final class BrowserAppReadBarrier: @unchecked Sendable {
-  private let lock = NSLock()
-  private let signal = DispatchSemaphore(value: 0)
-  private var entered = false
+@Suite("Synthetic browser read barrier", .serialized)
+@MainActor
+struct BrowserAppReadBarrierTests {
+  @Test("A delayed test cannot open the barrier before acknowledging entry")
+  func delayedEntryAcknowledgementKeepsReadPaused() async throws {
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    let finished = DispatchGroup()
+    finished.enter()
+    DispatchQueue(label: "ClaudeBrowserAppTests.delayed-acknowledgement").async {
+      barrier.pause()
+      finished.leave()
+    }
+    let hasFinished = { finished.wait(timeout: .now()) == .success }
+    try await waitFor { barrier.hasEntered }
 
-  func pause() {
-    self.lock.withLock { self.entered = true }
-    #expect(self.signal.wait(timeout: .now() + 5) == .success, "Synthetic read was not released")
+    // Reproduce a test task delayed longer than the release watchdog, without
+    // blocking MainActor or running unrelated preview tests concurrently.
+    try await Task.sleep(for: .milliseconds(5_100))
+    #expect(!hasFinished())
+    try await barrier.waitUntilEntered()
+    barrier.release()
+    try await waitFor(hasFinished)
   }
 
-  func release() {
-    self.signal.signal()
+  @Test("An acknowledged read still fails if it is not released within five seconds")
+  func acknowledgedReadRetainsReleaseWatchdog() async throws {
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    let finished = DispatchGroup()
+    finished.enter()
+    DispatchQueue(label: "ClaudeBrowserAppTests.release-watchdog").async {
+      barrier.pause()
+      finished.leave()
+    }
+    try await barrier.waitUntilEntered()
+    try await Task.sleep(for: .milliseconds(5_100))
+    try await waitFor { finished.wait(timeout: .now()) == .success }
+    withKnownIssue("The release watchdog must fail in the owning test, not an unknown queue") {
+      barrier.release()
+    }
+  }
+
+  @Test("Cleanup releases an unacknowledged read exactly once", arguments: [false, true])
+  func releaseBeforeAcknowledgement(releaseBeforeEntry: Bool) async throws {
+    let barrier = BrowserAppReadBarrier()
+    defer { barrier.release() }
+    if releaseBeforeEntry {
+      barrier.release()
+      barrier.release()
+    }
+    let finished = DispatchGroup()
+    finished.enter()
+    DispatchQueue(label: "ClaudeBrowserAppTests.early-release").async {
+      barrier.pause()
+      finished.leave()
+    }
+    if !releaseBeforeEntry {
+      try await waitFor { barrier.hasEntered }
+      barrier.release()
+      barrier.release()
+    }
+    try await waitFor { finished.wait(timeout: .now()) == .success }
+  }
+
+  private func waitFor(_ condition: () -> Bool) async throws {
+    for _ in 0..<300 {
+      if condition() { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(condition(), "Synthetic barrier did not reach the expected state")
+  }
+}
+
+private final class BrowserAppReadBarrier: @unchecked Sendable {
+  private let condition = NSCondition()
+  private var entered = false
+  private var acknowledged = false
+  private var released = false
+  private var timedOut = false
+
+  var hasEntered: Bool { self.condition.withLock { self.entered } }
+
+  func pause() {
+    self.condition.lock()
+    defer { self.condition.unlock() }
+    self.entered = true
+    // Other suites can occupy MainActor before the test observes this read.
+    // Start the release watchdog only after that observation; defer-release
+    // also wakes this first phase if the owning test throws or is cancelled.
+    while !self.acknowledged && !self.released { self.condition.wait() }
+    let deadline = Date().addingTimeInterval(5)
+    while !self.released {
+      if !self.condition.wait(until: deadline) && !self.released {
+        self.timedOut = true
+        return
+      }
+    }
+  }
+
+  func release(sourceLocation: SourceLocation = #_sourceLocation) {
+    let timedOut = self.condition.withLock {
+      let timedOut = self.timedOut && !self.released
+      self.released = true
+      self.condition.broadcast()
+      return timedOut
+    }
+    // Dispatch callbacks do not inherit Swift Testing's current test context.
+    #expect(!timedOut, "Synthetic read was not released", sourceLocation: sourceLocation)
   }
 
   @MainActor
   func waitUntilEntered() async throws {
     for _ in 0..<300 {
-      if self.lock.withLock({ self.entered }) { return }
+      if self.acknowledgeEntry() { return }
       try await Task.sleep(for: .milliseconds(10))
     }
-    try #require(self.lock.withLock { self.entered }, "Synthetic read did not start")
+    try #require(self.acknowledgeEntry(), "Synthetic read did not start")
+  }
+
+  private func acknowledgeEntry() -> Bool {
+    self.condition.withLock {
+      guard self.entered else { return false }
+      self.acknowledged = true
+      self.condition.broadcast()
+      return true
+    }
   }
 }
