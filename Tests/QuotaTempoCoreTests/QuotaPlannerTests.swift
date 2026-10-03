@@ -243,6 +243,44 @@ struct QuotaPlannerTests {
     }
   }
 
+  @Test("Product content leaves the scroll indicator gutter clear")
+  @MainActor
+  func productContentReservesScrollIndicatorGutter() throws {
+    let scenario = try FixtureLoader.load("baseline")
+    for language in ["en", "ja"] {
+      let view = QuotaMenuView(
+        scenario: scenario,
+        languageCode: language,
+        productVersion: "0.1.10",
+        privacyURL: URL(string: "https://example.invalid/privacy"),
+        onRefresh: {},
+        onCheckForUpdates: {},
+        onCopyDiagnostics: { true },
+        onOpenWindow: {},
+        onQuit: {}
+      )
+      let host = NSHostingView(rootView: view.environment(\.colorScheme, .light))
+      host.frame = NSRect(origin: .zero, size: host.fittingSize)
+      host.layoutSubtreeIfNeeded()
+      let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+      host.cacheDisplay(in: host.bounds, to: bitmap)
+      let hasContent = stride(from: 20, to: bitmap.pixelsWide - 20, by: 4).contains { x in
+        stride(from: 20, to: bitmap.pixelsHigh - 20, by: 4).contains { y in
+          self.hasVisibleInk(bitmap.colorAt(x: x, y: y))
+        }
+      }
+      #expect(hasContent, "Native menu rendering must not be blank")
+      let scale = CGFloat(bitmap.pixelsWide) / QuotaMenuLayout.width
+      let start = Int(
+        (QuotaMenuLayout.width - 18 - QuotaMenuLayout.scrollIndicatorGutter + 2) * scale)
+      let end = Int((QuotaMenuLayout.width - 18 - 2) * scale)
+      let ink = (start..<end).contains { x in
+        (0..<bitmap.pixelsHigh).contains { y in self.hasVisibleInk(bitmap.colorAt(x: x, y: y)) }
+      }
+      #expect(!ink, "\(language) content overlaps the scroll indicator gutter")
+    }
+  }
+
   private func hasClearOuterPadding(_ image: NSBitmapImageRep) -> Bool {
     let inset = 8
     let lastX = image.pixelsWide - 1

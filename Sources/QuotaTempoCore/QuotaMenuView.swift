@@ -2,7 +2,8 @@ import SwiftUI
 
 public enum QuotaMenuLayout {
   public static let width: CGFloat = 580
-  static let contentWidth: CGFloat = 544
+  static let scrollIndicatorGutter: CGFloat = 16
+  static let contentWidth: CGFloat = width - 36 - scrollIndicatorGutter
   static let detailLabelWidth: CGFloat = 160
   static let summaryWeeklyWidth: CGFloat = 82
   static let summaryTargetWidth: CGFloat = 82
@@ -194,6 +195,7 @@ public struct QuotaMenuView: View {
             }
           }
           .frame(width: QuotaMenuLayout.contentWidth, alignment: .leading)
+          .padding(.trailing, QuotaMenuLayout.scrollIndicatorGutter)
         }
         .defaultScrollAnchor(.top)
         .scrollIndicators(.visible)
