@@ -7,12 +7,14 @@ struct RenderArguments {
   let language: String
   let output: String
   let onboarding: Bool
+  let browserDisconnectFailed: Bool
 
   init(_ arguments: [String]) throws {
     var fixture = "baseline"
     var language = "en"
     var output: String?
     var onboarding = false
+    var browserDisconnectFailed = false
     var index = 1
 
     while index < arguments.count {
@@ -33,6 +35,7 @@ struct RenderArguments {
         index += 1
         guard index < arguments.count else { throw RenderError.missingValue("--view-mode") }
         onboarding = arguments[index] == "onboarding"
+        browserDisconnectFailed = arguments[index] == "browser-disconnect-error"
       default:
         throw RenderError.unknownArgument(arguments[index])
       }
@@ -44,6 +47,7 @@ struct RenderArguments {
     self.language = language
     self.output = output
     self.onboarding = onboarding
+    self.browserDisconnectFailed = browserDisconnectFailed
   }
 }
 
@@ -63,7 +67,9 @@ func render(_ arguments: RenderArguments) throws {
     timeZone: TimeZone(secondsFromGMT: 0)!,
     onboardingPresented: .constant(arguments.onboarding),
     enabledProviders: Set(scenario.snapshots.map(\.provider)),
+    browserDisconnectFailed: arguments.browserDisconnectFailed,
     onRefresh: {},
+    onDisconnectBrowser: {},
     onQuit: {}
   )
   .environment(\.colorScheme, .light)

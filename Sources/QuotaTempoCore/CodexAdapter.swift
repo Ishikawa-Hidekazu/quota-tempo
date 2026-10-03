@@ -888,18 +888,34 @@ public struct CodexRateLimitAdapter: Sendable {
     candidate: CodexExecutableCandidate?,
     version: String?
   ) -> ProviderSnapshot {
-    ProviderSnapshot(
+    let retainsRestriction = Self.retainsRestriction(previous, now: now)
+    return ProviderSnapshot(
       provider: .codex,
       source: .codexAppServer,
       capturedAt: previous?.capturedAt,
       weekly: previous?.weekly,
       fiveHour: previous?.fiveHour,
       lastAttemptAt: now,
-      sourceState: state,
-      errorCode: error,
+      sourceState: retainsRestriction ? .accessRestricted : state,
+      errorCode: retainsRestriction ? .usageRestricted : error,
       codexExecutableSource: candidate?.source,
       codexExecutableVersion: candidate == nil ? nil : version
     )
+  }
+
+  private static func retainsRestriction(_ previous: ProviderSnapshot?, now: Date) -> Bool {
+    guard let previous, previous.provider == .codex, previous.source == .codexAppServer,
+      previous.sourceState == .accessRestricted
+    else { return false }
+    let exhausted = [previous.weekly, previous.fiveHour].compactMap { $0 }
+      .filter { $0.remainingPercent == 0 }
+    // Unknown restrictions have no safe expiry. Known exhaustion is bounded by
+    // its exhausted windows, not by a later reset of an unexhausted window.
+    guard !exhausted.isEmpty else { return true }
+    return exhausted.contains { window in
+      guard let resetAt = window.resetAt, !window.isResetEstimated else { return true }
+      return now < resetAt
+    }
   }
 
   private static func failurePriority(_ error: AcquisitionErrorCode) -> Int {
@@ -931,6 +947,18 @@ public struct CodexRateLimitAdapter: Sendable {
   private func decode(_ data: Data, now: Date) throws -> ProviderSnapshot {
     let lines = data.split(separator: 0x0A)
     let decoder = JSONDecoder()
+    // Read restrictions independently of window decoding so malformed quota data
+    // cannot turn a provider restriction into a retry against another CLI/account.
+    for line in lines {
+      guard let probe = try? decoder.decode(RPCRestrictionProbe.self, from: Data(line)),
+        probe.id == 2, let restriction = probe.result, restriction.isRestricted
+      else { continue }
+      guard !probe.hasError, !restriction.isMalformed, !restriction.hasOtherRestriction,
+        let response = try? decoder.decode(RPCResponse.self, from: Data(line)),
+        response.error == nil, let result = response.result
+      else { return Self.restrictedSnapshot(now: now) }
+      return Self.quotaExhaustionSnapshot(result, now: now)
+    }
     let response = lines.lazy.compactMap {
       try? decoder.decode(RPCResponse.self, from: Data($0))
     }
@@ -969,13 +997,64 @@ public struct CodexRateLimitAdapter: Sendable {
     throw AdapterError.invalidResponse
   }
 
-  private static func restrictedSnapshot(now: Date) -> ProviderSnapshot {
+  private static func quotaExhaustionSnapshot(_ result: RPCResult, now: Date) -> ProviderSnapshot {
+    let named = result.rateLimitsByLimitId?["codex"]
+    let legacy = result.rateLimits
+    guard result.ordinaryUsageAllowed == false,
+      let limits = named ?? legacy,
+      limits.rateLimitReachedType == "rate_limit_reached",
+      limits.spendControlReached == false
+    else { return Self.restrictedSnapshot(now: now) }
+    if let named, let legacy, named != legacy {
+      return Self.restrictedSnapshot(now: now)
+    }
+
+    let windows = [limits.primary, limits.secondary].compactMap { $0 }
+    let weeklyRange = 8_640...11_520
+    let fiveHourRange = 240...360
+    guard !windows.isEmpty,
+      windows.allSatisfy({ window in
+        guard let duration = window.windowDurationMins else { return false }
+        return weeklyRange.contains(duration) || fiveHourRange.contains(duration)
+      }),
+      windows.filter({ weeklyRange.contains($0.windowDurationMins ?? 0) }).count <= 1,
+      windows.filter({ fiveHourRange.contains($0.windowDurationMins ?? 0) }).count <= 1
+    else { return Self.restrictedSnapshot(now: now) }
+
+    do {
+      let weekly = try Self.window(windows, range: weeklyRange)
+      let fiveHour = try Self.window(windows, range: fiveHourRange)
+      let validated = [weekly, fiveHour].compactMap { $0 }
+      guard
+        validated.allSatisfy({ window in
+          guard let resetAt = window.resetAt else { return false }
+          let remaining = resetAt.timeIntervalSince(now)
+          return remaining > 0 && remaining <= window.durationSeconds
+        }), validated.contains(where: { $0.remainingPercent == 0 })
+      else {
+        return Self.restrictedSnapshot(now: now)
+      }
+      // These are observations, not usable allowance. Keep the restriction even
+      // when the other validated window still has a positive balance.
+      return Self.restrictedSnapshot(
+        now: now,
+        weekly: weekly,
+        fiveHour: fiveHour
+      )
+    } catch {
+      return Self.restrictedSnapshot(now: now)
+    }
+  }
+
+  private static func restrictedSnapshot(
+    now: Date, weekly: QuotaWindow? = nil, fiveHour: QuotaWindow? = nil
+  ) -> ProviderSnapshot {
     ProviderSnapshot(
       provider: .codex,
       source: .codexAppServer,
       capturedAt: now,
-      weekly: nil,
-      fiveHour: nil,
+      weekly: weekly,
+      fiveHour: fiveHour,
       lastAttemptAt: now,
       sourceState: .accessRestricted,
       errorCode: .usageRestricted
@@ -1002,7 +1081,7 @@ public struct CodexRateLimitAdapter: Sendable {
 
   static let protocolRequest = Data(
     """
-    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.9"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
+    {"method":"initialize","id":1,"params":{"clientInfo":{"name":"quota_tempo","title":"QuotaTempo","version":"0.1.10"},"capabilities":{"optOutNotificationMethods":["account/rateLimits/updated"]}}}
     {"method":"initialized"}
     {"method":"account/rateLimits/read","id":2}
 
@@ -1011,6 +1090,69 @@ public struct CodexRateLimitAdapter: Sendable {
 }
 
 private enum AdapterError: Error { case invalidResponse }
+
+private struct RPCRestrictionProbe: Decodable {
+  let id: Int?
+  let result: RPCRestrictionMetadata?
+  let hasError: Bool
+
+  private enum CodingKeys: String, CodingKey { case id, result, error }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try container.decodeIfPresent(Int.self, forKey: .id)
+    self.result = try container.decodeIfPresent(RPCRestrictionMetadata.self, forKey: .result)
+    self.hasError = try container.contains(.error) && !container.decodeNil(forKey: .error)
+  }
+}
+
+private struct RPCRestrictionMetadata: Decodable {
+  let isRestricted: Bool
+  let isMalformed: Bool
+  let hasOtherRestriction: Bool
+
+  private enum CodingKeys: String, CodingKey {
+    case ordinaryUsageAllowed, rateLimits, rateLimitsByLimitId, codex
+    case spendControlReached, rateLimitReachedType
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    var malformed = false
+    func field<Value: Decodable>(_ type: Value.Type, _ key: CodingKeys) -> Value? {
+      do { return try container.decodeIfPresent(type, forKey: key) } catch {
+        malformed = true
+        return nil
+      }
+    }
+    let allowed = field(Bool.self, .ordinaryUsageAllowed)
+    let spend = field(Bool.self, .spendControlReached)
+    let type = field(String.self, .rateLimitReachedType)
+    let legacy = field(Self.self, .rateLimits)
+    let named: Self?
+    do {
+      if container.contains(.rateLimitsByLimitId),
+        !(try container.decodeNil(forKey: .rateLimitsByLimitId))
+      {
+        let buckets = try container.nestedContainer(
+          keyedBy: CodingKeys.self, forKey: .rateLimitsByLimitId)
+        named = try buckets.decodeIfPresent(Self.self, forKey: .codex)
+      } else {
+        named = nil
+      }
+    } catch {
+      malformed = true
+      named = nil
+    }
+    self.isMalformed = malformed || legacy?.isMalformed == true || named?.isMalformed == true
+    self.hasOtherRestriction =
+      spend == true || (type != nil && type != "rate_limit_reached")
+      || legacy?.hasOtherRestriction == true || named?.hasOtherRestriction == true
+    self.isRestricted =
+      allowed == false || spend == true || type != nil
+      || legacy?.isRestricted == true || named?.isRestricted == true
+  }
+}
 
 private struct RPCResponse: Decodable {
   let id: Int?
@@ -1026,14 +1168,14 @@ private struct RPCResult: Decodable {
   let ordinaryUsageAllowed: Bool?
 }
 
-private struct RPCRateLimits: Decodable {
+private struct RPCRateLimits: Decodable, Equatable {
   let primary: RPCWindow?
   let secondary: RPCWindow?
   let rateLimitReachedType: String?
   let spendControlReached: Bool?
 }
 
-private struct RPCWindow: Decodable {
+private struct RPCWindow: Decodable, Equatable {
   let usedPercent: Int
   let windowDurationMins: Int?
   let resetsAt: Int64?

@@ -28,6 +28,13 @@ public struct MenuCopy: Sendable {
     self.text("freshness.\(freshness.rawValue)")
   }
 
+  public func status(for plan: PlannedProvider) -> String {
+    if plan.sourceState == .accessRestricted {
+      return self.sourceState(.accessRestricted)
+    }
+    return self.status(plan.status)
+  }
+
   public func sourceState(_ state: SourceState) -> String {
     self.text("source.state.\(state.rawValue)")
   }
@@ -38,6 +45,21 @@ public struct MenuCopy: Sendable {
 
   public func error(_ error: AcquisitionErrorCode) -> String {
     self.text("error.\(error.rawValue)")
+  }
+
+  public func error(_ error: AcquisitionErrorCode, source: SnapshotSource) -> String {
+    if source == .claudeBrowser {
+      return self.text("claude.browser.refresh.error")
+    }
+    if source == .claudeDesktopDirect {
+      switch error {
+      case .authenticationRequired, .temporaryFailure, .sourceUnavailable, .usageRestricted:
+        return self.text("error.claudeDesktopDirect.\(error.rawValue)")
+      default:
+        break
+      }
+    }
+    return self.error(error)
   }
 
   public func codexExecutableSource(_ source: CodexExecutableSource) -> String {

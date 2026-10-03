@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+if [[ "${QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW:-}" == 1 ]]; then
+  echo 'Desktop integration preview cannot be packaged as a distribution app.' >&2
+  exit 2
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output="${1:-$repo_root/dist/QuotaTempo.app}"
 parent="$(dirname "$output")"
@@ -33,6 +38,10 @@ strip -x "$binary_stage/QuotaTempo"
 install_name_tool -add_rpath @executable_path/../Frameworks "$binary_stage/QuotaTempo"
 codesign --force --sign - --timestamp=none "$binary_stage/QuotaTempo"
 install -m 755 "$binary_stage/QuotaTempo" "$stage/Contents/MacOS/QuotaTempo"
+install -m 755 "$build_dir/QuotaTempoBrowserHost" "$binary_stage/QuotaTempoBrowserHost"
+strip -x "$binary_stage/QuotaTempoBrowserHost"
+codesign --force --sign - --timestamp=none "$binary_stage/QuotaTempoBrowserHost"
+install -m 755 "$binary_stage/QuotaTempoBrowserHost" "$stage/Contents/MacOS/QuotaTempoBrowserHost"
 ditto "$build_dir/Sparkle.framework" "$stage/Contents/Frameworks/Sparkle.framework"
 mkdir -p "$stage/Contents/Resources/QuotaTempoCoreResources"
 cp -R "$repo_root/Sources/QuotaTempoCore/Resources/en.lproj" \

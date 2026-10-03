@@ -77,11 +77,53 @@ QuotaTempo does not add itself to Login Items automatically. Move it to `/Applic
 
 ## Choose providers
 
+Desktop connection is an exception to local observation retention: turning
+Claude off revokes its consent and clears its memory-only values.
+
 Under **Providers**, enable Codex, Claude, or both. At least one remains enabled. A disabled provider is removed from the popover and menu-bar label and is not refreshed. Its last normalized observation is retained locally, so re-enabling it can refresh from the last safe state. QuotaTempo never disables a provider merely because a refresh failed.
 
 On first launch, QuotaTempo selects providers for which it can find an existing valid observation. If neither provider can be detected, both remain visible until you choose. This selection changes only QuotaTempo; it does not sign out of or reconfigure a provider.
 
+## Claude Desktop connection (Beta)
+
+This connection is available in version 0.1.10. Older releases do not display
+these controls. It does not require a Claude Code login or an
+open Chrome tab, but Claude Desktop must already be installed and signed in.
+
+1. Below the usage summary, change Claude's source from **Automatic** to
+   **Claude Desktop (Beta)**. Read the access notice and choose **Connect Desktop**.
+2. Read the inline notice and choose **Agree and connect**. The notice closes
+   immediately and a progress indicator appears while the connection is checked.
+   If the app reports missing macOS permission, choose
+   **Allow macOS access**. In the system dialog choose **Always Allow**, not
+   one-time **Allow**. Enter any system password only in that dialog.
+3. Once access is ready, follow **Next check (at or after)**. Values appear after
+   a successful scheduled check, not merely after consent. A restart may initially show no values:
+   Desktop observations are kept in memory only. A successful update displays
+   **Claude Desktop connection**, its actual capture time, weekly balance and reset.
+
+This grants QuotaTempo ongoing access to Claude Desktop's protection key, used
+locally to read its existing authentication for usage retrieval. QuotaTempo does
+not save the credentials or read conversations. The connection uses unofficial
+interfaces and can become unavailable if they change. Review [Privacy](../PRIVACY.md)
+before enabling it.
+
+Desktop is an exclusive source: failures do not silently switch to another
+account in the CLI or browser. **Disconnect**, turning Claude off, or switching
+back to Automatic revokes consent and clears the Desktop values. Turning Claude
+on again does not reconnect without consent. These actions do not remove the
+macOS permission; use the [permission-removal steps](../PRIVACY.md#desktop-connection-removal).
+
+Successful polling normally waits five minutes. Refresh does not bypass a
+provider wait. **Recheck connection** is a bounded recovery action, not a forced
+refresh; **Repair scheduling state** disconnects and preserves known provider
+deadlines. If storage cannot be opened, resolve the storage issue and connect
+again. Do not delete scheduling files to bypass a wait.
+
 ## Refresh and freshness
+
+The following 15-minute schedule applies to Codex and Claude Automatic. Desktop
+connection uses the separate five-minute schedule described above.
 
 QuotaTempo performs a bounded refresh for enabled providers when it starts, every 15 minutes while it remains running, and after the Mac wakes. Menu-open refreshes respect each provider's last-attempt guard (five minutes for Codex and 14 minutes for Claude; the shorter Claude guard prevents timer jitter from skipping a scheduled cycle). Automatic and menu-open refreshes never start a second request while the same provider is already in flight. Choose **Refresh** to request every enabled provider immediately. While an enabled provider is being checked, the control reads **Refreshing…** and is disabled.
 
@@ -90,7 +132,7 @@ QuotaTempo performs a bounded refresh for enabled providers when it starts, ever
 - `P≈` means the current plan is estimated by advancing the last confirmed weekly reset exactly once. The detail view identifies this basis. A newly observed reset replaces the estimate automatically, and QuotaTempo never uses an estimate to create another estimate.
 - **Reset time unavailable** means the weekly balance is valid, but the provider did not supply the reset timestamp needed to calculate the plan. QuotaTempo keeps `W` visible and shows `P` and the difference as `—`.
 - **Unavailable** means required data was missing, invalid, expired, or changed upstream.
-- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. QuotaTempo hides percentages rather than inferring availability from them.
+- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. A validated quota-exhaustion response keeps its reported balance (including `0%`) and reset schedule visible, but does not show usable capacity or remove the restriction. Unknown and spend-control restrictions still hide percentages.
 
 A failed refresh does not make an older observation look newer. If a bounded reset lookup fails while a valid local balance remains available, QuotaTempo keeps the balance and exposes the failed attempt separately. Acquisition status and observation time remain separate.
 
@@ -137,3 +179,9 @@ Normalized observations remain in the QuotaTempo Application Support directory u
 5. To erase QuotaTempo's display mode, provider selection, and onboarding preferences, remove the `co.ishikawa.QuotaTempo` preference domain as described in [Privacy](../PRIVACY.md).
 
 Removing QuotaTempo does not alter Codex or Claude authentication. Use the in-app **Legal** menu to open the bundled license, privacy policy, update policy, third-party notices, and support route. See [Security](../SECURITY.md) for the complete technical boundary.
+
+If you enabled Desktop connection or tested a separate preview, follow the
+[permission-removal guide](../PRIVACY.md#desktop-connection-removal) as well. Its
+macOS Keychain grant is separate from QuotaTempo's local data and is not removed
+by deleting the app. Desktop quota observations are not saved; keep scheduling
+records if you intend to reinstall so provider wait deadlines are preserved.

@@ -82,6 +82,7 @@ fi
 ditto -x -k "$release_dir/$archive" "$tmp"
 app="$tmp/QuotaTempo.app"
 test -d "$app"
+bash "$(dirname "$0")/check-desktop-artifact-isolation.sh" "$app"
 while IFS= read -r link; do
   case "$link" in
     "$app/Contents/Frameworks/Sparkle.framework/"*) ;;
@@ -98,6 +99,7 @@ while IFS= read -r link; do
 done < <(find "$app" -type l -print)
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempo"
+codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempoBrowserHost"
 codesign --verify --deep --strict --verbose=2 "$app/Contents/Frameworks/Sparkle.framework"
 test "$product" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app/Contents/Info.plist")"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
@@ -106,6 +108,7 @@ test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Content
 test "$(/usr/libexec/PlistBuddy -c 'Print :QTReleaseChannel' "$app/Contents/Info.plist")" = "$channel"
 test "$(/usr/libexec/PlistBuddy -c 'Print :QTSourceCommit' "$app/Contents/Info.plist")" = "$commit"
 test "$(lipo -archs "$app/Contents/MacOS/QuotaTempo")" = "$expected_architectures"
+test "$(lipo -archs "$app/Contents/MacOS/QuotaTempoBrowserHost")" = "$expected_architectures"
 test -f "$app/Contents/Resources/QuotaTempo.icns"
 test -f "$app/Contents/Resources/LICENSE"
 test -f "$app/Contents/Resources/PRIVACY.md"
@@ -132,6 +135,7 @@ test ! -e "$app/Contents/Resources/QuotaTempoCoreResources/Fixtures"
 test ! -e "$app/Contents/Helpers"
 test "$(stat -f '%Lp' "$app/Contents/Info.plist")" = 644
 test "$(stat -f '%Lp' "$app/Contents/MacOS/QuotaTempo")" = 755
+test "$(stat -f '%Lp' "$app/Contents/MacOS/QuotaTempoBrowserHost")" = 755
 if find "$app" -type d ! -perm 755 -print -quit | grep -q .; then
   echo "App contains a directory without mode 755." >&2
   exit 2
@@ -143,13 +147,16 @@ fi
 
 signature_details="$(codesign -dv --verbose=4 "$app" 2>&1)"
 nested_signature_details="$(codesign -dv --verbose=4 "$app/Contents/MacOS/QuotaTempo" 2>&1)"
+browser_signature_details="$(codesign -dv --verbose=4 "$app/Contents/MacOS/QuotaTempoBrowserHost" 2>&1)"
 if [[ "$signing" == "ad-hoc" ]]; then
   printf '%s\n' "$signature_details" | grep -q '^Signature=adhoc$'
   printf '%s\n' "$nested_signature_details" | grep -q '^Signature=adhoc$'
+  printf '%s\n' "$browser_signature_details" | grep -q '^Signature=adhoc$'
   test "$notarized" = "false"
 else
   printf '%s\n' "$signature_details" | grep -q '^Authority=Developer ID Application:'
   printf '%s\n' "$nested_signature_details" | grep -q '^Authority=Developer ID Application:'
+  printf '%s\n' "$browser_signature_details" | grep -q '^Authority=Developer ID Application:'
   if [[ "$notarized" == "true" ]]; then
     xcrun stapler validate "$app"
     spctl --assess --type execute --verbose=2 "$app"
@@ -178,6 +185,8 @@ outer_code_identifier="$(signature_value Identifier "$signature_details")"
 nested_code_identifier="$(signature_value Identifier "$nested_signature_details")"
 outer_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdentifier "$signature_details")")"
 nested_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdentifier "$nested_signature_details")")"
+browser_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdentifier "$browser_signature_details")")"
+test "$browser_team_identifier" = "$outer_team_identifier"
 
 "$(dirname "$0")/check-release-identity.sh" \
   "$signing" \
@@ -189,11 +198,12 @@ nested_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdent
   "$nested_code_identifier" \
   "$nested_team_identifier"
 
-binary="$app/Contents/MacOS/QuotaTempo"
-if LC_ALL=C grep -a -m 1 -E '/Users/[^/]+/|/home/[^/]+/' "$binary" >/dev/null; then
-  echo "App binary contains a developer home path: $binary" >&2
-  exit 2
-fi
+for binary in "$app/Contents/MacOS/QuotaTempo" "$app/Contents/MacOS/QuotaTempoBrowserHost"; do
+  if LC_ALL=C grep -a -m 1 -E '/Users/[^/]+/|/home/[^/]+/' "$binary" >/dev/null; then
+    echo "App binary contains a developer home path: $binary" >&2
+    exit 2
+  fi
+done
 
 if [[ "$skip_launch" == false ]]; then
   open -n "$app" --args --provider-disabled --exercise-provider-triggers \

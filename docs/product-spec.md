@@ -62,11 +62,25 @@ Required boundaries:
 
 This adapter is implemented in the public-beta app.
 
+## Experimental browser acquisition (unreleased)
+
+This optional route participates only while **Automatic** is selected. A separate
+browser extension can keep polling until disconnected, but Desktop mode never
+imports its observations.
+
+An explicitly connected Chrome extension may supply `claudeBrowser` observations without Claude Code login. This is a separate web-sign-in route, not Desktop-only acquisition. The browser owns the complete observation while connected; its exact reset never augments another source's balance. The app identifies this as a browser account, which may differ from Desktop. Connection, ownership validation, failure handling, and release gates are defined in `provider-freshness-contract.md`, `PRIVACY.md`, and `../BrowserExtension/README.md`.
+
 ## Claude acquisition
+
+Version 0.1.10 offers **Automatic** (default) and **Claude Desktop (Beta)**.
+The following local/CLI contract applies only to Automatic. Desktop is separately
+opt-in, uses existing Desktop authentication in memory, and follows the access
+and scheduling contract in `PRIVACY.md`. It does not require a CLI login or a
+Chrome tab. No source silently replaces another when the selected source fails.
 
 QuotaTempo uses bounded Claude Desktop history and Claude Code cache files first. It reads Desktop's current-account identifier solely to verify that a newer history observation and an exact cached reset belong to the same account and quota window. Its noninteractive `get_usage` experiment returned no quota windows, so when those local observations lack current reset times it can launch the installed, signed-in Claude Code CLI in a bounded PTY and read `/usage` without CodexBar or manual entry. A current complete local observation avoids an unnecessary probe; automatic refresh is scheduled every 15 minutes with a 14-minute jitter guard, and explicit Refresh always probes. After a probe, QuotaTempo parses only the rendered current-session and all-model weekly rows, accepting a reset only when its timezone and time-window placement are unambiguous. It does not combine Desktop utilization with an unverified cache account in this path. The probe does not set Claude Code's nonessential-traffic suppression because that setting blocks the usage request itself.
 
-Required boundaries:
+Required Automatic boundaries:
 
 - Do not read credentials, tokens, cookies, Keychain values, browser state, prompts, transcripts, or session contents.
 - Reject symlink-selected and oversized local sources.
@@ -78,6 +92,28 @@ Required boundaries:
 - Persist only normalized percentages, reset timestamps, the reset-estimate marker, source, freshness, acquisition state, and optional SHA-256 Claude ownership fingerprints. Never persist raw account or organization UUIDs.
 
 The previously tested Claude `statusLine` bridge remains rollback-only code and is not activated by current onboarding. Claude model-specific buckets and Extra Usage remain out of scope because no stable third-party contract has been established.
+
+Unreleased improvements: require the cached observation's own account stamp before
+joining its reset to Desktop history. The minute clock can import local file
+changes without a CLI or provider request, retaining their source time and the
+separate live-attempt guard. See the local-observation contract for legacy cache
+and failure handling. This does not add a Desktop-only reset acquisition path.
+
+### Desktop connection
+
+Selecting Desktop cancels the Automatic generation before constructing its
+connection. Only explicit consent permits Desktop initialization; stored preview
+consent cannot authorize the normal application. Switching back to Automatic,
+disconnecting, or turning Claude off revokes consent and clears the Desktop
+observation. Late results from either source cannot cross that boundary.
+
+Desktop values remain in memory and are never combined with local or browser
+values. A restart may be empty until the shared scheduling deadline permits a
+new request. The app validates the selected account and organization, accepts
+only provider-reported reset times and never projects a Desktop reset. Successful
+polls normally wait five minutes, with the bounded context/reset exceptions and
+provider-wait preservation defined in Privacy. A source selection does not alter
+the independent updater or login-item setting.
 
 ## Calculation contract
 

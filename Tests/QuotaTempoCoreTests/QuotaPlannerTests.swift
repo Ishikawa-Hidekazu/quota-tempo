@@ -10,6 +10,27 @@ struct QuotaPlannerTests {
   private let now = Date(timeIntervalSince1970: 1_789_300_800)
   private let week: TimeInterval = 604_800
 
+  @Test("Restricted quota metadata never implies immediately usable capacity")
+  func restrictedQuotaPreservesMetadataWithoutAvailability() {
+    for remaining in [0.0, 80.0] {
+      let reset = self.now.addingTimeInterval(self.week / 2)
+      let snapshot = ProviderSnapshot(
+        provider: .codex, source: .codexAppServer, capturedAt: self.now,
+        weekly: QuotaWindow(
+          remainingPercent: remaining, durationSeconds: self.week, resetAt: reset),
+        fiveHour: nil, lastAttemptAt: self.now,
+        sourceState: .accessRestricted, errorCode: .usageRestricted)
+      let plan = QuotaPlanner.evaluate(snapshot, now: self.now)
+      #expect(plan.weeklyRemaining == remaining)
+      #expect(plan.weeklyResetAt == reset)
+      #expect(plan.targetNow == 50)
+      #expect(plan.vsTarget == remaining - 50)
+      #expect(plan.availableUntilCheckpoint == nil)
+      #expect(MenuCopy(languageCode: "en").status(for: plan) == "Provider access restricted")
+      #expect(MenuCopy(languageCode: "ja").status(for: plan) == "provider側で利用制限中")
+    }
+  }
+
   @Test("Detail dates include a localized weekday")
   func detailDatesIncludeLocalizedWeekday() {
     let date = Date(timeIntervalSince1970: 1_789_001_280)
@@ -219,6 +240,44 @@ struct QuotaPlannerTests {
         self.hasClearOuterPadding(representation),
         "\(testCase.fixture)-\(testCase.languageCode) rendered into the outer padding"
       )
+    }
+  }
+
+  @Test("Product content leaves the scroll indicator gutter clear")
+  @MainActor
+  func productContentReservesScrollIndicatorGutter() throws {
+    let scenario = try FixtureLoader.load("baseline")
+    for language in ["en", "ja"] {
+      let view = QuotaMenuView(
+        scenario: scenario,
+        languageCode: language,
+        productVersion: "0.1.10",
+        privacyURL: URL(string: "https://example.invalid/privacy"),
+        onRefresh: {},
+        onCheckForUpdates: {},
+        onCopyDiagnostics: { true },
+        onOpenWindow: {},
+        onQuit: {}
+      )
+      let host = NSHostingView(rootView: view.environment(\.colorScheme, .light))
+      host.frame = NSRect(origin: .zero, size: host.fittingSize)
+      host.layoutSubtreeIfNeeded()
+      let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+      host.cacheDisplay(in: host.bounds, to: bitmap)
+      let hasContent = stride(from: 20, to: bitmap.pixelsWide - 20, by: 4).contains { x in
+        stride(from: 20, to: bitmap.pixelsHigh - 20, by: 4).contains { y in
+          self.hasVisibleInk(bitmap.colorAt(x: x, y: y))
+        }
+      }
+      #expect(hasContent, "Native menu rendering must not be blank")
+      let scale = CGFloat(bitmap.pixelsWide) / QuotaMenuLayout.width
+      let start = Int(
+        (QuotaMenuLayout.width - 18 - QuotaMenuLayout.scrollIndicatorGutter + 2) * scale)
+      let end = Int((QuotaMenuLayout.width - 18 - 2) * scale)
+      let ink = (start..<end).contains { x in
+        (0..<bitmap.pixelsHigh).contains { y in self.hasVisibleInk(bitmap.colorAt(x: x, y: y)) }
+      }
+      #expect(!ink, "\(language) content overlaps the scroll indicator gutter")
     }
   }
 

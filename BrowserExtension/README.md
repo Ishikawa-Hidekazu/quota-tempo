@@ -1,0 +1,62 @@
+# QuotaTempo Claude browser bridge prototype
+
+This is an opt-in MV3 Chrome extension prototype. It is disabled until **Connect** is clicked in the popup on an existing `https://claude.ai/` tab. It never opens or focuses a tab. The selected account and organization stay pinned; changing either requires an explicit **Reconnect**. **Disconnect** stops polling and sends a `disconnected` envelope. After Chrome restarts, an enabled connection preserves its pin, connection generation, and sequence. It checks an existing Claude tab before resuming and waits for one to appear if none is available. It does not create a fresh connection generation on startup.
+
+The extension uses an isolated content script to fetch only `/api/account` (before and after), `/api/organizations`, and the sole organization's `/api/organizations/{uuid}/usage`, with the page's existing sign-in context. It requests no cookies permission, reads no cookie/token/credential values, and does not scrape DOM, prompts, or transcripts. Fetches are same-origin, `credentials: include`, `cache: no-store`, `redirect: error`, with a 15-second total timeout and bounded response bodies. These Claude endpoints and response shapes are not a documented third-party API. Live acquisition has succeeded with one account; broad compatibility, account-switch behavior, and release acceptance remain unverified.
+
+Only SHA-256 fingerprints and normalized usage windows cross from the content script to the worker. The worker stores only connection metadata: one stable random `profileID`, a random `connectionID` for each explicit Connect, a persisted sequence, selected tab ID, pinned fingerprints, status, retry timing, and an in-flight request ID. It stores no raw response or usage window. Pending revocation (`accountChanged`, `signedOut`, or `organizationSelectionRequired`) and disconnect retries store only value-free control envelopes. The native host must independently validate every envelope, pin profile and connection generation, reject old-generation messages after disconnect, and never merge an observation into another profile or account. The native host is bundled with the QuotaTempo app; this directory contains only the extension.
+
+The expected host name is `co.ishikawa.quotatempo`. Each observation uses one `chrome.runtime.sendNativeMessage` call. Every schema-1 envelope includes `profileID`, `connectionID`, a safe nonnegative integer `sequence`, an ISO UTC `observedAt`, status, three nullable fingerprints, and nullable weekly/five-hour windows. Explicit Connect sends value-free `connected` at sequence 0 and waits for `{ "ok": true }` before requesting usage. Each later new message increments and persists the sequence before sending. A missing or invalid ACK is shown as a host error; successful usage is never replayed. Lost revocation/disconnect ACKs can be retried with the same value-free envelope, sequence, and timestamp; the native host ACKs exact duplicates idempotently. Revocation retries are bounded to four attempts with 15/30/60/120-second delays, then stop for manual resolution. Sign-out delivery resumes ordinary backoff after acknowledgement; ambiguous organizations remain blocked. Only an explicit retry of an unacknowledged `connected` handshake renews its timestamp, keeping the profile, generation, and sequence 0 unchanged. If the native host already accepted it, its idempotent ACK does not rewrite capture or message time. Explicit Reconnect awaits `disconnected` before creating a new generation. Reinstallation changes `profileID`; a disabled native record can transfer to the new profile through a new `connected` generation. Native replay tombstones are bounded to 128 reconnect cycles; use the installer removal recovery path if the bound record cannot be reused.
+
+## Setup and recovery
+
+The development app's Claude details now include **Disconnect browser**, with
+confirmation, for recovery when the extension has been removed or is unavailable.
+This retires the local connection generation and clears its quota/ownership
+metadata. Native-host writes and app revocation share one bounded lock, and late
+old-generation observations cannot restore the values. An explicit extension
+Disconnect acknowledges the existing tombstone without rewriting it, allowing a
+new Connect afterward. A newly connected generation cannot predate the last
+revocation.
+
+If the extension is still running, its next rejected observation disables that
+generation and stops the alarm while preserving its provider polling deadline.
+An in-flight or next scheduled web observation can run before that rejection:
+the native app cannot send an unsolicited notification to Chrome. Disconnect or
+disable the extension directly to stop browser-side polling immediately. This
+does not sign out of Claude or erase a service wait. App-side disconnect reads
+local fallback metadata only; browser resets/ownership never cross into it.
+
+Use the final Chrome extension ID, which must be the ID allowed by the native host manifest. These commands do not load or manipulate Chrome; installation and removal are dry runs unless `--apply` is supplied:
+
+```sh
+node scripts/install-browser-bridge.mjs --extension-id ID --app /absolute/path/QuotaTempo.app
+node scripts/install-browser-bridge.mjs --extension-id ID --app /absolute/path/QuotaTempo.app --apply
+```
+
+For corruption or reinstall recovery, inspect the removal dry run first, then explicitly apply it:
+
+```sh
+node scripts/install-browser-bridge.mjs --remove
+node scripts/install-browser-bridge.mjs --remove --apply
+```
+
+Removal deletes only the recognized bridge host manifest, configuration, and normalized browser observation record. It does not repair Chrome or install the extension. Reconnect after reinstall requires a new explicit Connect.
+
+Load `BrowserExtension/` as an unpacked extension in Chrome manually, then use the popup's **Connect** on an existing Claude tab. The setup commands above only register the native host; they do not install the Chrome extension. No Chrome installation or browser interaction is part of this prototype handoff.
+
+`ok` requires one unambiguous all-model weekly window with a finite 0-100 percentage and exact reset in `(now, now + 8 days]`. Input dates may use `Z` or a numeric timezone offset and up to nine fractional digits; output is normalized to UTC milliseconds without estimating a new reset. The optional five-hour window may be absent or null; a valid but elapsed window is omitted without discarding the valid weekly window. A future five-hour reset must be within six hours. Equivalent legacy and `limits` windows are accepted only when their normalized percentages and reset timestamps match, even before an elapsed optional window is omitted. Usage keys are `utilization`, `used_percentage`, or `percent`, exactly one per window. Model-scoped windows are ignored. Multiple organizations, conflicting windows, duplicate `limits` buckets, invalid dates, and malformed responses fail closed. Content replies are accepted only for the matching request ID before its 60-second expiry. The content script timestamps fetch completion; the worker preserves that timestamp rather than assigning delivery time. Normal polling is five minutes; failed or missing replies back off to at most 60 minutes, with HTTP 429 starting at 15 minutes. Disabling clears the alarm.
+
+Prototype 0.1.4 displays both popup and worker versions. After updating unpacked files, reload QuotaTempo once in `chrome://extensions` and reopen its popup on a Claude tab. Both versions must show `0.1.4`. An existing connected account keeps its connection; routine reload does not require **Reconnect**. Worker initialization restores a missing polling alarm without making an immediate provider request or shortening failure backoff. Automatic revocation attempts reserve their retry budget and next deadline before sending; an interrupted worker cannot reset that budget. Revocation completion persists the terminal/recovery state together with clearing the pending control, so a lost worker cannot silently resume a blocked account. The popup reports a bounded acquisition stage on failure; `responseTimeout` means the selected tab did not deliver a timely content response. Updating files on disk alone does not prove that Chrome has replaced its running worker.
+
+In 0.1.4, before/after-verified ownership fingerprints are checked against the pin even when usage validation fails. A mismatched owner revokes the previous quota; an unavailable result never establishes a new pin. Unknown ownership remains unavailable, not evidence that the current account matches. These changes are synthetic-tested candidates; the live results below belong to 0.1.3, not 0.1.4.
+
+Run synthetic tests without loading the extension or accessing a real account:
+
+```sh
+node --test BrowserExtension/tests/*.test.cjs
+```
+
+At the September 30 live follow-up, a no-click automatic observation arrived about five minutes after the previous one and was imported by the local preview app about one minute later, while the official CLI reported signed out. The next scheduled acquisition failed around an elapsed five-hour reset; another scheduled acquisition recovered without manual Refresh and included a new provider five-hour timestamp. This is evidence of automatic polling and recovery, not uninterrupted availability. A separate synthetic regression confirmed that an elapsed optional five-hour window invalidated otherwise valid weekly data; 0.1.3 fixes that condition without inventing either reset. Raw live responses were not inspected, so the exact cause of the live failure is not established. The public installed bundle remains unchanged; the running preview is not a release. The account parser also accepts a validated email-only identity from `/api/account`, hashes it locally, and never forwards the address. See the [QA record](../docs/browser-bridge-qa-2026-09-29.md) for current tests and the remaining release gates.
+
+After the owner confirmed the 0.1.3 reload, a separate bounded live check passed two automatic updates at 302- and 301-second intervals, with preview-app imports about 17 and 16 seconds later. The owner also confirmed numeric W/P/difference in the actual menu bar. CLI authentication remained signed out. This establishes that local browser-to-app path in the observed interval; neither a five-hour nor weekly reset occurred during that successful run. Reset-boundary, restart, second-Mac, and release acceptance remain open.

@@ -5,6 +5,10 @@ import QuotaTempoCore
 import Sparkle
 import SwiftUI
 
+#if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+  import QuotaTempoDesktopCandidate
+#endif
+
 @MainActor
 final class QuotaTempoUpdater {
   private let controller: SPUStandardUpdaterController?
@@ -30,6 +34,13 @@ final class QuotaTempoUpdater {
 
 @MainActor
 final class LiveQuotaModel: ObservableObject {
+  private struct ClaudeRefreshRequest {
+    let trigger: ProviderAcquisitionTrigger
+    let force: Bool
+    let localOnly: Bool
+    let connectionRevision: Int
+  }
+
   private static let providerQueue = DispatchQueue(
     label: "com.ishikawa.quotatempo.provider-refresh",
     qos: .utility,
@@ -38,19 +49,30 @@ final class LiveQuotaModel: ObservableObject {
   @Published private(set) var scenario: FixtureScenario
   @Published private(set) var refreshInFlight = false
   @Published private(set) var enabledProviders: Set<ProviderID>
+  @Published private(set) var claudeSource: ClaudeSource
+  @Published private(set) var browserDisconnectInFlight = false
+  @Published private(set) var browserDisconnectFailed = false
+  @Published private(set) var browserDisconnectCleanupFailed = false
 
   private let store: NormalizedSnapshotStore
   private let acquisitionGate: ProviderAcquisitionGate
   private let preferences: ProviderSelectionPreferences?
   private let claudeAdapter: ClaudeAutomaticAdapter
+  private let workerQueue: DispatchQueue
+  private let now: @Sendable () -> Date
+  private let localClaudeAcquisitionEnabled: Bool
+  private let sourcePreferences: ClaudeSourcePreferences?
   private var selection: ProviderSelection
   private var initialDetectionPending: Bool
   private var initialDetectionTracker = InitialProviderDetectionTracker()
   private var initialDetectionSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var codexRefreshInFlight = false
-  private var claudeRefreshInFlight = false
+  private var activeClaudeRefresh: ClaudeRefreshRequest?
+  private var pendingClaudeRefresh: ClaudeRefreshRequest?
   private var transientSnapshots: [ProviderID: ProviderSnapshot] = [:]
   private var scenarioRevision = 0
+  private var claudeConnectionRevision = 0
+  private var claudeRefreshCancellation = ClaudeRefreshCancellation()
 
   init(
     store: NormalizedSnapshotStore,
@@ -60,28 +82,68 @@ final class LiveQuotaModel: ObservableObject {
       cliExecutable: nil,
       resolveCLIOnRefresh: true,
       ptyProbeEnabled: true
-    )
+    ),
+    now: @escaping @Sendable () -> Date = { Date() },
+    providerQueue: DispatchQueue? = nil,
+    localClaudeAcquisitionEnabled: Bool = true,
+    claudeSource: ClaudeSource = .automatic,
+    sourcePreferences: ClaudeSourcePreferences? = nil
   ) {
     self.store = store
     self.acquisitionGate = ProviderAcquisitionGate(enabled: acquisitionEnabled)
     self.preferences = preferences
     self.claudeAdapter = claudeAdapter
-    let storedScenario = self.store.scenario(now: Date())
+    self.workerQueue = providerQueue ?? Self.providerQueue
+    self.now = now
+    self.localClaudeAcquisitionEnabled = localClaudeAcquisitionEnabled
+    self.sourcePreferences = sourcePreferences
+    let source = sourcePreferences?.load() ?? claudeSource
+    self.claudeSource = source
+    let allowsLocalClaude = localClaudeAcquisitionEnabled && source == .automatic
+    let storedScenario = Self.localPresentation(
+      self.store.scenario(now: now()), store: store, allowsClaude: allowsLocalClaude)
     if let configured = preferences?.load() {
       self.selection = configured
       self.initialDetectionPending = false
-    } else if let detected = ProviderSelection.detected(in: storedScenario.snapshots) {
+    } else if allowsLocalClaude,
+      let detected = ProviderSelection.detected(in: storedScenario.snapshots)
+    {
       self.selection = detected
       self.initialDetectionPending = false
       preferences?.save(detected)
     } else {
       self.selection = .all
-      self.initialDetectionPending = preferences != nil
+      self.initialDetectionPending = preferences != nil && allowsLocalClaude
     }
     self.enabledProviders = self.selection.enabled
     self.scenario = self.selection.filtering(storedScenario)
     self.refreshCodex(trigger: .launch, force: false)
     self.refreshClaude(trigger: .launch, force: false)
+  }
+
+  var allowsLocalClaude: Bool {
+    localClaudeAcquisitionEnabled && claudeSource == .automatic
+  }
+
+  var claudeActionRevision: Int { claudeConnectionRevision }
+
+  // Desktop revocation is performed by the lifecycle before switching back.
+  // Local generations are fenced synchronously before a Desktop connect can run.
+  func setClaudeSource(_ source: ClaudeSource) {
+    guard source != claudeSource else { return }
+    invalidateClaudeRefresh()
+    scenarioRevision += 1
+    initialDetectionPending = false
+    initialDetectionSnapshots = [:]
+    transientSnapshots.removeValue(forKey: .claude)
+    claudeSource = source
+    sourcePreferences?.save(source)
+    scenario = FixtureScenario(
+      id: scenario.id, now: now(), snapshots: scenario.snapshots.filter { $0.provider != .claude })
+    if allowsLocalClaude {
+      reload()
+      refreshClaude(trigger: .explicitRefresh, force: true)
+    }
   }
 
   func menuOpened() {
@@ -91,7 +153,8 @@ final class LiveQuotaModel: ObservableObject {
   }
 
   func clockAdvanced() {
-    let now = Date()
+    self.refreshClaude(trigger: .scheduledRefresh, force: false, localOnly: true)
+    let now = self.now()
     self.scenario = FixtureScenario(
       id: self.scenario.id,
       now: now,
@@ -102,6 +165,8 @@ final class LiveQuotaModel: ObservableObject {
     let store = self.store
     let transientSnapshots = self.transientSnapshots
     let selection = self.selection
+    let allowsClaude = self.allowsLocalClaude
+    let cancellation = self.claudeRefreshCancellation
 
     Task {
       let loaded = await Task.detached(priority: .utility) {
@@ -111,7 +176,9 @@ final class LiveQuotaModel: ObservableObject {
           to: stored,
           now: now
         )
-        return selection.filtering(complete)
+        return selection.filtering(
+          Self.localPresentation(
+            complete, store: store, allowsClaude: allowsClaude && !cancellation.isCancelled))
       }.value
       guard self.scenarioRevision == revision else { return }
       self.scenario = loaded
@@ -135,9 +202,51 @@ final class LiveQuotaModel: ObservableObject {
     self.refreshClaude(trigger: .explicitRefresh, force: true)
   }
 
+  func disconnectClaudeBrowser() async {
+    guard allowsLocalClaude else { return }
+    guard !browserDisconnectInFlight else { return }
+    browserDisconnectInFlight = true
+    browserDisconnectFailed = false
+    browserDisconnectCleanupFailed = false
+    invalidateClaudeRefresh()
+    let revision = claudeConnectionRevision
+    defer { browserDisconnectInFlight = false }
+    let browser = ClaudeBrowserStore(
+      directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
+    let instant = now()
+    let succeeded = await Task.detached(priority: .utility) {
+      do {
+        try browser.disconnect(now: instant)
+        return true
+      } catch { return false }
+    }.value
+    guard claudeConnectionRevision == revision, allowsLocalClaude else { return }
+    guard succeeded else {
+      browserDisconnectFailed = true
+      return
+    }
+    // Never carry browser ownership or resets into the local route. Disconnect
+    // is not permission for a new live CLI request or an immediate retry.
+    let cleared = ProviderSnapshot(
+      provider: .claude, source: .claudeDesktopHistory, capturedAt: nil, weekly: nil,
+      sourceState: .neverObserved)
+    scenario = selection.filtering(
+      SnapshotScenarioOverlay.apply([.claude: cleared], to: scenario, now: now()))
+    browserDisconnectCleanupFailed = !persist(cleared)
+    browserDisconnectInFlight = false
+    if activeClaudeRefresh != nil {
+      pendingClaudeRefresh = ClaudeRefreshRequest(
+        trigger: .explicitRefresh, force: false, localOnly: true,
+        connectionRevision: claudeConnectionRevision)
+    } else {
+      refreshClaude(trigger: .explicitRefresh, force: false, localOnly: true)
+    }
+  }
+
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
     let next = self.selection.setting(provider, enabled: enabled)
     guard next != self.selection else { return }
+    if provider == .claude && !enabled { invalidateClaudeRefresh() }
     self.selection = next
     self.enabledProviders = next.enabled
     self.initialDetectionPending = false
@@ -156,10 +265,12 @@ final class LiveQuotaModel: ObservableObject {
   private func reload() {
     self.scenarioRevision += 1
     let revision = self.scenarioRevision
-    let now = Date()
+    let now = self.now()
     let store = self.store
     let transientSnapshots = self.transientSnapshots
     let selection = self.selection
+    let allowsClaude = self.allowsLocalClaude
+    let cancellation = self.claudeRefreshCancellation
 
     Task {
       let loaded = await Task.detached(priority: .utility) {
@@ -169,17 +280,58 @@ final class LiveQuotaModel: ObservableObject {
           to: stored,
           now: now
         )
-        return selection.filtering(complete)
+        return selection.filtering(
+          Self.localPresentation(
+            complete, store: store, allowsClaude: allowsClaude && !cancellation.isCancelled))
       }.value
       guard self.scenarioRevision == revision else { return }
       self.scenario = loaded
     }
   }
 
-  private func persist(_ snapshot: ProviderSnapshot) {
+  nonisolated private static func validatedBrowserPresentation(
+    _ scenario: FixtureScenario, store: NormalizedSnapshotStore
+  ) -> FixtureScenario {
+    guard scenario.snapshots.contains(where: { $0.source == .claudeBrowser }) else {
+      return scenario
+    }
+    let browser = ClaudeBrowserStore(
+      directory: store.directory.appendingPathComponent("BrowserBridge"))
+    var current =
+      browser.selectedSnapshot(now: scenario.now)
+      ?? ProviderSnapshot(
+        provider: .claude, source: .claudeDesktopHistory, capturedAt: nil, weekly: nil,
+        sourceState: .neverObserved)
+    if scenario.snapshots.first(where: { $0.provider == .claude })?.errorCode == .atomicWriteFailed
+    {
+      current = AcquisitionRecords.preservingFailure(
+        previous: current, provider: .claude, source: current.source,
+        attemptedAt: current.lastAttemptAt, state: .attemptFailed, error: .atomicWriteFailed)
+    }
+    return SnapshotScenarioOverlay.apply([.claude: current], to: scenario, now: scenario.now)
+  }
+
+  nonisolated private static func localPresentation(
+    _ scenario: FixtureScenario, store: NormalizedSnapshotStore, allowsClaude: Bool
+  ) -> FixtureScenario {
+    guard allowsClaude else {
+      return FixtureScenario(
+        id: scenario.id, now: scenario.now,
+        snapshots: scenario.snapshots.filter { $0.provider != .claude })
+    }
+    return validatedBrowserPresentation(scenario, store: store)
+  }
+
+  @discardableResult
+  private func persist(_ snapshot: ProviderSnapshot) -> Bool {
+    var saved = false
     do {
       try self.store.save(snapshot)
       self.transientSnapshots.removeValue(forKey: snapshot.provider)
+      saved = true
+      if snapshot.provider == .claude, snapshot.source != .claudeBrowser {
+        browserDisconnectCleanupFailed = false
+      }
     } catch {
       self.transientSnapshots[snapshot.provider] = AcquisitionRecords.preservingFailure(
         previous: snapshot,
@@ -192,6 +344,7 @@ final class LiveQuotaModel: ObservableObject {
     }
     self.finishInitialDetectionAttempt(snapshot.provider, snapshot: snapshot)
     self.reload()
+    return saved
   }
 
   private func finishInitialDetectionAttempt(
@@ -254,29 +407,72 @@ final class LiveQuotaModel: ObservableObject {
     }
   }
 
-  private func refreshClaude(trigger: ProviderAcquisitionTrigger, force: Bool) {
+  private func refreshClaude(
+    trigger: ProviderAcquisitionTrigger, force: Bool, localOnly: Bool = false
+  ) {
+    guard allowsLocalClaude else { return }
+    guard !browserDisconnectInFlight else { return }
     guard self.acquisitionGate.performIfAllowed(trigger, operation: {}) else { return }
     guard self.selection.contains(.claude) || self.initialDetectionPending else { return }
-    guard !self.claudeRefreshInFlight else { return }
+    let request = ClaudeRefreshRequest(
+      trigger: trigger, force: force, localOnly: localOnly,
+      connectionRevision: claudeConnectionRevision)
+    if let active = self.activeClaudeRefresh {
+      // Local reads cannot satisfy a live request. An active live request only
+      // needs a follow-up when force is upgraded or an off/on invalidated it.
+      guard
+        active.connectionRevision != request.connectionRevision
+          || (!localOnly && (active.localOnly || (force && !active.force)))
+      else { return }
+      if self.pendingClaudeRefresh?.force != true {
+        self.pendingClaudeRefresh = request
+      }
+      return
+    }
 
-    self.claudeRefreshInFlight = true
+    self.activeClaudeRefresh = request
     self.updateRefreshInFlight()
     let store = self.store
     let adapter = self.claudeAdapter
+    let clock = self.now
     let transientSnapshots = self.transientSnapshots
+    let connectionRevision = self.claudeConnectionRevision
+    let cancellation = self.claudeRefreshCancellation
+    let queue = self.workerQueue
     Task {
       let snapshot: ProviderSnapshot? = await withCheckedContinuation { continuation in
-        Self.providerQueue.async {
+        queue.async {
+          guard !cancellation.isCancelled else {
+            continuation.resume(returning: nil)
+            return
+          }
           let previous = SnapshotScenarioOverlay.currentSnapshot(
             for: .claude,
             stored: (try? store.load(.claude)) ?? nil,
             overrides: transientSnapshots
           )
-          let now = Date()
+          let now = clock()
+          let browser = ClaudeBrowserStore(
+            directory: store.directory.appendingPathComponent("BrowserBridge", isDirectory: true))
+          guard !cancellation.isCancelled else {
+            continuation.resume(returning: nil)
+            return
+          }
+          if let observed = browser.selectedSnapshot(now: now) {
+            continuation.resume(returning: observed == previous ? nil : observed)
+            return
+          }
+          let localPrevious = previous?.source == .claudeBrowser ? nil : previous
+          if localOnly {
+            continuation.resume(
+              returning: adapter.observeLocalChanges(previous: localPrevious, now: now))
+            return
+          }
           guard
+            !cancellation.isCancelled,
             force
               || ClaudeAutomaticAdapter.shouldRefresh(
-                lastAttemptAt: previous?.lastAttemptAt,
+                lastAttemptAt: localPrevious?.lastAttemptAt,
                 now: now
               )
           else {
@@ -284,22 +480,47 @@ final class LiveQuotaModel: ObservableObject {
             return
           }
           continuation.resume(
-            returning: adapter.refresh(previous: previous, now: now, forceLiveProbe: force))
+            returning: adapter.refresh(
+              previous: localPrevious, now: now, forceLiveProbe: force,
+              isCancelled: { cancellation.isCancelled }))
         }
       }
-      if let snapshot {
-        self.persist(snapshot)
-      } else {
-        self.finishInitialDetectionAttempt(.claude)
+      if self.claudeConnectionRevision == connectionRevision {
+        if let snapshot {
+          self.persist(snapshot)
+        } else {
+          self.finishInitialDetectionAttempt(.claude)
+        }
       }
-      self.claudeRefreshInFlight = false
+      self.activeClaudeRefresh = nil
+      let pending = self.pendingClaudeRefresh
+      self.pendingClaudeRefresh = nil
+      if let pending {
+        // Re-enter the gate and current selection, consuming the request once.
+        self.refreshClaude(
+          trigger: pending.trigger, force: pending.force, localOnly: pending.localOnly)
+      }
       self.updateRefreshInFlight()
     }
   }
 
   private func updateRefreshInFlight() {
-    self.refreshInFlight = self.codexRefreshInFlight || self.claudeRefreshInFlight
+    self.refreshInFlight = self.codexRefreshInFlight || self.activeClaudeRefresh != nil
   }
+
+  private func invalidateClaudeRefresh() {
+    claudeConnectionRevision += 1
+    claudeRefreshCancellation.cancel()
+    claudeRefreshCancellation = ClaudeRefreshCancellation()
+    pendingClaudeRefresh = nil
+  }
+}
+
+private final class ClaudeRefreshCancellation: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+  var isCancelled: Bool { lock.withLock { cancelled } }
+  func cancel() { lock.withLock { cancelled = true } }
 }
 
 enum LaunchPresentationPolicy {
@@ -317,6 +538,15 @@ enum LaunchPresentationPolicy {
 
 enum QuotaTempoAppDefaults {
   static let menuBarDisplayMode = MenuBarDisplayMode.iconOnly
+  static var defaults: UserDefaults {
+    #if DESKTOP_INTEGRATION_PREVIEW
+      // Retain the original preview preference suite so existing versioned
+      // consent is not silently discarded by a cosmetic bundle-ID alignment.
+      return UserDefaults(suiteName: "com.ishikawa.QuotaTempo.IntegrationPreview")!
+    #else
+      return .standard
+    #endif
+  }
 }
 
 @MainActor
@@ -361,7 +591,8 @@ final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
   private var onboardingProvider: (() -> Bool)?
   private var windowController: NSWindowController?
   private var presentationPending = false
-  private let providerDisabled = CommandLine.arguments.contains("--provider-disabled")
+  private let providerDisabled = QuotaTempoRuntimePolicy.providersDisabled(
+    arguments: CommandLine.arguments)
   private let presentationRequestedForQA = CommandLine.arguments.contains(
     "--present-application-window"
   )
@@ -370,7 +601,8 @@ final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
     guard
       self.presentationRequestedForQA
         || LaunchPresentationPolicy.presentsInitialWindow(
-          hasCompletedOnboarding: UserDefaults.standard.bool(forKey: "hasCompletedOnboarding"),
+          hasCompletedOnboarding: QuotaTempoAppDefaults.defaults.bool(
+            forKey: "hasCompletedOnboarding"),
           providerDisabled: self.providerDisabled
         )
     else { return }
@@ -493,18 +725,74 @@ final class QuotaTempoSettingsModel: ObservableObject {
 }
 
 @MainActor
-private struct QuotaTempoApplicationContent: View {
+struct QuotaTempoApplicationContent: View {
   @ObservedObject var model: LiveQuotaModel
   @ObservedObject var settings: QuotaTempoSettingsModel
   @ObservedObject var presentation: QuotaTempoPresentationModel
+  #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+    @ObservedObject var desktopConnection: DesktopConnectionController
+  #endif
   let appDelegate: QuotaTempoApplicationDelegate
   let productVersion: String
   let updater: QuotaTempoUpdater
   let maximumViewportHeight: CGFloat?
+  let providerDisabled: Bool
+  let onRefresh: () -> Void
+  let onQuit: () -> Void
+  var renderNow: () -> Date = Date.init
+
+  var scenario: FixtureScenario {
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      return DesktopIntegrationPresentation.scenario(
+        base: model.scenario, desktop: desktopConnection.snapshot,
+        enabled: model.enabledProviders.contains(.claude), now: renderNow(),
+        source: model.claudeSource)
+    #else
+      return model.scenario
+    #endif
+  }
+
+  var desktopActionsAllowed: Bool {
+    !providerDisabled && model.claudeSource == .desktop && model.enabledProviders.contains(.claude)
+  }
+
+  func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      desktopLifecycle.setProviderEnabled(provider, enabled: enabled, model: model)
+    #else
+      model.setProviderEnabled(provider, enabled: enabled)
+    #endif
+  }
+
+  private var connectionControls: AnyView? {
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      return AnyView(desktopConnectionControls)
+    #else
+      return nil
+    #endif
+  }
+
+  #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+    private var desktopLifecycle: DesktopIntegrationLifecycle {
+      DesktopIntegrationLifecycle(
+        connection: desktopConnection, acquisitionAllowed: { self.desktopActionsAllowed })
+    }
+
+    func setClaudeSource(_ source: ClaudeSource) {
+      desktopLifecycle.selectSource(source, model: model)
+    }
+
+    var desktopConnectionControls: DesktopIntegrationControls {
+      DesktopIntegrationControls(
+        connection: desktopConnection, allowsConnection: { self.desktopActionsAllowed },
+        source: Binding(get: { model.claudeSource }, set: { setClaudeSource($0) }),
+        actionRevision: { model.claudeActionRevision })
+    }
+  #endif
 
   var body: some View {
     QuotaMenuView(
-      scenario: self.model.scenario,
+      scenario: self.scenario,
       languageCode: Locale.current.language.languageCode?.identifier ?? "en",
       locale: .current,
       timeZone: .current,
@@ -531,10 +819,14 @@ private struct QuotaTempoApplicationContent: View {
       ),
       loginItemState: self.settings.loginItemState,
       loginItemChangeFailed: self.settings.loginItemChangeFailed,
-      onSetProviderEnabled: { provider, enabled in
-        self.model.setProviderEnabled(provider, enabled: enabled)
-      },
-      onRefresh: { self.model.explicitRefresh() },
+      browserDisconnectInFlight: self.model.browserDisconnectInFlight,
+      browserDisconnectFailed: self.model.browserDisconnectFailed,
+      browserDisconnectCleanupFailed: self.model.browserDisconnectCleanupFailed,
+      connectionControls: self.connectionControls,
+      onboardingPrivacyText: self.desktopPrivacyText,
+      onSetProviderEnabled: self.setProviderEnabled,
+      onRefresh: self.onRefresh,
+      onDisconnectBrowser: { Task { await self.model.disconnectClaudeBrowser() } },
       onCheckForUpdates: self.updater.isEnabled ? { self.updater.checkForUpdates() } : nil,
       onCopyDiagnostics: { self.copyDiagnostics() },
       onOpenWindow: { self.appDelegate.presentApplicationWindow() },
@@ -550,7 +842,7 @@ private struct QuotaTempoApplicationContent: View {
           self.presentation.onboardingPresented = false
         }
       },
-      onQuit: { NSApplication.shared.terminate(nil) }
+      onQuit: self.onQuit
     )
     .onChange(of: self.presentation.onboardingPresented) { _, onboarding in
       self.appDelegate.updateApplicationWindowSize(onboarding: onboarding)
@@ -559,7 +851,7 @@ private struct QuotaTempoApplicationContent: View {
 
   private func copyDiagnostics() -> Bool {
     let report = SafeDiagnostics.report(
-      scenario: self.model.scenario,
+      scenario: self.scenario,
       productVersion: self.productVersion,
       operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString
     )
@@ -567,14 +859,34 @@ private struct QuotaTempoApplicationContent: View {
     pasteboard.clearContents()
     return pasteboard.setString(report, forType: .string)
   }
+
+  private var desktopPrivacyText: String? {
+    #if DESKTOP_INTEGRATION_PREVIEW
+      return Locale.current.language.languageCode?.identifier == "ja"
+        ? "Desktop接続は明示的な同意の後でのみ認証を端末内で使用し、Anthropicへ使用量を照会します。提供元の許諾は未確認のローカル検証版です。"
+        : "Desktop connection uses authentication locally and requests usage from Anthropic only after explicit consent. This local preview has no confirmed provider permission."
+    #elseif DESKTOP_CONNECTION
+      return Locale.current.language.languageCode?.identifier == "ja"
+        ? "通常はローカル情報・CLI・ブラウザ連携を使用します。Claude Desktop (Beta)は任意選択です。明示的な同意後に端末内の認証を使用してAnthropicへ使用量を照会します。非公式の連携で、提供元の許諾は未確認です。"
+        : "Automatic uses local information, CLI or the browser connection. Claude Desktop (Beta) is optional and uses authentication locally to request usage from Anthropic after explicit consent. This is an unofficial integration; provider permission is unconfirmed."
+    #else
+      return nil
+    #endif
+  }
 }
 
-@main
 struct QuotaTempoApp: App {
   @NSApplicationDelegateAdaptor(QuotaTempoApplicationDelegate.self) private var appDelegate
   @StateObject private var model: LiveQuotaModel
   @StateObject private var settings: QuotaTempoSettingsModel
   @StateObject private var presentation: QuotaTempoPresentationModel
+  #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+    @StateObject private var desktopConnection: DesktopConnectionController
+    private let desktopClock = Timer.publish(
+      every: DesktopIntegrationLifecycle.schedulingInterval, on: .main, in: .common
+    ).autoconnect()
+  #endif
+  private let providerDisabled: Bool
   private let updater: QuotaTempoUpdater
   private let clock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
   private let scheduledRefreshClock = Timer.publish(
@@ -588,28 +900,64 @@ struct QuotaTempoApp: App {
 
   init() {
     let arguments = CommandLine.arguments
-    let providerDisabled = arguments.contains("--provider-disabled")
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      let desktopConfiguration = DesktopIntegrationConfiguration(
+        arguments: arguments,
+        supportDirectory: FileManager.default.urls(
+          for: .applicationSupportDirectory, in: .userDomainMask)[0])
+      let providerDisabled = desktopConfiguration.providerDisabled
+    #else
+      let providerDisabled = QuotaTempoRuntimePolicy.providersDisabled(arguments: arguments)
+    #endif
+    self.providerDisabled = providerDisabled
+    #if DESKTOP_INTEGRATION_PREVIEW
+      let source = ClaudeSource.desktop
+      let sourcePreferences: ClaudeSourcePreferences? = nil
+    #else
+      let source = ClaudeSource.automatic
+      let sourcePreferences =
+        providerDisabled
+        ? nil
+        : ClaudeSourcePreferences(
+          defaults: QuotaTempoAppDefaults.defaults)
+    #endif
+    let defaults = QuotaTempoAppDefaults.defaults
     let directory: URL
-    if let index = arguments.firstIndex(of: "--storage-directory"), index + 1 < arguments.count {
-      directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
-    } else {
-      directory = FileManager.default.urls(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask
-      )[0].appendingPathComponent("QuotaTempo", isDirectory: true)
-    }
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      directory = desktopConfiguration.appDirectory
+    #else
+      if let index = arguments.firstIndex(of: "--storage-directory"), index + 1 < arguments.count {
+        directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+      } else {
+        directory = FileManager.default.urls(
+          for: .applicationSupportDirectory,
+          in: .userDomainMask
+        )[0].appendingPathComponent("QuotaTempo", isDirectory: true)
+      }
+    #endif
     let model = LiveQuotaModel(
       store: NormalizedSnapshotStore(directory: directory),
       acquisitionEnabled: !providerDisabled,
-      preferences: providerDisabled ? nil : ProviderSelectionPreferences()
+      preferences: providerDisabled ? nil : ProviderSelectionPreferences(defaults: defaults),
+      claudeSource: source, sourcePreferences: sourcePreferences
     )
-    self._presentation = StateObject(wrappedValue: QuotaTempoPresentationModel())
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      // Share the existing helper's exclusive scheduling store. A new UI must
+      // not create a fresh identity-independent provider backoff namespace.
+      self._desktopConnection = StateObject(
+        wrappedValue: DesktopConnectionController(
+          directory: desktopConfiguration.schedulingDirectory,
+          consentDefaults: providerDisabled ? nil : defaults))
+    #endif
+    self._presentation = StateObject(wrappedValue: QuotaTempoPresentationModel(defaults: defaults))
+    let systemIntegrationsEnabled = QuotaTempoRuntimePolicy.systemIntegrationsEnabled(
+      providerDisabled: providerDisabled)
     let loginItemService: any LoginItemServicing =
-      providerDisabled ? UnavailableLoginItemService() : SystemLoginItemService()
+      systemIntegrationsEnabled ? SystemLoginItemService() : UnavailableLoginItemService()
     self._settings = StateObject(
       wrappedValue: QuotaTempoSettingsModel(loginItemService: loginItemService)
     )
-    self.updater = QuotaTempoUpdater(enabled: !providerDisabled)
+    self.updater = QuotaTempoUpdater(enabled: systemIntegrationsEnabled)
     if providerDisabled && arguments.contains("--exercise-provider-triggers") {
       model.menuOpened()
       model.scheduledRefresh()
@@ -626,12 +974,12 @@ struct QuotaTempoApp: App {
       Group {
         if self.presentation.menuBarDisplayMode != .iconOnly {
           ProviderMenuBarLabel(
-            scenario: self.model.scenario,
+            scenario: self.displayScenario,
             mode: self.presentation.menuBarDisplayMode
           )
           .id(
             MenuBarTitleFormatter.renderIdentity(
-              scenario: self.model.scenario,
+              scenario: self.displayScenario,
               mode: self.presentation.menuBarDisplayMode
             )
           )
@@ -643,6 +991,17 @@ struct QuotaTempoApp: App {
       .onReceive(self.clock) { _ in self.model.clockAdvanced() }
       .onReceive(self.scheduledRefreshClock) { _ in self.model.scheduledRefresh() }
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
+      #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+        .task {
+          self.desktopLifecycle.providersChanged(self.model.enabledProviders)
+          await self.desktopLifecycle.start()
+        }
+        .onReceive(self.desktopClock) { _ in self.refreshDesktop() }
+        .onReceive(self.wakeNotifications) { _ in self.refreshDesktop() }
+        .onChange(of: self.model.enabledProviders) { _, providers in
+          self.desktopLifecycle.providersChanged(providers)
+        }
+      #endif
       .onAppear {
         self.appDelegate.configureApplicationWindow {
           AnyView(self.applicationWindowContent)
@@ -669,24 +1028,75 @@ struct QuotaTempoApp: App {
   }
 
   private func applicationContent(maximumViewportHeight: CGFloat?) -> some View {
-    QuotaTempoApplicationContent(
-      model: self.model,
-      settings: self.settings,
-      presentation: self.presentation,
-      appDelegate: self.appDelegate,
-      productVersion: self.productVersion,
-      updater: self.updater,
-      maximumViewportHeight: maximumViewportHeight
-    )
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      return QuotaTempoApplicationContent(
+        model: self.model, settings: self.settings, presentation: self.presentation,
+        desktopConnection: self.desktopConnection,
+        appDelegate: self.appDelegate, productVersion: self.productVersion, updater: self.updater,
+        maximumViewportHeight: maximumViewportHeight, providerDisabled: self.providerDisabled,
+        onRefresh: {
+          self.model.explicitRefresh()
+          self.refreshDesktop()
+        },
+        onQuit: { NSApplication.shared.terminate(nil) })
+    #else
+      return QuotaTempoApplicationContent(
+        model: self.model,
+        settings: self.settings,
+        presentation: self.presentation,
+        appDelegate: self.appDelegate,
+        productVersion: self.productVersion,
+        updater: self.updater,
+        maximumViewportHeight: maximumViewportHeight,
+        providerDisabled: self.providerDisabled,
+        onRefresh: {
+          self.model.explicitRefresh()
+        },
+        onQuit: {
+          // Never wait for provider I/O to quit. Attempts are checkpointed before HTTP.
+          NSApplication.shared.terminate(nil)
+        }
+      )
+    #endif
   }
 
+  private var displayScenario: FixtureScenario {
+    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+      return DesktopIntegrationPresentation.scenario(
+        base: self.model.scenario, desktop: self.desktopConnection.snapshot,
+        enabled: self.model.enabledProviders.contains(.claude), now: Date(),
+        source: self.model.claudeSource)
+    #else
+      return self.model.scenario
+    #endif
+  }
+
+  #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+    private var desktopLifecycle: DesktopIntegrationLifecycle {
+      DesktopIntegrationLifecycle(
+        connection: desktopConnection,
+        acquisitionAllowed: {
+          !self.providerDisabled && self.model.claudeSource == .desktop
+            && self.model.enabledProviders.contains(.claude)
+        })
+    }
+
+    private func refreshDesktop() {
+      Task { await self.desktopLifecycle.refresh() }
+    }
+  #endif
+
   private var productVersion: String {
-    let version =
-      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-      ?? "unknown"
-    let channel = Bundle.main.object(forInfoDictionaryKey: "QTReleaseChannel") as? String
-    guard let channel, channel != "stable", channel != "development" else { return version }
-    return "\(version)-\(channel)"
+    #if DESKTOP_INTEGRATION_PREVIEW
+      return "Desktop integration preview (local)"
+    #else
+      let version =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        ?? "unknown"
+      let channel = Bundle.main.object(forInfoDictionaryKey: "QTReleaseChannel") as? String
+      guard let channel, channel != "stable", channel != "development" else { return version }
+      return "\(version)-\(channel)"
+    #endif
   }
 
 }

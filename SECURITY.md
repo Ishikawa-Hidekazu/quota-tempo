@@ -12,14 +12,26 @@ Do not include credentials, tokens, cookies, authentication files, provider resp
 
 QuotaTempo must:
 
-- read only bounded recognized quota metadata;
+- validate bounded recognized quota metadata before display;
 - reject symlink-selected and oversized local provider inputs;
-- keep provider authentication owned by the official provider processes;
+- leave provider sign-in and credential refresh to the official provider apps;
+- keep Automatic acquisition free of credential, cookie and Keychain reads;
+- require explicit opt-in consent and a separate user-initiated macOS permission
+  action for Desktop authentication access; keep that material in memory only;
 - bound child-process time and combined output;
-- store only normalized observations;
+- store only normalized non-Desktop observations, consent/source preferences and
+  allowlisted scheduling metadata; never persist Desktop observations or authentication;
 - protect normalized storage with owner-only directory and file permissions;
 - fail closed on malformed, stale, or changed provider data;
-- avoid telemetry, browser-cookie access, Keychain access, and session recording.
+- avoid telemetry and session recording, and never inspect prompts or conversations;
+- keep Desktop, browser and local/CLI account observations separate, reject late
+  results after revocation, and preserve provider wait deadlines across restarts.
+
+The optional Claude Desktop connection uses bounded reads of Desktop's existing
+encrypted authentication, selected organization and protection key, solely for
+account validation and usage retrieval. It never writes to those provider stores.
+The exact access, consent, retention and removal contract is in [Privacy](PRIVACY.md).
+This unofficial Beta integration is not a statement of Anthropic approval.
 
 Release preparation requires tests, static shell checks, deterministic app-bundle verification, code-signature verification, artifact SHA-256 verification, embedded release-metadata matching, developer-path rejection, and a clean source tree. Public distribution additionally requires Developer ID signing and Apple notarization.
 

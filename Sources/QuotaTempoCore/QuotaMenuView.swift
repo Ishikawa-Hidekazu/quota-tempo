@@ -2,7 +2,8 @@ import SwiftUI
 
 public enum QuotaMenuLayout {
   public static let width: CGFloat = 580
-  static let contentWidth: CGFloat = 544
+  static let scrollIndicatorGutter: CGFloat = 16
+  static let contentWidth: CGFloat = width - 36 - scrollIndicatorGutter
   static let detailLabelWidth: CGFloat = 160
   static let summaryWeeklyWidth: CGFloat = 82
   static let summaryTargetWidth: CGFloat = 82
@@ -88,10 +89,17 @@ public struct QuotaMenuView: View {
   private let loginItemChangeFailed: Bool
   private let onSetProviderEnabled: ((ProviderID, Bool) -> Void)?
   private let onCopyDiagnostics: (() -> Bool)?
+  private let onDisconnectBrowser: (() -> Void)?
+  private let browserDisconnectInFlight: Bool
+  private let browserDisconnectFailed: Bool
+  private let browserDisconnectCleanupFailed: Bool
+  private let connectionControls: AnyView?
+  private let onboardingPrivacyText: String?
   @Binding private var menuBarDisplayMode: MenuBarDisplayMode
   @Binding private var onboardingPresented: Bool
   @Binding private var launchAtLogin: Bool
   @State private var diagnosticsCopied = false
+  @State private var confirmsBrowserDisconnect = false
 
   public init(
     scenario: FixtureScenario,
@@ -114,8 +122,14 @@ public struct QuotaMenuView: View {
     launchAtLogin: Binding<Bool> = .constant(false),
     loginItemState: LoginItemState = .disabled,
     loginItemChangeFailed: Bool = false,
+    browserDisconnectInFlight: Bool = false,
+    browserDisconnectFailed: Bool = false,
+    browserDisconnectCleanupFailed: Bool = false,
+    connectionControls: AnyView? = nil,
+    onboardingPrivacyText: String? = nil,
     onSetProviderEnabled: ((ProviderID, Bool) -> Void)? = nil,
     onRefresh: (() -> Void)? = nil,
+    onDisconnectBrowser: (() -> Void)? = nil,
     onCheckForUpdates: (() -> Void)? = nil,
     onCopyDiagnostics: (() -> Bool)? = nil,
     onOpenWindow: (() -> Void)? = nil,
@@ -145,6 +159,12 @@ public struct QuotaMenuView: View {
     self.loginItemChangeFailed = loginItemChangeFailed
     self.onSetProviderEnabled = onSetProviderEnabled
     self.onRefresh = onRefresh
+    self.onDisconnectBrowser = onDisconnectBrowser
+    self.browserDisconnectInFlight = browserDisconnectInFlight
+    self.browserDisconnectFailed = browserDisconnectFailed
+    self.browserDisconnectCleanupFailed = browserDisconnectCleanupFailed
+    self.connectionControls = connectionControls
+    self.onboardingPrivacyText = onboardingPrivacyText
     self.onCheckForUpdates = onCheckForUpdates
     self.onCopyDiagnostics = onCopyDiagnostics
     self.onOpenWindow = onOpenWindow
@@ -175,6 +195,7 @@ public struct QuotaMenuView: View {
             }
           }
           .frame(width: QuotaMenuLayout.contentWidth, alignment: .leading)
+          .padding(.trailing, QuotaMenuLayout.scrollIndicatorGutter)
         }
         .defaultScrollAnchor(.top)
         .scrollIndicators(.visible)
@@ -193,6 +214,17 @@ public struct QuotaMenuView: View {
       self.onMenuOpen?()
     }
     .onDisappear { self.onMenuClose?() }
+    .confirmationDialog(
+      self.copy.text("claude.browser.disconnect.confirm"),
+      isPresented: self.$confirmsBrowserDisconnect, titleVisibility: .visible
+    ) {
+      Button(self.copy.text("claude.browser.disconnect"), role: .destructive) {
+        self.onDisconnectBrowser?()
+      }
+      Button(self.copy.text("cancel"), role: .cancel) {}
+    } message: {
+      Text(self.copy.text("claude.browser.disconnect.boundary"))
+    }
   }
 
   private var mainContent: some View {
@@ -251,6 +283,8 @@ public struct QuotaMenuView: View {
           .accessibilityLabel(self.accessibilitySummary(plan))
         }
       }
+
+      if let connectionControls { connectionControls }
 
       Divider()
 
@@ -439,7 +473,7 @@ public struct QuotaMenuView: View {
         self.onboardingRow("scope", "onboarding.plan")
         self.onboardingRow("approximately.equal", "onboarding.estimate")
         self.onboardingRow("arrow.up.arrow.down", "onboarding.difference")
-        self.onboardingRow("lock.shield", "onboarding.privacy")
+        self.onboardingRow("lock.shield", "onboarding.privacy", text: onboardingPrivacyText)
       }
 
       self.menuBarModeGuide
@@ -530,12 +564,13 @@ public struct QuotaMenuView: View {
     .accessibilityElement(children: .combine)
   }
 
-  private func onboardingRow(_ systemImage: String, _ key: String) -> some View {
+  private func onboardingRow(_ systemImage: String, _ key: String, text: String? = nil) -> some View
+  {
     GridRow {
       Image(systemName: systemImage)
         .frame(width: 20)
         .foregroundStyle(.secondary)
-      Text(self.copy.text(key))
+      Text(text ?? self.copy.text(key))
         .fixedSize(horizontal: false, vertical: true)
     }
     .font(.callout)
@@ -574,7 +609,7 @@ public struct QuotaMenuView: View {
         }
         .layoutPriority(1)
         Spacer()
-        Text(self.copy.status(plan.status))
+        Text(self.copy.status(for: plan))
           .font(.subheadline.weight(.medium))
           .multilineTextAlignment(.trailing)
           .fixedSize(horizontal: false, vertical: true)
@@ -611,23 +646,48 @@ public struct QuotaMenuView: View {
           self.detailRow("last.attempt", value: self.date(lastAttemptAt))
         }
         if let errorCode = plan.errorCode {
-          self.detailRow("acquisition.error", value: self.copy.error(errorCode))
+          self.detailRow(
+            "acquisition.error",
+            value: self.copy.error(errorCode, source: plan.source))
         }
         if plan.freshness == .stale, plan.targetNow != nil {
           Text(self.staleComparisonHelp(plan))
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        if plan.provider == .claude {
+        if plan.source == .claudeBrowser {
+          Text(self.copy.text("claude.browser.boundary"))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          if self.onDisconnectBrowser != nil {
+            Button {
+              self.confirmsBrowserDisconnect = true
+            } label: {
+              Label(self.copy.text("claude.browser.disconnect"), systemImage: "link")
+            }
+            .disabled(self.browserDisconnectInFlight)
+            if self.browserDisconnectFailed {
+              Text(self.copy.text("claude.browser.disconnect.failed"))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
+        } else if plan.provider == .claude {
           Text(self.copy.text("claude.local.boundary"))
             .font(.caption)
             .foregroundStyle(.secondary)
           if plan.status == .resetUnknown {
-            Text(self.copy.text("claude.reset.help"))
+            Text(self.claudeResetHelp(plan))
               .font(.caption)
               .foregroundStyle(.secondary)
           }
         }
+      }
+
+      if plan.provider == .claude, self.browserDisconnectCleanupFailed {
+        Text(self.copy.text("claude.browser.disconnect.cleanup.failed"))
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       if plan.fiveHourRisk {
@@ -692,6 +752,11 @@ public struct QuotaMenuView: View {
     QuotaDateFormatting.string(value, locale: self.locale, timeZone: self.timeZone)
   }
 
+  private func claudeResetHelp(_ plan: PlannedProvider) -> String {
+    self.copy.text(
+      plan.source == .claudeDesktopDirect ? "claude.desktop.reset.help" : "claude.reset.help")
+  }
+
   private func accessibilitySummary(_ plan: PlannedProvider) -> String {
     var parts = [
       plan.provider.displayName,
@@ -703,10 +768,12 @@ public struct QuotaMenuView: View {
       plan.freshness == .stale && plan.targetNow != nil
         ? self.staleComparisonHelp(plan) : "",
       plan.provider == .claude && plan.status == .resetUnknown
-        ? self.copy.text("claude.reset.help") : "",
-      plan.errorCode.map { "\(self.copy.text("acquisition.error")) \(self.copy.error($0))" } ?? "",
+        ? self.claudeResetHelp(plan) : "",
+      plan.errorCode.map {
+        "\(self.copy.text("acquisition.error")) \(self.copy.error($0, source: plan.source))"
+      } ?? "",
       plan.targetIsEstimated ? self.copy.text("target.basis.estimated") : "",
-      self.copy.status(plan.status),
+      self.copy.status(for: plan),
     ]
     if plan.provider == .codex, let source = plan.codexExecutableSource {
       parts.append(

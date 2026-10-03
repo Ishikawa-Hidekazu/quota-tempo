@@ -39,7 +39,7 @@ Normalized snapshots use an explicit schema-version wrapper. RC13 accepts schema
 
 - `never_observed`: no valid snapshot has been received.
 - `observation_succeeded`: the latest acquisition produced a valid snapshot.
-- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable; percentages and plan values are hidden.
+- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable. Unknown and spend-control restrictions hide quota values. The unreleased known-exhaustion exception below retains validated quota metadata, not permission to use the service.
 - `attempt_timed_out`: a bounded provider pull timed out; an older valid snapshot may remain.
 - `attempt_failed`: a provider refresh exited or decoded unsuccessfully; an older valid snapshot may remain.
 - `awaiting_event` and `bridge_unavailable`: retained only for the retired, inactive Claude status-line bridge.
@@ -74,12 +74,64 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 | No recognized Codex installation exists | `attempt_failed` | Show an install/open recovery message. |
 | A known `0.133.x` or earlier Codex version fails | `attempt_failed` | Show an update-specific recovery message. |
 | The app-server protocol is incompatible | `attempt_failed` | Ask the user to update Codex and QuotaTempo. |
-| Provider says ordinary usage is unavailable or a spend/rate restriction is active | `access_restricted` | Hide percentage, target, and checkpoint values; show `Access restricted`. |
+| Explicit `rate_limit_reached`, no spend-control restriction, and a validated exhausted current window (unreleased) | `access_restricted` | Retain validated weekly balance/reset and mathematical plan values; keep the restriction prominent and withhold available capacity. |
+| Ordinary usage is unavailable without the validated known-exhaustion condition, or a spend/unknown restriction is active | `access_restricted` | Hide percentage, target, and checkpoint values; show `Access restricted`. |
 | Reset time has passed | Any | Invalidate the quota window immediately; do not extrapolate a new window. |
 
 The UI must show both `Captured` and, after a failed attempt, `Last refresh attempt`. A failed attempt does not make an old snapshot newer.
 
+The known-exhaustion exception fixes a distinction between unavailable usage data
+and a reported zero balance. It never clears `access_restricted`, retries through
+another CLI, consumes a reset credit, or treats a future reset as restored access.
+The [official app-server field definitions](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)
+separate window utilization/reset metadata from the server-classified limit state.
+
+## Experimental browser observation (unreleased)
+
+`claudeBrowser` is an explicitly connected browser account, not an assertion that the browser and Desktop are signed in to the same account. It owns the complete Claude observation while enabled. No browser reset, balance, or fingerprint is merged with the local adapter. Disconnecting clears that ownership and restarts local acquisition without reusing the browser snapshot as its previous value.
+
+The native envelope is schema-versioned, size-bounded to 16 KiB, and restricted to a registered extension origin. Each message carries one random Chrome-profile installation ID, a connection generation, and a sequence. A value-free `connected` handshake claims a disabled or absent record; subsequent messages must match that profile and generation and increase the sequence. Disabled generations cannot reactivate themselves. The store keeps up to 128 retired-generation tombstones without truncation; further connections require explicit installer removal/re-registration. Value-free duplicate control messages can receive the same ACK without rewriting the record or advancing capture time. A success requires all three ownership fingerprints and a weekly window; resets must be provider-reported, future, and within the allowed duration. Account changes and sign-out clear comparison values. An ownership mismatch in a success message revokes old values but cannot silently rebind. Transient request failures preserve the original capture time and owner; they never make stale values current.
+
+The extension polls every five minutes with failure backoff. While a browser connection owns the observation, the app rereads only the local bridge file on its one-minute display clock and on its existing triggers. These reads do not cause extra CLI probes or browser requests. Disabling Claude disables the app's acquisition/presentation; browser polling is separately controlled by the extension's explicit connection. File corruption fails closed with a browser-source error, rather than silently selecting a possibly different CLI account. Existing live/recent/stale thresholds and elapsed-reset guards apply unchanged.
+
+See `BrowserExtension/README.md` and `PRIVACY.md`. This development contract is not a released guarantee or proof of Desktop-only acquisition.
+
+The browser acquisition contract above applies only while Automatic is selected;
+Desktop mode never imports a browser observation. Source selection does not stop
+the extension's independently authorized polling.
+
+## Claude Desktop connection contract
+
+The version 0.1.10 Desktop connection is explicit opt-in and exclusive. Automatic
+remains the default; choosing Desktop without consent performs no Desktop read.
+Remembered consent belongs to the normal app, not an older preview. Before
+switching sources the app invalidates the old acquisition generation. Late
+results cannot change the new source's display, account detection or store.
+Persist consent revocation before saving a new Desktop selection. If revocation
+fails, leave Automatic selected; a crash between the writes must not reactivate
+an older consent on restart.
+
+Only a validated account/organization-bound provider response creates a Desktop
+observation. Reset times are provider-reported; no seven-day extrapolation or
+reset transfer from another source is permitted. Desktop observations remain in
+memory. Restarting may show an empty row until the persisted scheduling deadline
+permits a new request; it must say waiting rather than imply a sign-in failure.
+Failed reads retain only a still-eligible same-context observation with its
+original capture time. A confirmed context change clears old values.
+
+Successful polls normally wait five minutes. Verified context changes or an
+upcoming reset may use a 60-second floor, without shortening a provider or
+failure wait. The shared `QuotaTempoDesktopPreview` scheduling namespace and
+exclusive lock persist across normal/preview/helper copies. Refresh, source
+switches, recheck and repair must not erase provider deadlines. Missing macOS
+access never triggers a background prompt. Disconnect, Claude OFF and repair
+revoke consent; no CLI or browser fallback occurs while Desktop remains selected.
+See `PRIVACY.md` for the precise authentication and persistence boundary.
+
 ## Claude local-observation contract
+
+This section applies to **Automatic**, not the separately selected Desktop
+connection. In Desktop mode, no local/CLI/browser acquisition or merging occurs.
 
 QuotaTempo reads only recognized aggregate fields from Claude Desktop history and Claude Code's local usage cache before using the bounded, signed-in Claude Code `/usage` PTY path described in `product-spec.md`. It does not install or activate a status-line bridge, call an undocumented endpoint, read credentials, or require manual quota entry.
 
@@ -87,12 +139,16 @@ QuotaTempo reads only recognized aggregate fields from Claude Desktop history an
 
 - Read the two documented product paths named in `PRIVACY.md` with strict size and regular-file checks.
 - Decode only the recognized history, Desktop `config.json` current-account UUID, Claude Code `cachedUsageUtilization`, account UUID, and organization UUID fields. Hash the UUIDs immediately and never persist their raw values.
+- In the unreleased development adapter, compare `cachedUsageUtilization.accountUuid` to the current account before assigning ownership. A different stamped account excludes that cache. An unstamped cache remains unowned and cannot establish a Desktop reset join; the surrounding login record alone is not an observation owner.
 - Keep a valid observation successful when the optional sibling source is malformed or oversized, but fail closed before probing when either selected path is unsafe.
 - Keep Desktop history and Claude Code cache observations separate unless the history organization, Desktop current-account UUID, and Claude Code account agree. Transfer a reset only between verified observations in the same quota window.
 - Treat five-hour and seven-day windows as independently optional.
 - Exclude model-specific weekly buckets and Extra Usage.
 - Project a reset into the immediately following window only between observations with matching one-way account fingerprints. Never use unverified Desktop history to advance a reset.
 - Never advance an estimated reset. If only utilization is safe and no one-window projection qualifies, keep `W` and show `P` and comparison as unavailable.
+- In the unreleased development app, when no browser connection owns Claude, the one-minute clock imports changed local observations without any CLI resolution, process, or network request. Preserve source capture time and the prior live-attempt clock, so repeated reads cannot refresh stale data or starve the 14-minute probe guard. Unchanged observations do not overwrite live attempt diagnostics. Only fresh, verified exact reset timing clears a prior live failure; a new balance or an estimated reset alone does not. Do not copy prior diagnostics across a confirmed account or organization change.
+- A live request colliding with a local-only read is coalesced into at most one pending request; manual force has priority. Draining rechecks acquisition permission, provider selection, browser ownership, and the normal attempt interval. Minute ticks do not queue behind an active live request, and a failed attempt does not create an automatic extra retry.
+- In the unreleased development app, turning Claude off invalidates queued app acquisition and rejects any late result from an already-started read or probe. Completed work from before OFF cannot overwrite the stored observation. Turning Claude on again may request one new refresh; it cannot revive the cancelled request or inherit its result. A blocking operation already in progress may still finish. The browser extension's separate connection and polling remain under its own explicit Disconnect control.
 
 ### Uncertainty contract
 

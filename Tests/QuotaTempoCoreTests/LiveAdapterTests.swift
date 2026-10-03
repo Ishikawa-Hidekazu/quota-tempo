@@ -118,9 +118,180 @@ struct LiveAdapterTests {
     let lines = String(decoding: CodexRateLimitAdapter.protocolRequest, as: UTF8.self)
       .split(separator: "\n")
     #expect(lines.count == 3)
-    #expect(lines[0].contains(#""version":"0.1.9""#))
+    #expect(lines[0].contains(#""version":"0.1.10""#))
     #expect(lines[1] == #"{"method":"initialized"}"#)
     #expect(lines[2] == #"{"method":"account/rateLimits/read","id":2}"#)
+  }
+
+  @Test("Codex preserves a validated exhausted weekly primary without a five-hour window")
+  func codexExhaustedWeeklyPrimary() throws {
+    let snapshot = try self.codexRestrictedRefresh(bucket: self.codexExhaustionBucket())
+    #expect(snapshot.weekly?.remainingPercent == 0)
+    #expect(snapshot.weekly?.durationSeconds == 604_800)
+    #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(604_800))
+    #expect(snapshot.weekly?.isResetEstimated == false)
+    #expect(snapshot.fiveHour == nil)
+    #expect(snapshot.capturedAt == self.now)
+    #expect(snapshot.lastAttemptAt == self.now)
+    #expect(snapshot.source == .codexAppServer)
+    #expect(snapshot.codexExecutableSource == .userLocal)
+  }
+
+  @Test("Codex known exhaustion retains both validated windows but never clears restriction")
+  func codexExhaustionWithFiveHour() throws {
+    for (weeklyUsed, fiveHourUsed) in [(100, 20), (100, 100), (20, 100)] {
+      var bucket = self.codexExhaustionBucket(
+        weeklyUsed: weeklyUsed, fiveHourUsed: fiveHourUsed)
+      // Weekly is not necessarily primary in the official response.
+      let weekly = bucket["primary"]
+      bucket["primary"] = bucket["secondary"]
+      bucket["secondary"] = weekly
+      let snapshot = try self.codexRestrictedRefresh(bucket: bucket)
+      #expect(snapshot.weekly?.remainingPercent == Double(100 - weeklyUsed))
+      #expect(snapshot.weekly?.resetAt == self.now.addingTimeInterval(604_800))
+      #expect(snapshot.fiveHour?.remainingPercent == Double(100 - fiveHourUsed))
+      #expect(snapshot.fiveHour?.resetAt == self.now.addingTimeInterval(18_000))
+      let plan = QuotaPlanner.evaluate(snapshot, now: self.now)
+      #expect(plan.sourceState == .accessRestricted)
+      #expect(plan.errorCode == .usageRestricted)
+      #expect(plan.availableUntilCheckpoint == nil)
+    }
+  }
+
+  @Test("Codex exhaustion requires explicit known restriction metadata")
+  func codexExhaustionRejectsUnknownRestrictionMetadata() throws {
+    let fields: [(String, [Any?])] = [
+      ("spendControlReached", [nil, NSNull(), true, "false", 0]),
+      (
+        "rateLimitReachedType",
+        [
+          nil, NSNull(), "", "unknown", "authentication_required",
+          "workspace_member_credits_depleted", "RATE_LIMIT_REACHED", "rate_limit_reached ",
+          false, 1, ["rate_limit_reached"],
+        ]
+      ),
+    ]
+    for (field, values) in fields {
+      for value in values {
+        var bucket = self.codexExhaustionBucket()
+        bucket[field] = value
+        let snapshot = try self.codexRestrictedRefresh(bucket: bucket)
+        #expect(snapshot.weekly == nil)
+        #expect(snapshot.fiveHour == nil)
+      }
+    }
+    for allowed: Any? in [nil, NSNull(), true, "false", 0] {
+      let snapshot = try self.codexRestrictedRefresh(
+        bucket: self.codexExhaustionBucket(), allowed: allowed)
+      #expect(snapshot.weekly == nil)
+      #expect(snapshot.fiveHour == nil)
+    }
+  }
+
+  @Test("Codex malformed or ambiguous exhausted windows stay restricted without fallback")
+  func codexExhaustionRejectsMalformedWindows() throws {
+    let fields: [(String, [Any?])] = [
+      ("usedPercent", [nil, NSNull(), "100", true, 99, -1, 101, 99.5]),
+      ("windowDurationMins", [nil, NSNull(), "10080", true, -1, 60]),
+      (
+        "resetsAt",
+        [
+          nil, NSNull(), "1789905600", true, -1, Int64.max,
+          Int64(self.now.timeIntervalSince1970),
+          Int64(self.now.addingTimeInterval(-1).timeIntervalSince1970),
+          Int64(self.now.addingTimeInterval(604_801).timeIntervalSince1970),
+        ]
+      ),
+    ]
+    for (field, values) in fields {
+      for value in values {
+        var bucket = self.codexExhaustionBucket()
+        var window = try #require(bucket["primary"] as? [String: Any])
+        window[field] = value
+        bucket["primary"] = window
+        let snapshot = try self.codexRestrictedRefresh(bucket: bucket)
+        #expect(snapshot.weekly == nil)
+        #expect(snapshot.fiveHour == nil)
+      }
+    }
+    for invalid: Any? in [nil, NSNull(), "invalid", [], [:]] {
+      var bucket = self.codexExhaustionBucket()
+      bucket["primary"] = invalid
+      let snapshot = try self.codexRestrictedRefresh(bucket: bucket)
+      #expect(snapshot.weekly == nil)
+    }
+    var duplicate = self.codexExhaustionBucket()
+    duplicate["secondary"] = duplicate["primary"]
+    #expect(try self.codexRestrictedRefresh(bucket: duplicate).weekly == nil)
+
+    var invalidFiveHour = self.codexExhaustionBucket(fiveHourUsed: 20)
+    invalidFiveHour["secondary"] = ["usedPercent": 20, "windowDurationMins": 300]
+    #expect(try self.codexRestrictedRefresh(bucket: invalidFiveHour).weekly == nil)
+    let positive = self.codexExhaustionBucket(weeklyUsed: 20, fiveHourUsed: 20)
+    #expect(try self.codexRestrictedRefresh(bucket: positive).weekly == nil)
+  }
+
+  @Test("Codex ambiguous buckets and RPC errors cannot qualify as ordinary exhaustion")
+  func codexExhaustionRejectsAmbiguousResponse() throws {
+    let known = self.codexExhaustionBucket()
+    var otherRestriction = known
+    otherRestriction["rateLimitReachedType"] = "workspace_member_credits_depleted"
+    for extra: [String: Any] in [
+      ["rateLimits": otherRestriction],
+      ["rateLimits": self.codexExhaustionBucket(weeklyUsed: 20)],
+      ["rateLimits": [:]],
+      ["spendControlReached": true],
+      ["rateLimitReachedType": "authentication_required"],
+      ["rateLimitsByLimitId": "invalid"],
+      ["rateLimitsByLimitId": ["codex": "invalid"]],
+    ] {
+      let snapshot = try self.codexRestrictedRefresh(bucket: known, extra: extra)
+      #expect(snapshot.weekly == nil)
+      #expect(snapshot.fiveHour == nil)
+    }
+    let auth = try self.codexRestrictedRefresh(bucket: known, error: ["code": 401])
+    #expect(auth.weekly == nil)
+
+    let consistent = try self.codexRestrictedRefresh(bucket: known, extra: ["rateLimits": known])
+    #expect(consistent.weekly?.remainingPercent == 0)
+    let legacy = try self.codexRestrictedRefresh(
+      bucket: known, extra: ["rateLimitsByLimitId": NSNull(), "rateLimits": known])
+    #expect(legacy.weekly?.remainingPercent == 0)
+  }
+
+  @Test("Codex exhaustion survives the codec and planner as restricted quota metadata")
+  func codexExhaustionCodecAndPlanner() throws {
+    let snapshot = try self.codexRestrictedRefresh(bucket: self.codexExhaustionBucket())
+    let decoded = try NormalizedSnapshotCodec.decode(NormalizedSnapshotCodec.encode(snapshot))
+    #expect(decoded == snapshot)
+    let plan = QuotaPlanner.evaluate(decoded, now: self.now)
+    #expect(plan.weeklyRemaining == 0)
+    #expect(plan.weeklyResetAt == self.now.addingTimeInterval(604_800))
+    #expect(plan.weeklyResetIsEstimated == false)
+    #expect(plan.targetNow == 100)
+    #expect(plan.vsTarget == -100)
+    #expect(plan.availableUntilCheckpoint == nil)
+    #expect(plan.sourceState == .accessRestricted)
+    #expect(plan.errorCode == .usageRestricted)
+    let elapsed = QuotaPlanner.evaluate(decoded, now: self.now.addingTimeInterval(604_801))
+    #expect(elapsed.weeklyResetAt == nil)
+    #expect(elapsed.availableUntilCheckpoint == nil)
+  }
+
+  @Test("Malformed Codex metadata alone is not reported as a provider refusal")
+  func codexMalformedMetadataIsNotARestriction() {
+    let snapshot = CodexRateLimitAdapter(
+      runner: FakeRunner(
+        result: .success(
+          BoundedProcessResult(
+            stdout: Data(#"{"id":2,"result":{"ordinaryUsageAllowed":"false"}}"#.utf8),
+            stderr: Data(), exitCode: 0))),
+      versionRunner: FakeRunner(result: .failure(.launchFailed)),
+      executable: self.codexExecutable
+    ).refresh(previous: nil, now: self.now)
+    #expect(snapshot.sourceState == .attemptFailed)
+    #expect(snapshot.errorCode == .protocolIncompatible)
+    #expect(snapshot.weekly == nil)
   }
 
   @Test("Codex timeout preserves a previous normalized snapshot")
@@ -135,6 +306,26 @@ struct LiveAdapterTests {
     #expect(snapshot.lastAttemptAt == self.now)
     #expect(snapshot.sourceState == .attemptTimedOut)
     #expect(snapshot.errorCode == .timeout)
+  }
+
+  @Test("Codex acquisition failures cannot lift a previously confirmed provider restriction")
+  func codexFailurePreservesRestriction() throws {
+    let previous = try self.codexRestrictedRefresh(bucket: self.codexExhaustionBucket())
+    for failure: BoundedProcessError in [.timeout, .launchFailed, .inputWriteFailed] {
+      let instant = self.now.addingTimeInterval(300)
+      let snapshot = CodexRateLimitAdapter(
+        runner: FakeRunner(result: .failure(failure)),
+        versionRunner: FakeRunner(result: .failure(.launchFailed)),
+        executable: self.codexExecutable
+      ).refresh(previous: previous, now: instant)
+      #expect(snapshot.sourceState == .accessRestricted)
+      #expect(snapshot.errorCode == .usageRestricted)
+      #expect(snapshot.capturedAt == previous.capturedAt)
+      #expect(snapshot.weekly == previous.weekly)
+      #expect(snapshot.lastAttemptAt == instant)
+      let decoded = try NormalizedSnapshotCodec.decode(NormalizedSnapshotCodec.encode(snapshot))
+      #expect(QuotaPlanner.evaluate(decoded, now: instant).availableUntilCheckpoint == nil)
+    }
   }
 
   @Test("Codex first failure records only attempt time, not a synthetic capture")
@@ -2452,6 +2643,60 @@ struct LiveAdapterTests {
     #expect(!FileManager.default.fileExists(atPath: failed.wrapperURL.path))
   }
 
+  private func codexExhaustionBucket(
+    weeklyUsed: Int = 100, fiveHourUsed: Int? = nil
+  ) -> [String: Any] {
+    var bucket: [String: Any] = [
+      "rateLimitReachedType": "rate_limit_reached",
+      "spendControlReached": false,
+      "primary": [
+        "usedPercent": weeklyUsed,
+        "windowDurationMins": 10_080,
+        "resetsAt": Int64(self.now.addingTimeInterval(604_800).timeIntervalSince1970),
+      ],
+    ]
+    if let fiveHourUsed {
+      bucket["secondary"] = [
+        "usedPercent": fiveHourUsed,
+        "windowDurationMins": 300,
+        "resetsAt": Int64(self.now.addingTimeInterval(18_000).timeIntervalSince1970),
+      ]
+    }
+    return bucket
+  }
+
+  private func codexRestrictedRefresh(
+    bucket: [String: Any], allowed: Any? = false,
+    extra: [String: Any] = [:], error: [String: Any]? = nil
+  ) throws -> ProviderSnapshot {
+    var result: [String: Any] = ["rateLimitsByLimitId": ["codex": bucket]]
+    result["ordinaryUsageAllowed"] = allowed
+    result.merge(extra) { _, override in override }
+    var envelope: [String: Any] = ["id": 2, "result": result]
+    envelope["error"] = error
+    let alternative = URL(fileURLWithPath: "/mock/other-account-codex")
+    let runner = ExecutableResultRunner(results: [
+      self.codexExecutable: .success(
+        BoundedProcessResult(
+          stdout: try JSONSerialization.data(withJSONObject: envelope),
+          stderr: Data(), exitCode: 0)),
+      alternative: .success(Self.codexResponse),
+    ])
+    let versionRunner = RecordingRunner(result: .failure(.launchFailed))
+    let snapshot = CodexRateLimitAdapter(
+      runner: runner, versionRunner: versionRunner,
+      candidates: [
+        CodexExecutableCandidate(executable: self.codexExecutable, source: .userLocal),
+        CodexExecutableCandidate(executable: alternative, source: .desktopBundled),
+      ]
+    ).refresh(previous: self.snapshot(source: .codexAppServer), now: self.now)
+    #expect(runner.invocations == [self.codexExecutable])
+    #expect(versionRunner.invocationCount == 0)
+    #expect(snapshot.sourceState == .accessRestricted)
+    #expect(snapshot.errorCode == .usageRestricted)
+    return snapshot
+  }
+
   private func snapshot(source: SnapshotSource) -> ProviderSnapshot {
     ProviderSnapshot(
       provider: source == .claudeStatusLine ? .claude : .codex,
@@ -2505,6 +2750,7 @@ struct LiveAdapterTests {
     return try! JSONSerialization.data(withJSONObject: [
       "oauthAccount": ["accountUuid": "ignored-org", "organizationUuid": "ignored-org"],
       "cachedUsageUtilization": [
+        "accountUuid": "ignored-org",
         "fetchedAtMs": Int64(fetchedAt.timeIntervalSince1970 * 1_000),
         "utilization": [
           "five_hour": [

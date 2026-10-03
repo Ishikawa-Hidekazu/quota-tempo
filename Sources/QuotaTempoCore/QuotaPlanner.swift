@@ -129,7 +129,7 @@ public enum QuotaPlanner {
       weeklyResetIsEstimated: weekly.isResetEstimated,
       nextCheckpoint: checkpoint,
       checkpointTarget: checkpointTarget,
-      availableUntilCheckpoint: available,
+      availableUntilCheckpoint: snapshot.sourceState == .accessRestricted ? nil : available,
       fiveHourRisk: self.isFiveHourRisk(snapshot.fiveHour, now: now, freshness: freshness),
       lastAttemptAt: snapshot.lastAttemptAt,
       sourceState: snapshot.sourceState,

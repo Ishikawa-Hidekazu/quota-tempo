@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.10 - Optional Claude Desktop connection
+
+- Add an explicit opt-in Claude Desktop (Beta) source for usage and
+  provider-reported reset times without a Claude Code login or an open browser
+  tab. Automatic remains the default.
+- Separate source selection, consent and macOS permission. Keep Desktop values
+  in memory, isolate accounts, reject late results after disconnect or source
+  changes, and retain provider wait deadlines across restarts.
+- Add bounded recheck, offline scheduling repair and complete permission-removal
+  guidance. Desktop failures never silently switch to a CLI or browser account.
+- Harden Automatic cache ownership, refresh cancellation and browser disconnect
+  behavior. Preserve validated Codex quota-exhaustion values without implying
+  that a provider restriction has been lifted.
+- Keep local preview/headless diagnostics out of public entry points and Desktop
+  authentication code out of the browser host and other auxiliary products.
+
+Desktop connection is unofficial and optional. Upstream compatibility can
+change; credentials and conversations are not saved. See [Privacy](PRIVACY.md)
+before enabling it.
+
 ## 0.1.9 - Verified Claude Desktop usage
 
 - Keep fresh Claude Desktop weekly usage and a current exact reset together only after matching the Desktop and Claude Code account, organization, and quota window.

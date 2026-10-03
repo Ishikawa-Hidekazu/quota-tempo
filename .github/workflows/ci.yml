@@ -19,7 +19,25 @@ jobs:
       - name: Swift format
         run: xcrun swift-format lint --strict --recursive Sources Tests
       - name: Test
-        run: swift test
+        run: bash scripts/test-swift.sh
+      - name: Desktop connection stays isolated to the app
+        run: node scripts/test-desktop-candidate-isolation.mjs
+      - name: Swift test runner regression checks
+        run: node scripts/test-swift-runner.mjs
+      - name: Mods metadata experiment (synthetic only)
+        run: node --test experiments/claude-mods-usage/producer.test.mjs
+      - name: Local Desktop preview packaging (synthetic only)
+        run: node scripts/test-desktop-integration-builder.mjs
+      - name: Local Desktop startup harness (synthetic only)
+        run: node scripts/test-desktop-integration-startup-tests.mjs
+      - name: Local Desktop integration tests (synthetic only)
+        run: QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1 bash scripts/test-swift.sh
+      - name: Browser bridge fixtures (no browser or provider access)
+        run: |
+          node --test BrowserExtension/tests/*.test.cjs
+          node scripts/test-browser-bridge-installer.mjs
+          swift build --product QuotaTempoBrowserHost
+          node scripts/test-browser-host.mjs
       - name: Release build
         run: swift build -c release
       - name: Shell syntax

@@ -25,6 +25,15 @@ The current beta contains deterministic planning math, a native macOS menu-bar a
 
 When recognized local Claude observations lack current reset times, QuotaTempo can launch the already-installed, signed-in Claude Code CLI in a bounded pseudo-terminal and read its rendered `/usage` panel. It does not request provider credentials or depend on CodexBar.
 
+Version 0.1.10 adds an optional **Claude Desktop (Beta)** connection for people
+signed in only to Claude Desktop. It reads current usage and provider-reported
+reset times without a Claude Code login or an open Chrome tab. **Automatic**
+remains the default. Desktop access requires explicit consent and a separate
+macOS permission action; its values never mix with CLI or browser accounts.
+This is an unofficial integration, not an Anthropic-approved API. See the
+[connection guide](docs/user-guide.md#claude-desktop-connection-beta) and
+[privacy boundary](PRIVACY.md#opt-in-claude-desktop-connection).
+
 ## Your first 60 seconds after launch
 
 1. Confirm that the QuotaTempo guide opens in its own window.
@@ -100,6 +109,10 @@ The menu bar uses neutral monochrome SF Symbols to distinguish the rows; it does
 
 ## V1 boundary
 
+The local/CLI rules below describe **Automatic** acquisition. The optional
+Desktop connection instead follows its separate consent, in-memory observation
+and persistent scheduling contract in [Privacy](PRIVACY.md).
+
 - Providers: Codex, Claude, or both. At least one remains enabled.
 - Codex candidate source: a bounded read through the official Codex app-server.
 - Claude candidate sources: Claude Desktop plan history and Claude Code's local usage cache. Desktop history can inherit a still-current exact reset only when its organization matches the Claude Code account, Desktop's current account identifier matches that same account, and both observations belong to the same quota window. Otherwise the sources remain separate. An experimental CLI decoder remains test-only because the current official CLI did not return quota windows to a bounded `get_usage` control request.
@@ -116,14 +129,68 @@ Requirements: macOS 14 or later and Swift 6.
 
 ```bash
 swift build
-swift test
+bash scripts/test-swift.sh
 ./scripts/test-release-policy.sh
 ./scripts/test-distribution-policy.sh
 ./scripts/render-fixture-proof.sh
 ./scripts/test-menu-bar-refresh.sh
 ```
 
-The final command launches a provider-disabled, isolated QA bundle and verifies through macOS accessibility metadata that a closed menu-bar label adopts a newly available reset time through its one-minute clock. It does not click the menu or read the installed app's storage.
+On macOS Command Line Tools, use
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools bash scripts/test-swift.sh`.
+The wrapper supplies both Swift Testing runtime search paths; use it for filtered
+tests and temporary checkouts too. It does not change the global Xcode selection.
+
+The separate Desktop acceptance preview can be built locally with
+`bash scripts/build-desktop-integration-preview.sh`. It starts disconnected until
+explicit consent. That versioned consent preference enables reconnection after
+app restarts; Disconnect, turning Claude off, or scheduling repair revokes it.
+It does not replace or launch the installed app.
+If macOS access is missing, the preview provides an explicit **Allow macOS access**
+action. Startup, timers and ordinary refreshes never open a Keychain dialog.
+Choose **Always Allow**, not the one-time **Allow**, to complete background access.
+This grants the app ongoing access to Claude Desktop's protected storage key.
+Disconnect stops acquisition and automatic reconnection; it does not revoke the
+macOS grant. Permission after restart or a later macOS change is not guaranteed.
+For removal, follow [Desktop preview removal](PRIVACY.md#desktop-preview-removal),
+including the separate, manual removal of this app's ongoing Keychain permission.
+If scheduling storage cannot be opened, the preview disconnects and revokes its
+remembered consent. Resolve the storage problem, then use **Connect Desktop** again.
+For local signed acceptance builds, the preview builder accepts the paired
+`--sign-identity "Developer ID Application: Name (TEAMID)" --team-id TEAMID`
+options. This signs the preview only; it does not notarize or approve a release.
+Normal builds include the opt-in Desktop connection but exclude the preview's
+headless acceptance entry point. Distribution packaging rejects preview builds.
+The browser host, bridge and fixture products exclude Desktop authentication code. See
+[acquisition research and release gates](docs/claude-acquisition-research.md)
+before interpreting synthetic QA as release readiness.
+
+For explicitly authorized live QA, the signed preview executable accepts only
+the following exact argument sequence:
+
+```sh
+/absolute/path/preview.app/Contents/MacOS/QuotaTempo \
+  --desktop-acceptance --consent-desktop-read-only \
+  --acknowledge-provider-permission-unconfirmed
+```
+
+This bounded headless check uses the application's Desktop connection controller
+and its existing scheduling store. It does not initialize the UI, start Codex or
+the Claude CLI, open a browser, request macOS permission, or save connection
+consent. Close an existing Desktop preview first and start after its displayed
+**Next allowed update**; never delete its scheduling record to avoid a wait.
+Do not start the UI again during the check: a lock conflict revokes its saved
+consent and requires **Connect Desktop** again. An initial scheduling wait can
+exhaust the fixed check deadline and is not a successful acceptance result.
+Two new exact observations at least five minutes apart
+are required, within eleven minutes. The independent process watchdog stops
+unresponsive work after eleven and a half minutes. Permission, authentication,
+provider-wait and storage errors stop the check. Its output contains only fixed
+statuses and normalized quota/timing metadata; keep personal quota reports out
+of public issues. A successful check does not certify native UI interactions,
+restart consent, sleep/wake, natural credential renewal or weekly rollover.
+
+`test-menu-bar-refresh.sh` launches a provider-disabled, isolated QA bundle and verifies through macOS accessibility metadata that a closed menu-bar label adopts a newly available reset time through its one-minute clock. It does not click the menu or read the installed app's storage.
 
 Build a local menu-bar-only macOS app bundle with a deterministic file inventory:
 
@@ -135,6 +202,12 @@ open dist/QuotaTempo.app
 The bundle sets `LSUIElement`, places the app at `Contents/MacOS/QuotaTempo`, its original application icon at `Contents/Resources/QuotaTempo.icns`, localization resources at `Contents/Resources/QuotaTempoCoreResources`, and the license/privacy/support/update documents under `Contents/Resources`. Development-only fixtures and the rollback-only Claude bridge are not included. It records per-file SHA-256 values at `Contents/Resources/SHA256SUMS`. It never installs a login item automatically. A user may opt in through **Launch at login** only after moving the app to `/Applications` or the user's `Applications` folder. Provider-disabled QA copies never query the macOS login-item service. Distributed binaries are checked for developer home paths.
 
 The current beta support matrix is macOS 14 or later on Apple silicon, with the official Codex app or CLI and Claude Desktop or Claude Code already signed in. QuotaTempo does not perform either provider's login. Unsupported or changed provider data fails closed. When Claude supplies a current balance after its last confirmed reset expires, QuotaTempo may project that exact weekly cadence once only when the new balance has increased, and marks the plan with `≈`. It never chains estimates. A valid weekly balance without confirmed or one-window projected timing remains visible, while its plan is labeled **Reset time unavailable**. Claude Desktop history does not supply reset metadata: a same-account Claude Code cache or signed-in `/usage` panel must provide a current exact reset. This local-only approach cannot guarantee a new exact reset after every weekly rollover when Claude Code remains signed out. A balance still attached to an elapsed reset is hidden as **Waiting for new quota window** until a current observation arrives.
+
+That reset limitation applies to Automatic's local-history fallback. The opt-in
+Desktop connection obtains provider-reported resets directly and never extends
+an expired reset by seven days. It displays a failure or waiting state when a
+new observation cannot be validated. A successful current observation is not a
+guarantee against future upstream changes.
 
 To create a Developer ID-signed stable package from a clean tree, run:
 
@@ -185,6 +258,10 @@ The first launch focuses an independent application window so opening QuotaTempo
 
 Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninstall, first turn off **Launch at login** if enabled, quit the app, and remove `QuotaTempo.app`. Its normalized local snapshot directory is documented in [PRIVACY.md](PRIVACY.md) and may be removed separately if the user wants to erase the last displayed observations. The same policy documents the `co.ishikawa.QuotaTempo` preference domain for erasing display, provider-selection, and onboarding preferences.
 
+If you separately tested the unreleased Desktop connection preview, also follow
+its [permission-removal steps](PRIVACY.md#desktop-preview-removal). Removing the app
+does not remove its macOS Keychain grant.
+
 ## Fixture-only visual proof
 
 | English first-run guide | Japanese first-run guide |
@@ -199,9 +276,25 @@ Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninsta
 | --- | --- |
 | ![QuotaTempo Japanese fixture showing Codex and Claude weekly comparison](docs/assets/fixture-menu-ja.png) | ![QuotaTempo Japanese fixture showing stale and unavailable states](docs/assets/fixture-menu-ja-degraded.png) |
 
+## Experimental browser bridge (unreleased)
+
+This branch adds an **opt-in Chrome extension and native messaging host**, separate from the released Desktop/CLI path. It aims to obtain a current weekly balance and exact reset without Claude Code login when the user is signed in to Claude on the web. It is not a Desktop-only solution and does not require or use CodexBar.
+
+The extension is disabled until connected by the user. Chrome makes same-origin web requests with its own existing session; QuotaTempo never reads or exports cookie/token values. The extension pins one account and organization, checks the account before and after the request, and forwards only normalized quota metadata. The app uses the browser observation as a whole, labels its source, and never joins its reset to Desktop or CLI values. A connected Claude tab is required; there is no tab creation or foregrounding.
+
+See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). The web routes are not a stable public API. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
+
+The development app provides **Disconnect browser** in Claude details, including when the extension has been removed. It clears browser values and revokes the local connection without changing Claude sign-in or silently combining accounts. A still-running extension stops after the next host rejection, so an in-flight or next scheduled observation may still run; disconnect or disable it in Chrome for immediate browser-side stop. Reconnect preserves its saved polling deadline. This control is not yet in a published release.
+
 ## Safety boundary
 
-QuotaTempo must not read token, cookie, credential, or Keychain contents. Its Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Browser session and direct OAuth access are excluded.
+The released local/CLI acquisition path does not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded from that path. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.
+
+The isolated Desktop integration preview has a different, explicit consent scope:
+it uses Desktop authentication in process memory to verify the account and read
+usage, without exporting or persisting credentials. It is excluded from default
+product builds. See [Privacy](PRIVACY.md#isolated-desktop-acquisition-experiment)
+for its exact protected reads, scheduling persistence and revocation behavior.
 
 QuotaTempo does not route prompts, switch accounts, bypass quotas, record sessions, or silently infer unavailable provider data. Its only timing estimate is the visibly marked, non-chainable one-window Claude reset projection described above.
 

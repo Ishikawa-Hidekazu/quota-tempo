@@ -8,6 +8,8 @@ version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
 
 grep -Fq "\"version\":\"$version\"" \
   "$repo_root/Sources/QuotaTempoCore/CodexAdapter.swift"
+grep -Fq "\"version\":\"$version\"" \
+  "$repo_root/Tests/QuotaTempoCoreTests/LiveAdapterTests.swift"
 grep -Fq "placeholder: $version" \
   "$repo_root/.github/ISSUE_TEMPLATE/bug_report.yml"
 grep -Fq "placeholder: $version" \

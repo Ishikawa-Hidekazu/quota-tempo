@@ -1,0 +1,1259 @@
+import Darwin
+import Foundation
+import Testing
+
+@testable import QuotaTempoDesktopCandidate
+
+private let throttleNow = Date(timeIntervalSince1970: 1_900_000_000)
+
+private func throttleRecord() -> DesktopThrottleRecord {
+  DesktopThrottleRecord(
+    recordedAt: throttleNow, lastAttemptAt: throttleNow.addingTimeInterval(-1),
+    localNextAllowedAt: throttleNow.addingTimeInterval(60),
+    successfulNextAllowedAt: throttleNow.addingTimeInterval(300),
+    serviceNotBefore: throttleNow.addingTimeInterval(600), unsupportedServiceWait: true,
+    failureCount: 3, interruptedUntil: throttleNow.addingTimeInterval(30),
+    authRefusal: .accessDenied)
+}
+
+private final class ThrottleFixture {
+  let directory: URL
+  var recordURL: URL { directory.appendingPathComponent("desktop-throttle.json") }
+  var lockURL: URL { directory.appendingPathComponent("desktop-throttle.lock") }
+
+  init(mode: Int = 0o700) throws {
+    directory = URL(fileURLWithPath: "/private/tmp")
+      .appendingPathComponent("QuotaTempo-Throttle-Synthetic-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: mode])
+  }
+
+  deinit { try? FileManager.default.removeItem(at: directory) }
+
+  func write(_ data: Data, to url: URL? = nil, mode: mode_t = 0o600) throws {
+    let destination = url ?? recordURL
+    try data.write(to: destination)
+    guard chmod(destination.path, mode) == 0 else { throw DesktopThrottleStoreError.ioFailure }
+  }
+
+  func writeRecord(_ record: DesktopThrottleRecord = throttleRecord()) throws {
+    try write(JSONEncoder().encode(record))
+  }
+
+  func names() throws -> Set<String> {
+    Set(try FileManager.default.contentsOfDirectory(atPath: directory.path))
+  }
+}
+
+private final class ThrottleCounter: @unchecked Sendable {
+  private let mutex = NSLock()
+  private var value = 0
+
+  func next() -> Int {
+    mutex.lock()
+    defer { mutex.unlock() }
+    value += 1
+    return value
+  }
+
+  func current() -> Int {
+    mutex.lock()
+    defer { mutex.unlock() }
+    return value
+  }
+}
+
+private final class ThrottleBorrowedDescriptor: @unchecked Sendable {
+  private let mutex = NSLock()
+  private var descriptor: Int32 = -1
+
+  func duplicate(_ original: Int32) -> Bool {
+    mutex.lock()
+    defer { mutex.unlock() }
+    descriptor = fcntl(original, F_DUPFD_CLOEXEC, 0)
+    return descriptor >= 0
+  }
+
+  deinit { if descriptor >= 0 { Darwin.close(descriptor) } }
+}
+
+@Suite("Desktop restart throttle metadata store")
+struct DesktopThrottleStoreTests {
+  @Test func interruptedLockAcquisitionRetriesWithoutReportingAnotherOwner() throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      if operation == (LOCK_EX | LOCK_NB), calls.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return flock(descriptor, operation)
+    }
+    let store = try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    try store.save(throttleRecord())
+    #expect(try store.load() == throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    withExtendedLifetime(store) {}
+  }
+
+  @Test(arguments: [EBADF, EINVAL, ENOTSUP, EIO, EWOULDBLOCK])
+  func lockFailureDoesNotMisreportSystemErrorsAsContention(code: Int32) throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { _, operation in
+      #expect(operation == (LOCK_EX | LOCK_NB))
+      #expect(calls.next() == 1)
+      errno = code
+      return -1
+    }
+    let expected: DesktopThrottleStoreError = code == EWOULDBLOCK ? .locked : .ioFailure
+    #expect(throws: expected) {
+      try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    }
+    let reopened = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try reopened.load() == nil)
+  }
+
+  @Test func interruptedUnlockRetriesAndDoesNotUnlockTheNextOwner() throws {
+    let fixture = try ThrottleFixture()
+    let calls = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      if operation == LOCK_UN, calls.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return flock(descriptor, operation)
+    }
+    var owner: DesktopThrottleFileStore? = try .init(directory: fixture.directory, io: io)
+    try owner?.save(throttleRecord())
+    owner = nil
+    #expect(calls.current() == 2)
+    let next = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try next.load() == throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    withExtendedLifetime(next) {}
+  }
+
+  @Test(arguments: [false, true])
+  func ownerExitReleasesLockEvenWhileDescriptorReferenceRemains(failedInitialization: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let borrowed = ThrottleBorrowedDescriptor()
+    var io = DesktopThrottleFileStore.IO()
+    io.lock = { descriptor, operation in
+      let result = flock(descriptor, operation)
+      if result == 0 && operation == (LOCK_EX | LOCK_NB) {
+        #expect(borrowed.duplicate(descriptor))
+      }
+      return result
+    }
+    if failedInitialization {
+      // Lock acquisition precedes record validation; the failing constructor
+      // must release its ownership too, without removing the lock inode.
+      try fixture.write(Data([1]), to: fixture.lockURL)
+      #expect(throws: DesktopThrottleStoreError.missingRecord) {
+        try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+      }
+      try fixture.writeRecord()
+    } else {
+      var owner: DesktopThrottleFileStore? = try .init(directory: fixture.directory, io: io)
+      try owner?.save(throttleRecord())
+      #expect(throws: DesktopThrottleStoreError.locked) {
+        try DesktopThrottleFileStore(directory: fixture.directory)
+      }
+      owner = nil
+    }
+    let reopened = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try reopened.load() == throttleRecord())
+    withExtendedLifetime(borrowed) {}
+  }
+
+  @Test func preparedStoreCreatesTwoPrivateDirectoriesAndRetainsItsLock() throws {
+    let fixture = try ThrottleFixture(mode: 0o755)
+    let parent = fixture.directory.appendingPathComponent("QuotaTempoIntegrationPreview")
+    let directory = parent.appendingPathComponent("DesktopConnection")
+    var first: DesktopThrottleFileStore? = try .prepared(directory: directory)
+    for url in [parent, directory] {
+      var info = stat()
+      #expect(lstat(url.path, &info) == 0)
+      #expect(info.st_uid == geteuid())
+      #expect(info.st_mode & 0o7777 == 0o700)
+    }
+    var existing = stat()
+    #expect(lstat(fixture.directory.path, &existing) == 0)
+    #expect(existing.st_mode & 0o7777 == 0o755)
+    #expect(try first?.load() == nil)
+    #expect(try fixture.names() == ["QuotaTempoIntegrationPreview"])
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        == ["desktop-throttle.lock"])
+    try first?.save(throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    first = nil
+    let reopened = try DesktopThrottleFileStore.prepared(directory: directory)
+    #expect(try reopened.load() == throttleRecord())
+  }
+
+  @Test func preparedStoreWillNotCreateThreeMissingDirectories() throws {
+    let fixture = try ThrottleFixture()
+    let directory = fixture.directory.appendingPathComponent("missing/preview/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(try fixture.names().isEmpty)
+  }
+
+  @Test func preparedStoreSharesExistingHelperDeadlinesAndExclusiveLock() throws {
+    let fixture = try ThrottleFixture()
+    let support = fixture.directory.appendingPathComponent("Library/Application Support")
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let directory = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    var helper: DesktopThrottleFileStore? = try .applicationSupport(
+      homeDirectory: fixture.directory)
+    let record = throttleRecord()
+    try helper?.save(record)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    helper = nil
+    let prepared = try DesktopThrottleFileStore.prepared(directory: directory)
+    #expect(try prepared.load() == record)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: support.path)
+        == ["QuotaTempoDesktopPreview"])
+  }
+
+  @Test func preparedStoreKeepsSafeExistingParentPermissionsUnchanged() throws {
+    let fixture = try ThrottleFixture()
+    let parent = fixture.directory.appendingPathComponent("existing")
+    try FileManager.default.createDirectory(
+      at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+    #expect(chmod(parent.path, 0o755) == 0)
+    let store = try DesktopThrottleFileStore.prepared(
+      directory: parent.appendingPathComponent("DesktopConnection"))
+    #expect(try store.load() == nil)
+    var info = stat()
+    #expect(lstat(parent.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == 0o755)
+  }
+
+  @Test(arguments: [mode_t(0o777), mode_t(0o775), mode_t(0o770)])
+  func preparedStoreRejectsWritableExistingParentWithoutChangingIt(mode: mode_t) throws {
+    let fixture = try ThrottleFixture()
+    let parent = fixture.directory.appendingPathComponent("unsafe")
+    try FileManager.default.createDirectory(
+      at: parent, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    #expect(chmod(parent.path, mode) == 0)
+    let directory = parent.appendingPathComponent("preview/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    var info = stat()
+    #expect(lstat(parent.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == mode)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: parent.path).isEmpty)
+  }
+
+  @Test(arguments: [mode_t(0o755), mode_t(0o750), mode_t(0o770), mode_t(0o777), mode_t(0o1700)])
+  func preparedStoreRequiresExistingFinalDirectoryToBeExactlyPrivate(mode: mode_t) throws {
+    let fixture = try ThrottleFixture()
+    let directory = fixture.directory.appendingPathComponent("DesktopConnection")
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    #expect(chmod(directory.path, mode) == 0)
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    var info = stat()
+    #expect(lstat(directory.path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == mode)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+  }
+
+  @Test(arguments: ["ancestor", "parent", "final"])
+  func preparedStoreRejectsExistingSymlinksWithoutTouchingTheirTarget(position: String) throws {
+    let fixture = try ThrottleFixture()
+    let target = fixture.directory.appendingPathComponent("target")
+    try FileManager.default.createDirectory(
+      at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let link = fixture.directory.appendingPathComponent("link")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    let directory: URL
+    switch position {
+    case "ancestor": directory = link.appendingPathComponent("preview/DesktopConnection")
+    case "parent": directory = link.appendingPathComponent("DesktopConnection")
+    default: directory = link
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+    var info = stat()
+    #expect(lstat(link.path, &info) == 0)
+    #expect(info.st_mode & S_IFMT == S_IFLNK)
+    #expect(try fixture.names() == ["target", "link"])
+  }
+
+  @Test func preparedStoreRefusesCreationDirectlyUnderAStickySystemParent() throws {
+    let directory = URL(fileURLWithPath: "/private/tmp")
+      .appendingPathComponent("QuotaTempo-Unowned-\(UUID().uuidString)/DesktopConnection")
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.prepared(directory: directory)
+    }
+    #expect(!FileManager.default.fileExists(atPath: directory.deletingLastPathComponent().path))
+  }
+
+  @Test func applicationSupportCreatesOnlyPrivateCandidateDirectory() throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    let support = library.appendingPathComponent("Application Support")
+    try FileManager.default.createDirectory(
+      at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let existing = support.appendingPathComponent("QuotaTempo")
+    try FileManager.default.createDirectory(
+      at: existing, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let sentinel = existing.appendingPathComponent("synthetic-public-data")
+    let bytes = Data("untouched-synthetic-data".utf8)
+    try bytes.write(to: sentinel)
+    var first: DesktopThrottleFileStore? = try .applicationSupport(homeDirectory: fixture.directory)
+    let candidate = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    var info = stat()
+    #expect(lstat(candidate.path, &info) == 0)
+    #expect(info.st_uid == geteuid())
+    #expect(info.st_mode & 0o7777 == 0o700)
+    #expect(try first?.load() == nil)
+    try first?.save(throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    first = nil
+    let restarted = try DesktopThrottleFileStore.applicationSupport(
+      homeDirectory: fixture.directory)
+    #expect(try restarted.load() == throttleRecord())
+    #expect(try Data(contentsOf: sentinel) == bytes)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: existing.path) == [
+        "synthetic-public-data"
+      ])
+    #expect(
+      Set(try FileManager.default.contentsOfDirectory(atPath: support.path))
+        == ["QuotaTempo", "QuotaTempoDesktopPreview"])
+  }
+
+  @Test(arguments: [false, true])
+  func applicationSupportNeverCreatesMissingAncestors(libraryExists: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    if libraryExists {
+      try FileManager.default.createDirectory(
+        at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory)
+    }
+    #expect(try fixture.names() == (libraryExists ? ["Library"] : []))
+    if libraryExists {
+      #expect(try FileManager.default.contentsOfDirectory(atPath: library.path).isEmpty)
+    }
+  }
+
+  @Test(arguments: ["parent-mode", "parent-link", "child-link", "child-mode"])
+  func applicationSupportRejectsUnsafePaths(kind: String) throws {
+    let fixture = try ThrottleFixture()
+    let library = fixture.directory.appendingPathComponent("Library")
+    let support = library.appendingPathComponent("Application Support")
+    try FileManager.default.createDirectory(
+      at: library, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let target = fixture.directory.appendingPathComponent("synthetic-link-target")
+    try FileManager.default.createDirectory(
+      at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let child = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    switch kind {
+    case "parent-mode":
+      #expect(chmod(support.path, 0o777) == 0)
+    case "parent-link":
+      try FileManager.default.removeItem(at: support)
+      try FileManager.default.createSymbolicLink(at: support, withDestinationURL: target)
+    case "child-link":
+      try FileManager.default.createSymbolicLink(at: child, withDestinationURL: target)
+    default:
+      try FileManager.default.createDirectory(
+        at: child, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o777])
+      #expect(chmod(child.path, 0o777) == 0)
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.applicationSupport(homeDirectory: fixture.directory)
+    }
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory)
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+    if kind == "parent-mode" {
+      var info = stat()
+      #expect(lstat(support.path, &info) == 0)
+      #expect(info.st_mode & 0o7777 == 0o777)
+      #expect(!FileManager.default.fileExists(atPath: child.path))
+    }
+  }
+
+  @Test func missingRoundTripReplacementAndRestart() throws {
+    let fixture = try ThrottleFixture(mode: 0o755)
+    var first: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    #expect(try first?.load() == nil)
+    #expect(try first?.load() == nil)
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+    let record = throttleRecord()
+    try first?.save(record)
+    #expect(try first?.load() == record)
+    var next = record
+    next.recordedAt = throttleNow.addingTimeInterval(1)
+    next.failureCount = 4
+    try first?.save(next)
+    #expect(try first?.load() == next)
+    first = nil
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == next)
+    #expect(try fixture.names() == ["desktop-throttle.json", "desktop-throttle.lock"])
+  }
+
+  @Test func minimalRecordAndExplicitMetadataAllowlist() throws {
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    let minimal = DesktopThrottleRecord(recordedAt: throttleNow)
+    try store.save(minimal)
+    #expect(try store.load() == minimal)
+    try store.save(throttleRecord())
+    let data = try Data(contentsOf: fixture.recordURL)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(
+      Set(json.keys) == [
+        "schemaVersion", "recordedAt", "lastAttemptAt", "localNextAllowedAt",
+        "successfulNextAllowedAt", "serviceNotBefore", "unsupportedServiceWait",
+        "failureCount", "interruptedUntil", "authRefusal",
+      ])
+    #expect(json["authRefusal"] as? String == "accessDenied")
+    #expect(data.count <= 4096)
+    #expect(try Data(contentsOf: fixture.lockURL) == Data([1]))
+    for url in [fixture.recordURL, fixture.lockURL] {
+      var info = stat()
+      #expect(lstat(url.path, &info) == 0)
+      #expect(info.st_uid == geteuid())
+      #expect(info.st_mode & 0o7777 == 0o600)
+      #expect(info.st_nlink == 1)
+    }
+  }
+
+  @Test(arguments: [DesktopAuthRefusal.waitingForDesktopRenewal, .accessDenied])
+  func refusalRoundTripAndRestart(refusal: DesktopAuthRefusal) throws {
+    let fixture = try ThrottleFixture()
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    let minimal = DesktopThrottleRecord(recordedAt: throttleNow, authRefusal: refusal)
+    try store?.save(minimal)
+    #expect(try store?.load() == minimal)
+    var full = throttleRecord()
+    full.authRefusal = refusal
+    try store?.save(full)
+    store = nil
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == full)
+  }
+
+  @Test func legacyV1WithoutRefusalRemainsReadable() throws {
+    let fixture = try ThrottleFixture()
+    var legacy = throttleRecord()
+    legacy.authRefusal = nil
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+    json.removeValue(forKey: "authRefusal")
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try store.load() == legacy)
+    try store.save(legacy)
+    #expect(try store.load() == legacy)
+  }
+
+  @Test(arguments: [DesktopAuthRefusal.waitingForDesktopRenewal, .accessDenied])
+  func refusalExpiryIsAllowlistedAndSurvivesRestart(refusal: DesktopAuthRefusal) throws {
+    let fixture = try ThrottleFixture()
+    var record = throttleRecord()
+    record.authRefusal = refusal
+    record.authRefusalExpiresAt = throttleNow.addingTimeInterval(3600)
+    do {
+      let store = try DesktopThrottleFileStore(directory: fixture.directory)
+      try store.save(record)
+      let loaded = try store.load()
+      #expect(loaded == record)
+    }
+    let json = try #require(
+      try JSONSerialization.jsonObject(with: Data(contentsOf: fixture.recordURL)) as? [String: Any])
+    #expect(
+      json["authRefusalExpiresAt"] as? Double
+        == record.authRefusalExpiresAt?.timeIntervalSinceReferenceDate)
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == record)
+  }
+
+  @Test func legacyRefusalWithoutExpiryIsIndefinite() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.writeRecord()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    let record = try #require(try store.load())
+    #expect(record.authRefusal == .accessDenied)
+    #expect(record.authRefusalExpiresAt == nil)
+  }
+
+  @Test(arguments: [false, true])
+  func offlineRecoveryRequiresExclusiveLifetimeLock(missing: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    try store.save(throttleRecord())
+    if missing { try FileManager.default.removeItem(at: fixture.recordURL) }
+    let lock = try Data(contentsOf: fixture.lockURL)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.lockURL) == lock)
+    #expect(FileManager.default.fileExists(atPath: fixture.recordURL.path) == !missing)
+    withExtendedLifetime(store) {}
+  }
+
+  @Test(arguments: [false, true])
+  func unusedStoreRecoveryIsNoOp(existingLock: Bool) throws {
+    let fixture = try ThrottleFixture()
+    if existingLock { try fixture.write(Data(), to: fixture.lockURL) }
+    var before = stat()
+    if existingLock { #expect(lstat(fixture.lockURL.path, &before) == 0) }
+    for _ in 0..<2 {
+      #expect(
+        try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+          == .notNeeded)
+      #expect(try fixture.names() == ["desktop-throttle.lock"])
+      #expect(try Data(contentsOf: fixture.lockURL).isEmpty)
+      var after = stat()
+      #expect(lstat(fixture.lockURL.path, &after) == 0)
+      if existingLock {
+        #expect(before.st_dev == after.st_dev && before.st_ino == after.st_ino)
+      }
+    }
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == nil)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.lockURL).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+    withExtendedLifetime(restarted) {}
+  }
+
+  @Test func unusedApplicationSupportRecoveryIsNoOp() throws {
+    let fixture = try ThrottleFixture()
+    let support = fixture.directory.appendingPathComponent("Library/Application Support")
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    #expect(
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory) == .notNeeded)
+    let candidate = support.appendingPathComponent("QuotaTempoDesktopPreview")
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: candidate.path)
+        == ["desktop-throttle.lock"])
+    #expect(try Data(contentsOf: candidate.appendingPathComponent("desktop-throttle.lock")).isEmpty)
+    let restarted = try DesktopThrottleFileStore.applicationSupport(
+      homeDirectory: fixture.directory)
+    #expect(try restarted.load() == nil)
+  }
+
+  @Test func missingRecordRecoveryKeepsLockAndRequiresDeliberateRecheck() throws {
+    let fixture = try ThrottleFixture()
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    try store?.save(throttleRecord())
+    store = nil
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    var before = stat()
+    #expect(lstat(fixture.lockURL.path, &before) == 0)
+    #expect(
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+        == .repaired)
+    var after = stat()
+    #expect(lstat(fixture.lockURL.path, &after) == 0)
+    #expect(before.st_dev == after.st_dev && before.st_ino == after.st_ino)
+    #expect(try Data(contentsOf: fixture.lockURL) == Data([1]))
+    let repairedBytes = try Data(contentsOf: fixture.recordURL)
+    #expect(
+      try DesktopThrottleFileStore.recover(
+        directory: fixture.directory, now: throttleNow.addingTimeInterval(60)) == .preserved)
+    #expect(try Data(contentsOf: fixture.recordURL) == repairedBytes)
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    let record = try #require(try restarted.load())
+    #expect(record.recordedAt == throttleNow)
+    #expect(record.lastAttemptAt == throttleNow)
+    #expect(record.localNextAllowedAt == throttleNow.addingTimeInterval(900))
+    #expect(record.interruptedUntil == throttleNow.addingTimeInterval(900))
+    #expect(record.unsupportedServiceWait)
+    #expect(record.isValid)
+    #expect(try fixture.names() == ["desktop-throttle.json", "desktop-throttle.lock"])
+  }
+
+  @Test(arguments: ["{", "[]", "null", "{}"])
+  func corruptRecoveryCreatesConservativeMetadata(body: String) throws {
+    let fixture = try ThrottleFixture()
+    try fixture.write(Data(body.utf8))
+    #expect(
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+        == .repaired)
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    let record = try #require(try store.load())
+    #expect(record.unsupportedServiceWait)
+    #expect(record.localNextAllowedAt == throttleNow.addingTimeInterval(900))
+    #expect(record.interruptedUntil == throttleNow.addingTimeInterval(900))
+  }
+
+  @Test(arguments: [2, 99])
+  func futureSchemaRecoveryRefusesWithoutDowngrade(version: Int) throws {
+    let fixture = try ThrottleFixture()
+    let data = try JSONSerialization.data(withJSONObject: [
+      "schemaVersion": version, "futureWaitMetadata": ["synthetic": true],
+    ])
+    try fixture.write(data)
+    try fixture.write(Data([1]), to: fixture.lockURL)
+    #expect(
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+        == .unsupportedVersion)
+    #expect(try Data(contentsOf: fixture.recordURL) == data)
+    #expect(try Data(contentsOf: fixture.lockURL) == Data([1]))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.save(throttleRecord()) }
+    #expect(try Data(contentsOf: fixture.recordURL) == data)
+  }
+
+  @Test(arguments: [false, true])
+  func recoveryPreservesValidWaitsAndRefusalWithoutRewriting(expiry: Bool) throws {
+    let fixture = try ThrottleFixture()
+    var record = throttleRecord()
+    record.serviceNotBefore = throttleNow.addingTimeInterval(400 * 86400)
+    record.authRefusalExpiresAt = expiry ? throttleNow.addingTimeInterval(3600) : nil
+    try fixture.writeRecord(record)
+    let before = try Data(contentsOf: fixture.recordURL)
+    #expect(
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+        == .preserved)
+    #expect(try Data(contentsOf: fixture.recordURL) == before)
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try store.load() == record)
+  }
+
+  @Test(arguments: [false, true])
+  func corruptKnownSchemaRetainsReadableWaitsAndRefusal(invalidExpiry: Bool) throws {
+    let fixture = try ThrottleFixture()
+    var record = throttleRecord()
+    record.serviceNotBefore = throttleNow.addingTimeInterval(400 * 86400)
+    record.authRefusalExpiresAt = throttleNow.addingTimeInterval(3600)
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+    json["failureCount"] = "corrupt-synthetic-counter"
+    if invalidExpiry { json["authRefusalExpiresAt"] = "corrupt-synthetic-expiry" }
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    #expect(
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+        == .repaired)
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    let repaired = try #require(try store.load())
+    #expect(repaired.serviceNotBefore == record.serviceNotBefore)
+    #expect(repaired.successfulNextAllowedAt == record.successfulNextAllowedAt)
+    #expect(repaired.authRefusal == record.authRefusal)
+    #expect(repaired.authRefusalExpiresAt == (invalidExpiry ? nil : record.authRefusalExpiresAt))
+    #expect(repaired.localNextAllowedAt == throttleNow.addingTimeInterval(900))
+    #expect(repaired.interruptedUntil == throttleNow.addingTimeInterval(900))
+    #expect(repaired.unsupportedServiceWait)
+  }
+
+  @Test func unrepresentableRetainedWaitIsNotShortened() throws {
+    let fixture = try ThrottleFixture()
+    var record = throttleRecord()
+    record.serviceNotBefore = throttleNow.addingTimeInterval(
+      DesktopUsageCoordinator.maximumSupportedServiceWait + 86400)
+    try fixture.writeRecord(record)
+    let before = try Data(contentsOf: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.recordURL) == before)
+  }
+
+  @Test func applicationSupportRecoveryUsesSyntheticHomeOnly() throws {
+    let fixture = try ThrottleFixture()
+    let support = fixture.directory.appendingPathComponent("Library/Application Support")
+    try FileManager.default.createDirectory(
+      at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    var store: DesktopThrottleFileStore? = try .applicationSupport(homeDirectory: fixture.directory)
+    try store?.save(throttleRecord())
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory)
+    }
+    store = nil
+    let recordURL = support.appendingPathComponent("QuotaTempoDesktopPreview/desktop-throttle.json")
+    try FileManager.default.removeItem(at: recordURL)
+    #expect(
+      try DesktopThrottleFileStore.recoverApplicationSupport(
+        now: throttleNow, homeDirectory: fixture.directory) == .repaired)
+    let restarted = try DesktopThrottleFileStore.applicationSupport(
+      homeDirectory: fixture.directory)
+    #expect(try restarted.load()?.unsupportedServiceWait == true)
+    #expect(
+      try FileManager.default.contentsOfDirectory(atPath: support.path) == [
+        "QuotaTempoDesktopPreview"
+      ])
+  }
+
+  @Test func corruptCheckpointCannotBeOverwrittenByNormalSave() throws {
+    let fixture = try ThrottleFixture()
+    let bytes = Data("{".utf8)
+    try fixture.write(bytes)
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.save(throttleRecord()) }
+    #expect(try Data(contentsOf: fixture.recordURL) == bytes)
+  }
+
+  @Test func invalidRecoveryClockLeavesRecordUnchanged() throws {
+    let fixture = try ThrottleFixture()
+    let bytes = Data("{".utf8)
+    try fixture.write(bytes)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) {
+      try DesktopThrottleFileStore.recover(
+        directory: fixture.directory, now: Date(timeIntervalSince1970: .infinity))
+    }
+    #expect(try Data(contentsOf: fixture.recordURL) == bytes)
+  }
+
+  @Test(arguments: ["unknown", "current", "401", ""])
+  func invalidRefusalEnumRejected(value: String) throws {
+    let fixture = try ThrottleFixture()
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(throttleRecord()))
+        as? [String: Any])
+    json["authRefusal"] = value
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+  }
+
+  @Test(arguments: ["{", "[]", "null", "{}", "\"synthetic-only\""])
+  func corruptBodiesReturnOnlyFixedErrors(body: String) throws {
+    let fixture = try ThrottleFixture()
+    try fixture.write(Data(body.utf8))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+  }
+
+  @Test(arguments: ["schemaVersion", "recordedAt", "unsupportedServiceWait", "failureCount"])
+  func missingRequiredFieldsRejected(field: String) throws {
+    let fixture = try ThrottleFixture()
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(throttleRecord()))
+        as? [String: Any])
+    json.removeValue(forKey: field)
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+  }
+
+  @Test(arguments: [
+    "accountFingerprint", "organizationFingerprint", "credential", "token", "extra",
+    "authRefusalGeneration", "generation", "credentialHash", "owner",
+  ])
+  func unknownFieldsRejected(field: String) throws {
+    let fixture = try ThrottleFixture()
+    var json = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(throttleRecord()))
+        as? [String: Any])
+    json[field] = "synthetic-only"
+    try fixture.write(JSONSerialization.data(withJSONObject: json))
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+  }
+
+  @Test func invalidVersionAndSemanticValuesRejectedOnReadAndWrite() throws {
+    var version = throttleRecord()
+    version.schemaVersion = 2
+    var count = throttleRecord()
+    count.failureCount = -1
+    var date = throttleRecord()
+    date.recordedAt = Date(timeIntervalSince1970: 0)
+    var interrupted = throttleRecord()
+    interrupted.lastAttemptAt = nil
+    for invalid in [version, count, date, interrupted] {
+      let fixture = try ThrottleFixture()
+      try fixture.writeRecord(invalid)
+      let store = try DesktopThrottleFileStore(directory: fixture.directory)
+      #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+      let original = try Data(contentsOf: fixture.recordURL)
+      #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.save(invalid) }
+      #expect(try Data(contentsOf: fixture.recordURL) == original)
+    }
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    var nonfinite = throttleRecord()
+    nonfinite.recordedAt = Date(timeIntervalSince1970: .infinity)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.save(nonfinite) }
+    #expect(try store.load() == nil)
+  }
+
+  @Test func exactByteLimitAcceptedAndOversizeRejectedBeforeRead() throws {
+    let fixture = try ThrottleFixture()
+    var data = try JSONEncoder().encode(throttleRecord())
+    data.append(Data(repeating: 0x20, count: 4096 - data.count))
+    try fixture.write(data)
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    #expect(try store?.load() == throttleRecord())
+    store = nil
+    data.append(0x20)
+    try fixture.write(data)
+    #expect(throws: DesktopThrottleStoreError.inputTooLarge) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    #expect(throws: DesktopThrottleStoreError.inputTooLarge) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.recordURL) == data)
+  }
+
+  @Test func directoryMustAlreadyExistAndCannotUseSymlinkAlias() throws {
+    let fixture = try ThrottleFixture()
+    let missing = fixture.directory.appendingPathComponent("missing")
+    #expect(throws: DesktopThrottleStoreError.self) {
+      try DesktopThrottleFileStore(directory: missing)
+    }
+    #expect(!FileManager.default.fileExists(atPath: missing.path))
+    // /tmp is a symlink on macOS; only the real /private/tmp ancestry is accepted.
+    let alias = URL(fileURLWithPath: "/tmp").appendingPathComponent(
+      fixture.directory.lastPathComponent)
+    #expect(throws: DesktopThrottleStoreError.self) {
+      try DesktopThrottleFileStore(directory: alias)
+    }
+  }
+
+  @Test(arguments: [0o770, 0o707, 0o777, 0o1777])
+  func writableFinalDirectoriesRejected(mode: Int) throws {
+    let fixture = try ThrottleFixture()
+    #expect(chmod(fixture.directory.path, mode_t(mode)) == 0)
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+  }
+
+  @Test func writableOrSymlinkedAncestorRejected() throws {
+    let fixture = try ThrottleFixture()
+    let parent = fixture.directory.appendingPathComponent("parent")
+    let child = parent.appendingPathComponent("child")
+    try FileManager.default.createDirectory(
+      at: child, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    #expect(chmod(parent.path, 0o777) == 0)
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore(directory: child)
+    }
+    #expect(chmod(parent.path, 0o700) == 0)
+    let alias = fixture.directory.appendingPathComponent("alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: parent)
+    for url in [alias, alias.appendingPathComponent("child")] {
+      #expect(throws: DesktopThrottleStoreError.self) {
+        try DesktopThrottleFileStore(directory: url)
+      }
+    }
+  }
+
+  @Test(
+    arguments: ["desktop-throttle.json", "desktop-throttle.lock"], [0o644, 0o660, 0o400])
+  func unsafeFilePermissionsRejected(name: String, mode: Int) throws {
+    let fixture = try ThrottleFixture()
+    try fixture.write(
+      Data(), to: fixture.directory.appendingPathComponent(name), mode: mode_t(mode))
+    // An unreadable/unwritable lock may fail at open before metadata validation.
+    #expect(throws: DesktopThrottleStoreError.self) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    #expect(throws: DesktopThrottleStoreError.self) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    var info = stat()
+    #expect(lstat(fixture.directory.appendingPathComponent(name).path, &info) == 0)
+    #expect(info.st_mode & 0o7777 == mode_t(mode))
+  }
+
+  @Test("Special permission bits are rejected without requiring a set-id file on disk")
+  func specialFileModeBits() {
+    // macOS sandboxed chmod may strip set-id bits. Exercise the exact stat input
+    // independently, keeping ordinary permission/path tests on real fixture files.
+    for bits: mode_t in [S_ISUID, S_ISGID, S_ISVTX] {
+      var info = stat()
+      info.st_mode = S_IFREG | 0o600 | bits
+      info.st_uid = geteuid()
+      info.st_nlink = 1
+      #expect(throws: DesktopThrottleStoreError.unsafePath) {
+        try DesktopThrottleFileStore.validateFile(info, maximumBytes: 0)
+      }
+    }
+  }
+
+  @Test func foreignOwnerIsRejectedBySharedFileValidation() {
+    var info = stat()
+    info.st_mode = S_IFREG | 0o600
+    info.st_uid = geteuid() == 0 ? 1 : 0
+    info.st_nlink = 1
+    #expect(throws: DesktopThrottleStoreError.unsafePath) {
+      try DesktopThrottleFileStore.validateFile(info, maximumBytes: 0)
+    }
+  }
+
+  @Test func nonemptyLockIsRejectedWithoutReadingItsBody() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.write(Data("synthetic-only".utf8), to: fixture.lockURL)
+    #expect(throws: DesktopThrottleStoreError.inputTooLarge) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+  }
+
+  @Test(arguments: ["desktop-throttle.json", "desktop-throttle.lock"])
+  func symlinksHardlinksAndSpecialFilesRejected(name: String) throws {
+    for kind in ["symlink", "hardlink", "fifo", "directory"] {
+      let fixture = try ThrottleFixture()
+      let path = fixture.directory.appendingPathComponent(name)
+      let target = fixture.directory.appendingPathComponent("synthetic-target")
+      try fixture.write(Data(), to: target)
+      switch kind {
+      case "symlink":
+        try FileManager.default.createSymbolicLink(at: path, withDestinationURL: target)
+      case "hardlink":
+        #expect(link(target.path, path.path) == 0)
+      case "fifo":
+        #expect(mkfifo(path.path, 0o600) == 0)
+      default:
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: false)
+      }
+      #expect(throws: DesktopThrottleStoreError.self) {
+        try DesktopThrottleFileStore(directory: fixture.directory)
+      }
+      #expect(throws: DesktopThrottleStoreError.self) {
+        try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+      }
+      #expect(try Data(contentsOf: target).isEmpty)
+    }
+  }
+
+  @Test func contentionRejectedAndReleaseLeavesLockForRestart() throws {
+    let fixture = try ThrottleFixture()
+    var first: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    #expect(first != nil)
+    #expect(throws: DesktopThrottleStoreError.locked) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    first = nil
+    #expect(FileManager.default.fileExists(atPath: fixture.lockURL.path))
+    let second = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try second.load() == nil)
+  }
+
+  @Test(arguments: ["construction", "read", "save", "invalid-read"])
+  func disappearanceNeverBecomesFresh(mode: String) throws {
+    let fixture = try ThrottleFixture()
+    if mode != "save" {
+      if mode == "invalid-read" {
+        try fixture.write(Data("{".utf8))
+      } else {
+        try fixture.writeRecord()
+      }
+    }
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    if mode == "save" { try store.save(throttleRecord()) }
+    if mode == "read" { #expect(try store.load() == throttleRecord()) }
+    if mode == "invalid-read" {
+      #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+    }
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) { try store.load() }
+    #expect(throws: DesktopThrottleStoreError.missingRecord) { try store.save(throttleRecord()) }
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+  }
+
+  @Test("Initialized store deletion remains an error after a process restart")
+  func missingCheckpointAfterRestart() throws {
+    let fixture = try ThrottleFixture()
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    try store?.save(throttleRecord())
+    store = nil
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+    #expect(try Data(contentsOf: fixture.lockURL) == Data([1]))
+  }
+
+  @Test("A successfully loaded legacy checkpoint initializes its durable marker")
+  func loadedCheckpointMarker() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.writeRecord()
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory)
+    #expect(try store?.load() == throttleRecord())
+    store = nil
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+  }
+
+  @Test("An invalid lock marker cannot become a fresh store")
+  func invalidMarker() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.write(Data([2]), to: fixture.lockURL)
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) {
+      try DesktopThrottleFileStore(directory: fixture.directory)
+    }
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) {
+      try DesktopThrottleFileStore.recover(directory: fixture.directory, now: throttleNow)
+    }
+    #expect(try Data(contentsOf: fixture.lockURL) == Data([2]))
+    #expect(!FileManager.default.fileExists(atPath: fixture.recordURL.path))
+  }
+
+  @Test func newlyAppearedInvalidRecordCannotDisappearIntoFreshState() throws {
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try store.load() == nil)
+    try fixture.write(Data("{".utf8))
+    #expect(throws: DesktopThrottleStoreError.invalidRecord) { try store.load() }
+    try FileManager.default.removeItem(at: fixture.recordURL)
+    #expect(throws: DesktopThrottleStoreError.missingRecord) { try store.load() }
+    #expect(throws: DesktopThrottleStoreError.missingRecord) { try store.save(throttleRecord()) }
+  }
+
+  @Test func externalRecordReplacementAndPermissionChangesFailClosed() throws {
+    for replace in [true, false] {
+      let fixture = try ThrottleFixture()
+      try fixture.writeRecord()
+      let store = try DesktopThrottleFileStore(directory: fixture.directory)
+      #expect(try store.load() == throttleRecord())
+      if replace {
+        let other = fixture.directory.appendingPathComponent("replacement")
+        try fixture.write(JSONEncoder().encode(throttleRecord()), to: other)
+        #expect(rename(other.path, fixture.recordURL.path) == 0)
+      } else {
+        #expect(chmod(fixture.recordURL.path, 0o644) == 0)
+      }
+      #expect(throws: DesktopThrottleStoreError.self) { try store.load() }
+      #expect(throws: DesktopThrottleStoreError.self) { try store.save(throttleRecord()) }
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func missingOrReplacedLockFailsClosed(replace: Bool) throws {
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    try store.save(throttleRecord())
+    try FileManager.default.removeItem(at: fixture.lockURL)
+    if replace { try fixture.write(Data(), to: fixture.lockURL) }
+    #expect(throws: DesktopThrottleStoreError.self) { try store.load() }
+    #expect(throws: DesktopThrottleStoreError.self) { try store.save(throttleRecord()) }
+  }
+
+  @Test func directoryReplacementAndAncestorPermissionChangeFailClosed() throws {
+    for replace in [true, false] {
+      let fixture = try ThrottleFixture()
+      let child = fixture.directory.appendingPathComponent("store")
+      try FileManager.default.createDirectory(
+        at: child, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      let store = try DesktopThrottleFileStore(directory: child)
+      try store.save(throttleRecord())
+      if replace {
+        try FileManager.default.moveItem(
+          at: child, to: fixture.directory.appendingPathComponent("moved"))
+        try FileManager.default.createDirectory(
+          at: child, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      } else {
+        #expect(chmod(fixture.directory.path, 0o777) == 0)
+      }
+      #expect(throws: DesktopThrottleStoreError.self) { try store.load() }
+      #expect(throws: DesktopThrottleStoreError.self) { try store.save(throttleRecord()) }
+    }
+  }
+
+  @Test func shortWritesAndInterruptedSyscallsAreRetried() throws {
+    let fixture = try ThrottleFixture()
+    let writes = ThrottleCounter()
+    let syncs = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.write = { fd, bytes, count in
+      if writes.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return Darwin.write(fd, bytes, min(count, 7))
+    }
+    io.sync = { fd in
+      if syncs.next() == 1 {
+        errno = EINTR
+        return -1
+      }
+      return Darwin.fsync(fd)
+    }
+    let store = try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    try store.save(throttleRecord())
+    #expect(try store.load() == throttleRecord())
+    #expect(writes.next() > 2)
+    #expect(syncs.next() == 4)
+  }
+
+  @Test(arguments: ["write", "zero-write", "sync", "rename"], [false, true])
+  func preRenameFailurePreservesPriorAndCleansOnlyOwnTemp(failure: String, existing: Bool) throws {
+    let fixture = try ThrottleFixture()
+    if existing { try fixture.writeRecord() }
+    let stale = fixture.directory.appendingPathComponent(".desktop-throttle-unrelated.tmp")
+    try fixture.write(Data("synthetic-unrelated".utf8), to: stale)
+    let original = existing ? try Data(contentsOf: fixture.recordURL) : nil
+    let writes = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    switch failure {
+    case "write":
+      io.write = { fd, bytes, count in
+        if writes.next() == 1 { return Darwin.write(fd, bytes, min(count, 7)) }
+        errno = ENOSPC
+        return -1
+      }
+    case "zero-write":
+      io.write = { _, _, _ in 0 }
+    case "sync":
+      io.sync = { _ in
+        errno = EIO
+        return -1
+      }
+    default:
+      io.rename = { _, _, _, _ in
+        errno = EIO
+        return -1
+      }
+    }
+    let store = try DesktopThrottleFileStore(directory: fixture.directory, io: io)
+    var changed = throttleRecord()
+    changed.failureCount = 4
+    #expect(throws: DesktopThrottleStoreError.ioFailure) { try store.save(changed) }
+    if let original {
+      #expect(try Data(contentsOf: fixture.recordURL) == original)
+      #expect(try store.load() == throttleRecord())
+    } else {
+      #expect(try store.load() == nil)
+    }
+    let expected: Set<String> =
+      existing
+      ? ["desktop-throttle.json", "desktop-throttle.lock", stale.lastPathComponent]
+      : ["desktop-throttle.lock", stale.lastPathComponent]
+    #expect(try fixture.names() == expected)
+    #expect(try Data(contentsOf: stale) == Data("synthetic-unrelated".utf8))
+  }
+
+  @Test func cleanupDoesNotUnlinkReplacementAtTemporaryName() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.writeRecord()
+    let directory = fixture.directory
+    let original = try Data(contentsOf: fixture.recordURL)
+    var io = DesktopThrottleFileStore.IO()
+    io.write = { _, _, _ in
+      do {
+        let name = try #require(
+          try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .first { $0.hasPrefix(".desktop-throttle-") && $0.hasSuffix(".tmp") })
+        let temporary = directory.appendingPathComponent(name)
+        try FileManager.default.moveItem(
+          at: temporary, to: directory.appendingPathComponent("moved-own-temp"))
+        try Data("synthetic-replacement".utf8).write(to: temporary)
+      } catch {
+        Issue.record("Synthetic temporary-file replacement failed")
+      }
+      errno = ENOSPC
+      return -1
+    }
+    let store = try DesktopThrottleFileStore(directory: directory, io: io)
+    #expect(throws: DesktopThrottleStoreError.ioFailure) { try store.save(throttleRecord()) }
+    #expect(try Data(contentsOf: fixture.recordURL) == original)
+    let name = try #require(try fixture.names().first { $0.hasSuffix(".tmp") })
+    #expect(
+      try Data(contentsOf: directory.appendingPathComponent(name))
+        == Data("synthetic-replacement".utf8))
+  }
+
+  @Test func parentSyncFailureReportsUncertainCommitAndFailsClosed() throws {
+    let fixture = try ThrottleFixture()
+    try fixture.writeRecord()
+    let syncs = ThrottleCounter()
+    var io = DesktopThrottleFileStore.IO()
+    io.sync = { fd in
+      if syncs.next() == 2 {
+        errno = EIO
+        return -1
+      }
+      return Darwin.fsync(fd)
+    }
+    var store: DesktopThrottleFileStore? = try DesktopThrottleFileStore(
+      directory: fixture.directory, io: io)
+    var changed = throttleRecord()
+    changed.failureCount = 4
+    #expect(throws: DesktopThrottleStoreError.ioFailure) { try store?.save(changed) }
+    #expect(throws: DesktopThrottleStoreError.ioFailure) { try store?.load() }
+    #expect(throws: DesktopThrottleStoreError.ioFailure) { try store?.save(throttleRecord()) }
+    store = nil
+    let restarted = try DesktopThrottleFileStore(directory: fixture.directory)
+    #expect(try restarted.load() == changed)
+    #expect(try fixture.names() == ["desktop-throttle.json", "desktop-throttle.lock"])
+  }
+
+  @Test func concurrentCallsUseOneSerializedStore() async throws {
+    let fixture = try ThrottleFixture()
+    let store = try DesktopThrottleFileStore(directory: fixture.directory)
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      for index in 0..<24 {
+        group.addTask {
+          var record = throttleRecord()
+          record.recordedAt = throttleNow.addingTimeInterval(Double(index))
+          try store.save(record)
+          let loadedRecord = try store.load()
+          let loaded = try #require(loadedRecord)
+          #expect(loaded.isValid)
+        }
+      }
+      try await group.waitForAll()
+    }
+    #expect(try store.load() != nil)
+    #expect(try fixture.names() == ["desktop-throttle.json", "desktop-throttle.lock"])
+  }
+}
