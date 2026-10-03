@@ -90,12 +90,15 @@ This connection is available in version 0.1.10. Older releases do not display
 these controls. It does not require a Claude Code login or an
 open Chrome tab, but Claude Desktop must already be installed and signed in.
 
-1. In Claude's connection controls, change its source from **Automatic** to
+1. Below the usage summary, change Claude's source from **Automatic** to
    **Claude Desktop (Beta)**. Read the access notice and choose **Connect Desktop**.
-2. Confirm consent. If the app reports missing macOS permission, choose
+2. Read the inline notice and choose **Agree and connect**. The notice closes
+   immediately and a progress indicator appears while the connection is checked.
+   If the app reports missing macOS permission, choose
    **Allow macOS access**. In the system dialog choose **Always Allow**, not
    one-time **Allow**. Enter any system password only in that dialog.
-3. Wait until **Next allowed update**. A restart may initially show no values:
+3. Once access is ready, follow **Next check (at or after)**. Values appear after
+   a successful scheduled check, not merely after consent. A restart may initially show no values:
    Desktop observations are kept in memory only. A successful update displays
    **Claude Desktop connection**, its actual capture time, weekly balance and reset.
 
@@ -129,7 +132,7 @@ QuotaTempo performs a bounded refresh for enabled providers when it starts, ever
 - `P≈` means the current plan is estimated by advancing the last confirmed weekly reset exactly once. The detail view identifies this basis. A newly observed reset replaces the estimate automatically, and QuotaTempo never uses an estimate to create another estimate.
 - **Reset time unavailable** means the weekly balance is valid, but the provider did not supply the reset timestamp needed to calculate the plan. QuotaTempo keeps `W` visible and shows `P` and the difference as `—`.
 - **Unavailable** means required data was missing, invalid, expired, or changed upstream.
-- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. In the unreleased correction, a validated quota-exhaustion response keeps its reported balance (including `0%`) and reset schedule visible, but does not show usable capacity or remove the restriction. Unknown and spend-control restrictions still hide percentages.
+- **Access restricted** means a provider explicitly reported that ordinary use is unavailable. A validated quota-exhaustion response keeps its reported balance (including `0%`) and reset schedule visible, but does not show usable capacity or remove the restriction. Unknown and spend-control restrictions still hide percentages.
 
 A failed refresh does not make an older observation look newer. If a bounded reset lookup fails while a valid local balance remains available, QuotaTempo keeps the balance and exposes the failed attempt separately. Acquisition status and observation time remain separate.
 

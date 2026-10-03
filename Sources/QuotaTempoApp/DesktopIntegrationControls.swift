@@ -67,20 +67,71 @@
     }
   }
 
+  @MainActor
+  final class DesktopConnectionInteraction: ObservableObject {
+    enum Confirmation { case connection, repair }
+    enum Operation { case connection, permission, recheck, repair }
+    @Published var confirmation: Confirmation?
+    @Published private(set) var pending: Operation?
+
+    // Dismiss consent and publish progress before yielding to the async controller.
+    @discardableResult
+    func perform(
+      _ operation: Operation, allowed: @escaping @MainActor () -> Bool,
+      action: @escaping @MainActor () async -> Void
+    ) -> Task<Void, Never>? {
+      guard pending == nil else { return nil }
+      confirmation = nil
+      pending = operation
+      return Task {
+        defer { pending = nil }
+        guard allowed() else { return }
+        await action()
+      }
+    }
+  }
+
   struct DesktopIntegrationControls: View {
     @ObservedObject var connection: DesktopConnectionController
     @Environment(\.locale) private var locale
     let allowsConnection: @MainActor () -> Bool
     var source: Binding<ClaudeSource> = .constant(.desktop)
     var actionRevision: @MainActor () -> Int = { 0 }
-    @State private var confirmsConnection = false
-    @State private var confirmsRepair = false
+    @StateObject var interaction = DesktopConnectionInteraction()
     private var japanese: Bool { locale.language.languageCode?.identifier == "ja" }
     private var consentCopy: DesktopIntegrationConsentCopy {
       DesktopIntegrationConsentCopy(languageCode: locale.language.languageCode?.identifier ?? "en")
     }
     private func text(_ ja: String, _ en: String) -> String { japanese ? ja : en }
-    private var statusText: String {
+    private var busy: Bool {
+      interaction.pending != nil || connection.isRefreshing || connection.isRepairing
+        || connection.isRequestingKeychainAccess || connection.status == .connecting
+    }
+    private var progressText: String {
+      if connection.isRequestingKeychainAccess || interaction.pending == .permission {
+        return text(
+          "macOSの許可を確認しています。確認画面が出た場合は応答してください。",
+          "Checking macOS access. Respond to the permission dialog if it appears.")
+      }
+      if connection.isRepairing || interaction.pending == .repair {
+        return text("取得記録を確認しています。", "Checking scheduling state…")
+      }
+      return text(
+        "Claude Desktopへの接続と使用量を確認しています。", "Checking Claude Desktop connection and usage…")
+    }
+    var showsScheduledTime: Bool {
+      !busy
+        && [.current, .stale, .waitingForNextRefresh, .waitingForProvider].contains(
+          connection.status)
+        && connection.nextAllowedAt != nil
+    }
+    var statusText: String {
+      if connection.status == .waitingForNextRefresh && connection.snapshot?.weekly == nil {
+        return text(
+          "接続の準備ができました。次の時刻以降に取得し、成功すると値が表示されます。",
+          "Connection is ready. Usage will appear after a successful check at or after the time below."
+        )
+      }
       if !QuotaTempoRuntimePolicy.isDesktopPreview && connection.status == .consentRequired {
         return text("Desktop接続への同意が必要です。", "Explicit Desktop connection consent is required.")
       }
@@ -140,9 +191,15 @@
         }
       }
       .onChange(of: source.wrappedValue) { _, _ in
-        confirmsConnection = false
-        confirmsRepair = false
+        interaction.confirmation = nil
       }
+      .onChange(of: allowsConnection()) { _, allowed in
+        if !allowed { interaction.confirmation = nil }
+      }
+      .onChange(of: connection.isConnected) { _, connected in
+        if connected && interaction.confirmation == .connection { interaction.confirmation = nil }
+      }
+      .onDisappear { interaction.confirmation = nil }
     }
 
     private var connectionBody: some View {
@@ -153,10 +210,13 @@
             : "Claude Desktop (Beta)"
         )
         .font(.headline)
-        Text(statusText)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .top, spacing: 8) {
+          if busy { ProgressView().controlSize(.small).accessibilityLabel(progressText) }
+          Text(busy ? progressText : statusText)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if connection.consentPersistenceFailed {
           Text(
             text(
@@ -168,100 +228,124 @@
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
         }
-        if let next = connection.nextAllowedAt {
-          HStack {
-            Text(text("次回取得可能", "Next allowed update"))
-            Text(next, style: .date)
-            Text(next, style: .time)
-          }.font(.caption)
+        if !busy && connection.status == .current, let captured = connection.snapshot?.capturedAt {
+          timestamp(text("取得日時", "Updated"), date: captured)
+        }
+        if showsScheduledTime, let next = connection.nextAllowedAt {
+          timestamp(text("次回取得予定（この時刻以降）", "Next check (at or after)"), date: next)
         }
         if connection.canRequestKeychainAccess {
           Button {
             let revision = actionRevision()
-            Task {
-              guard allowsConnection(), actionRevision() == revision else { return }
+            interaction.perform(
+              .permission, allowed: { allowsConnection() && actionRevision() == revision }
+            ) {
               await connection.requestKeychainAccess()
             }
           } label: {
             Label(text("macOSアクセスを許可", "Allow macOS access"), systemImage: "lock.open")
-          }.disabled(!allowsConnection())
+          }.disabled(busy || !allowsConnection())
           Text(consentCopy.keychainAccess)
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
-        HStack(spacing: 12) {
-          if connection.isConnected {
-            Button {
-              connection.revokeConsent()
-            } label: {
-              Label(text("接続解除", "Disconnect"), systemImage: "xmark.circle")
-            }
-            Button {
-              let revision = actionRevision()
-              Task {
-                guard allowsConnection(), actionRevision() == revision else { return }
-                await connection.refresh(recheck: true)
-              }
-            } label: {
-              Label(text("接続を再確認", "Recheck connection"), systemImage: "arrow.clockwise")
-            }
-            .disabled(
-              connection.isRefreshing || connection.isRepairing
-                || connection.isRequestingKeychainAccess || !allowsConnection())
-          } else {
-            Button {
-              confirmsConnection = true
-            } label: {
-              Label(text("Desktopへ接続", "Connect Desktop"), systemImage: "link")
-            }.disabled(
-              connection.isRepairing || connection.isRequestingKeychainAccess || !allowsConnection()
-            )
-          }
-          Button {
-            confirmsRepair = true
-          } label: {
-            Label(text("取得記録を修復", "Repair scheduling state"), systemImage: "wrench")
-          }.disabled(
-            connection.isRefreshing || connection.isRepairing
-              || connection.isRequestingKeychainAccess || !allowsConnection())
+        if interaction.confirmation != nil && !busy {
+          confirmationBody
+        }
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 12) { actionButtons }
+          VStack(alignment: .leading, spacing: 8) { actionButtons }
         }
         Divider()
       }
-      .confirmationDialog(
-        text("Desktop接続を許可しますか？", "Allow Desktop connection?"),
-        isPresented: $confirmsConnection, titleVisibility: .visible
-      ) {
-        Button(text("同意して接続", "Agree and connect")) {
-          let revision = actionRevision()
-          Task {
-            guard allowsConnection(), actionRevision() == revision else { return }
-            await connection.connect(localExperimentAuthorized: true)
+    }
+
+    private var actionButtons: some View {
+      Group {
+        if connection.isConnected {
+          Button {
+            interaction.confirmation = nil
+            connection.revokeConsent()
+          } label: {
+            Label(text("接続解除", "Disconnect"), systemImage: "xmark.circle")
           }
+          Button {
+            let revision = actionRevision()
+            interaction.perform(
+              .recheck, allowed: { allowsConnection() && actionRevision() == revision }
+            ) {
+              await connection.refresh(recheck: true)
+            }
+          } label: {
+            Label(text("接続を再確認", "Recheck connection"), systemImage: "arrow.clockwise")
+          }
+          .disabled(
+            busy || !allowsConnection())
+        } else if interaction.confirmation != .connection {
+          Button {
+            interaction.confirmation = .connection
+          } label: {
+            Label(text("Desktopへ接続", "Connect Desktop"), systemImage: "link")
+          }.disabled(
+            busy || !allowsConnection()
+          )
         }
-        Button(text("キャンセル", "Cancel"), role: .cancel) {}
-      } message: {
-        Text(consentCopy.consent)
+        Button {
+          interaction.confirmation = .repair
+        } label: {
+          Label(text("取得記録を修復", "Repair scheduling state"), systemImage: "wrench")
+        }.disabled(
+          busy || interaction.confirmation != nil || !allowsConnection())
       }
-      .confirmationDialog(
-        text("取得記録を修復しますか？", "Repair scheduling state?"),
-        isPresented: $confirmsRepair, titleVisibility: .visible
-      ) {
-        Button(text("修復", "Repair")) {
-          let revision = actionRevision()
-          Task {
-            guard allowsConnection(), actionRevision() == revision else { return }
-            await connection.repair()
-          }
-        }
-        Button(text("キャンセル", "Cancel"), role: .cancel) {}
-      } message: {
+    }
+
+    private var confirmationBody: some View {
+      VStack(alignment: .leading, spacing: 10) {
+        let connecting = interaction.confirmation == .connection
         Text(
-          text(
-            "接続を解除してローカル記録を検証します。提供元から指定された待機期限は消去しません。通信は行わず、再接続には再度同意が必要です。",
-            "Disconnects and verifies local scheduling state without network access. Known provider deadlines are preserved. Reconnecting requires consent again."
-          ))
+          connecting
+            ? text("Desktop接続への同意", "Desktop connection consent")
+            : text("取得記録を修復しますか？", "Repair scheduling state?")
+        )
+        .font(.subheadline.weight(.semibold))
+        Text(
+          connecting
+            ? consentCopy.consent
+            : text(
+              "接続を解除してローカル記録を検証します。提供元から指定された待機期限は消去しません。通信は行わず、再接続には再度同意が必要です。",
+              "Disconnects and verifies local scheduling state without network access. Known provider deadlines are preserved. Reconnecting requires consent again."
+            )
+        )
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+        HStack {
+          Button(connecting ? text("同意して接続", "Agree and connect") : text("修復", "Repair")) {
+            let revision = actionRevision()
+            interaction.perform(
+              connecting ? .connection : .repair,
+              allowed: { allowsConnection() && actionRevision() == revision }
+            ) {
+              if connecting {
+                await connection.connect(localExperimentAuthorized: true)
+              } else {
+                await connection.repair()
+              }
+            }
+          }
+          .disabled(busy || !allowsConnection())
+          Button(text("キャンセル", "Cancel"), role: .cancel) { interaction.confirmation = nil }
+        }
       }
+      .padding(.vertical, 8)
+    }
+
+    private func timestamp(_ title: String, date: Date) -> some View {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).foregroundStyle(.secondary)
+        Text(date, format: .dateTime.year().month().day().hour().minute())
+      }
+      .font(.caption)
     }
   }
 #endif

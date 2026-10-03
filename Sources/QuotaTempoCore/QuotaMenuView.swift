@@ -282,6 +282,8 @@ public struct QuotaMenuView: View {
         }
       }
 
+      if let connectionControls { connectionControls }
+
       Divider()
 
       ForEach(self.plans) { plan in
@@ -293,8 +295,6 @@ public struct QuotaMenuView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-
-      if let connectionControls { connectionControls }
 
       VStack(alignment: .leading, spacing: 8) {
         Text(self.copy.text("providers"))

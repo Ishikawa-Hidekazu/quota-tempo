@@ -66,7 +66,7 @@
 "error.authenticationRequired" = "Claude Code CLIは未ログインです。ターミナルで`claude auth login`を実行し、認証後に更新してください。Claude Desktopのログインとは別です。";
 "error.claudeDesktopDirect.authenticationRequired" = "Claude Desktopを開いてログイン状態を確認してください。Desktop側の接続が更新されてから再取得してください。";
 "error.claudeDesktopDirect.temporaryFailure" = "Claude Desktopの利用状況を一時的に取得できません。しばらく待ってから再取得してください。";
-"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop接続を利用できません。Desktopのログイン状態とローカルプレビューのアクセス許可を確認してください。";
+"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop接続を利用できません。上の接続状況で必要な操作を確認してください。";
 "error.claudeDesktopDirect.usageRestricted" = "Claude Desktopへのアクセスが制限されています。Desktopアカウントの権限を確認してから再取得してください。";
 "freshness.live" = "最新";
 "freshness.recent" = "最近";

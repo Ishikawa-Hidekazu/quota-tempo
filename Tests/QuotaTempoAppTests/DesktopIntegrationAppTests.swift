@@ -11,6 +11,134 @@
   struct DesktopIntegrationAppTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    @Test("Agree dismisses consent and shows progress synchronously, without duplicate actions")
+    @MainActor
+    func consentTransitionsBeforeAsyncWork() async throws {
+      let interaction = DesktopConnectionInteraction()
+      interaction.confirmation = .connection
+      let gate = AsyncStream<Void>.makeStream()
+      var calls = 0
+      let task = try #require(
+        interaction.perform(
+          .connection, allowed: { true },
+          action: {
+            calls += 1
+            for await _ in gate.stream { break }
+          }))
+      #expect(interaction.confirmation == nil)
+      #expect(interaction.pending == .connection)
+      #expect(interaction.perform(.connection, allowed: { true }, action: { calls += 1 }) == nil)
+      await Task.yield()
+      gate.continuation.finish()
+      await task.value
+      #expect(calls == 1)
+      #expect(interaction.pending == nil && interaction.confirmation == nil)
+    }
+
+    @Test("A queued action rechecks the current source and clears progress when invalidated")
+    @MainActor
+    func queuedActionChecksEligibility() async throws {
+      let interaction = DesktopConnectionInteraction()
+      interaction.confirmation = .connection
+      var revision = 0
+      var calls = 0
+      let task = try #require(
+        interaction.perform(
+          .connection, allowed: { revision == 0 },
+          action: {
+            calls += 1
+          }))
+      revision += 1
+      await task.value
+      #expect(calls == 0)
+      #expect(interaction.pending == nil && interaction.confirmation == nil)
+    }
+
+    @Test("Scheduled acquisition explains first values without claiming a successful fetch")
+    @MainActor
+    func waitingForFirstValues() async {
+      let deadline = now.addingTimeInterval(300)
+      let controller = DesktopConnectionController(
+        makeService: {
+          IntegrationResultStub(
+            result: DesktopUsageCandidateResult(
+              disposition: .replaceDisplay, state: .waitingForNextRefresh,
+              observation: nil, credentialError: nil, nextAllowedAt: deadline))
+        },
+        repairStore: { _ in .notNeeded })
+      await controller.connect(localExperimentAuthorized: true)
+      let view = DesktopIntegrationControls(connection: controller, allowsConnection: { true })
+      #expect(controller.snapshot?.weekly == nil)
+      #expect(controller.status == .waitingForNextRefresh)
+      #expect(view.showsScheduledTime && controller.nextAllowedAt == deadline)
+      #expect(view.statusText.contains("after a successful check"))
+      #expect(!view.statusText.contains("is current"))
+      await controller.disconnect()
+    }
+
+    @Test("Permission failure does not promise values at an old scheduling deadline")
+    @MainActor
+    func permissionDoesNotClaimConnected() async {
+      let controller = DesktopConnectionController(
+        makeService: {
+          IntegrationResultStub(
+            result: DesktopUsageCandidateResult(
+              disposition: .replaceDisplay, state: .permissionDenied,
+              observation: nil, credentialError: .permissionRequired,
+              nextAllowedAt: now.addingTimeInterval(-60)))
+        }, repairStore: { _ in .notNeeded })
+      await controller.connect(localExperimentAuthorized: true)
+      let view = DesktopIntegrationControls(connection: controller, allowsConnection: { true })
+      #expect(controller.canRequestKeychainAccess)
+      #expect(!view.showsScheduledTime)
+      #expect(view.statusText.contains("permission is needed"))
+      #expect(!view.statusText.contains("Connection is ready"))
+      await controller.disconnect()
+    }
+
+    @Test(
+      "Inline consent and progress fit both languages without a modal", arguments: ["en", "ja"])
+    @MainActor
+    func renderConsentAndProgress(language: String) async throws {
+      let unused = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let controller = DesktopConnectionController(directory: unused)
+      let interaction = DesktopConnectionInteraction()
+      interaction.confirmation = .connection
+      for stage in ["consent", "progress"] {
+        var task: Task<Void, Never>?
+        let gate = AsyncStream<Void>.makeStream()
+        if stage == "progress" {
+          task = interaction.perform(
+            .connection, allowed: { true },
+            action: {
+              for await _ in gate.stream { break }
+            })
+        }
+        for width in [336.0, 544.0] {
+          let view = DesktopIntegrationControls(
+            connection: controller, allowsConnection: { true }, interaction: interaction
+          )
+          .environment(\.locale, Locale(identifier: language))
+          .frame(width: width).padding(18).background(Color.white)
+          let renderer = ImageRenderer(content: view)
+          let rendered = try #require(renderer.nsImage)
+          #expect(abs(rendered.size.width - (width + 36)) < 0.01)
+          #expect(rendered.size.height < 650)
+          if let directory = ProcessInfo.processInfo.environment["QUOTATEMPO_QA_RENDER_DIRECTORY"] {
+            let tiff = try #require(rendered.tiffRepresentation)
+            let bitmap = try #require(NSBitmapImageRep(data: tiff))
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            try png.write(
+              to: URL(fileURLWithPath: directory).appendingPathComponent(
+                "desktop-\(stage)-\(language)-\(Int(width)).png"))
+          }
+        }
+        gate.continuation.finish()
+        await task?.value
+      }
+      #expect(!FileManager.default.fileExists(atPath: unused.path))
+    }
+
     @Test(
       "Permission copy distinguishes ongoing macOS access from one-time Allow",
       arguments: ["en", "ja"])
@@ -216,5 +344,14 @@
         disposition: .replaceDisplay, state: .permissionDenied,
         observation: nil, credentialError: .permissionRequired, nextAllowedAt: nil)
     }
+  }
+
+  private actor IntegrationResultStub: DesktopConnectionServing {
+    let result: DesktopUsageCandidateResult
+    init(result: DesktopUsageCandidateResult) { self.result = result }
+    func setApproval(_ approval: DesktopAccessApproval) {}
+    func prepareForOfflineRepair() -> Bool { true }
+    func recheckConnection() -> DesktopUsageCandidateResult { result }
+    func refresh() -> DesktopUsageCandidateResult { result }
   }
 #endif

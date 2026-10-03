@@ -66,7 +66,7 @@
 "error.authenticationRequired" = "Claude Code CLI is signed out. Run `claude auth login` in Terminal, then refresh. Claude Desktop sign-in is separate.";
 "error.claudeDesktopDirect.authenticationRequired" = "Open Claude Desktop and confirm that you are signed in. Refresh after Desktop renews its connection.";
 "error.claudeDesktopDirect.temporaryFailure" = "Claude Desktop usage is temporarily unavailable. Wait before refreshing again.";
-"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop connection is unavailable. Check Desktop sign-in and local preview access permissions.";
+"error.claudeDesktopDirect.sourceUnavailable" = "Claude Desktop connection is unavailable. Check the connection status above for the next step.";
 "error.claudeDesktopDirect.usageRestricted" = "Claude Desktop access is restricted. Check your Desktop account permissions before refreshing.";
 "freshness.live" = "Current";
 "freshness.recent" = "Recent";
