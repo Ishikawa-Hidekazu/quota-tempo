@@ -1,6 +1,13 @@
 # Live-adapter MVP
 
-Status: implemented for the public beta.
+Status: historical implementation record through September 30, 2026, including
+the 0.1.9 baseline and changes that were unreleased at the time. This is not the
+current installation or acquisition contract. For current behavior, use the
+[user guide](user-guide.md), [product specification](product-spec.md),
+[freshness contract](provider-freshness-contract.md) and [privacy policy](../PRIVACY.md).
+The local/CLI privacy boundary described below does not cover the opt-in Desktop
+connection introduced in 0.1.10. Historical test results are not new acceptance
+evidence for later releases.
 
 ## Data flow
 
@@ -103,7 +110,7 @@ Icon only is the first-run default because it consumes the least menu-bar width.
 
 The complete non-icon label is rendered into one intrinsic template `NSImage` before it is passed to `MenuBarExtra`. This avoids a macOS sizing failure observed with a multi-child SwiftUI label, where the status item allocated width for the Codex segment but clipped the Claude segment even when the menu bar had free space. The composite image measures whichever provider segments are enabled in one width; VoiceOver continues to receive the canonical text label rather than image content.
 
-## Current hardened release-candidate installation
+## Historical 0.1.9 installation baseline
 
 The current source is the `0.1.9` public-beta baseline. The bundle exposes its semantic version and release-candidate channel in the operational view. A first launch presents and focuses an independent window; reopening the already-running app restores it from the Dock if needed, refreshes current state, and brings it forward. Provider-disabled QA remains silent, and login launch remains silent after onboarding. The menu-bar popover caps its viewport at 720 points to preserve attachment to the status item and keeps all remaining content reachable in its ScrollView. The independent window retains the larger operational content range. Both surfaces still clamp to the screen's visible height so smaller displays retain a stable, visible scrollable fallback through the final action and policy rows. Existing users with no explicit saved display mode retain the earlier implicit Full mode, while new installations default to Icon only. The first-run guide includes localized visual mode previews and completion actions without clipping. Provider detail shows the weekly reset separately from the next 24-hour planning checkpoint, includes the localized weekday in every detailed timestamp, and labels a safely projected Claude reset as estimated. An isolated provider-disabled acceptance run must also prove that a closed menu-bar label changes from an unknown plan to a calculated plan through the one-minute clock, without a click, provider call, or login-item service access, and that every action and policy link exposes an explicit accessibility name.
 

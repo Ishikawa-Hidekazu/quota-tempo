@@ -10,7 +10,7 @@ The expected host name is `co.ishikawa.quotatempo`. Each observation uses one `c
 
 ## Setup and recovery
 
-The development app's Claude details now include **Disconnect browser**, with
+The app's Claude details include **Disconnect browser** (since 0.1.10), with
 confirmation, for recovery when the extension has been removed or is unavailable.
 This retires the local connection generation and clears its quota/ownership
 metadata. Native-host writes and app revocation share one bounded lock, and late

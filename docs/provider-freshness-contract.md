@@ -17,7 +17,10 @@ Stale data may retain `WEEKLY LEFT` as `W?`, a clearly labeled last-observed val
 
 ## Minimal metadata
 
-QuotaTempo may store only the normalized fields needed to render and diagnose freshness:
+The Codex and Automatic local/CLI snapshot store may persist only the normalized
+fields below. The opt-in [Desktop connection](#claude-desktop-connection-contract)
+keeps observations in memory and persists only its separate scheduling metadata,
+not this snapshot table.
 
 | Field | Persistence | Purpose |
 | --- | --- | --- |
@@ -39,7 +42,7 @@ Normalized snapshots use an explicit schema-version wrapper. RC13 accepts schema
 
 - `never_observed`: no valid snapshot has been received.
 - `observation_succeeded`: the latest acquisition produced a valid snapshot.
-- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable. Unknown and spend-control restrictions hide quota values. The unreleased known-exhaustion exception below retains validated quota metadata, not permission to use the service.
+- `access_restricted`: the provider explicitly reports that ordinary usage is unavailable. Unknown and spend-control restrictions hide quota values. The known-exhaustion exception below retains validated quota metadata, not permission to use the service.
 - `attempt_timed_out`: a bounded provider pull timed out; an older valid snapshot may remain.
 - `attempt_failed`: a provider refresh exited or decoded unsuccessfully; an older valid snapshot may remain.
 - `awaiting_event` and `bridge_unavailable`: retained only for the retired, inactive Claude status-line bridge.
@@ -48,7 +51,7 @@ Normalized snapshots use an explicit schema-version wrapper. RC13 accepts schema
 
 ## Codex bounded-pull contract
 
-The future Codex adapter is an explicit, bounded local pull through the installed official Codex executable. The candidate RPC shape is not treated as a permanent public API contract.
+The Codex adapter is an explicit, bounded local pull through the installed official Codex executable. The observed RPC shape is not treated as a permanent public API contract.
 
 ### Acquisition
 
@@ -70,11 +73,11 @@ The future Codex adapter is an explicit, bounded local pull through the installe
 | Pull times out, no prior snapshot | `attempt_timed_out` | Unavailable; show `Refresh timed out`. |
 | Pull times out, prior snapshot is live/recent | `attempt_timed_out` | Keep comparison values and show `Last refresh timed out`. |
 | Pull fails or schema changes, no prior snapshot | `attempt_failed` | Unavailable; show `Codex data unavailable`. |
-| Pull fails, prior snapshot is stale | `attempt_failed` | Show only stale last-observed weekly value and failed-attempt detail. |
+| Pull fails, prior snapshot is stale | `attempt_failed` | Keep the last-observed weekly value and any still-valid reset-derived plan; withhold balance-derived comparisons and show failed-attempt detail. |
 | No recognized Codex installation exists | `attempt_failed` | Show an install/open recovery message. |
 | A known `0.133.x` or earlier Codex version fails | `attempt_failed` | Show an update-specific recovery message. |
 | The app-server protocol is incompatible | `attempt_failed` | Ask the user to update Codex and QuotaTempo. |
-| Explicit `rate_limit_reached`, no spend-control restriction, and a validated exhausted current window (unreleased) | `access_restricted` | Retain validated weekly balance/reset and mathematical plan values; keep the restriction prominent and withhold available capacity. |
+| Explicit `rate_limit_reached`, no spend-control restriction, and a validated exhausted current window | `access_restricted` | Retain validated weekly balance/reset and mathematical plan values; keep the restriction prominent and withhold available capacity. |
 | Ordinary usage is unavailable without the validated known-exhaustion condition, or a spend/unknown restriction is active | `access_restricted` | Hide percentage, target, and checkpoint values; show `Access restricted`. |
 | Reset time has passed | Any | Invalidate the quota window immediately; do not extrapolate a new window. |
 
@@ -139,16 +142,16 @@ QuotaTempo reads only recognized aggregate fields from Claude Desktop history an
 
 - Read the two documented product paths named in `PRIVACY.md` with strict size and regular-file checks.
 - Decode only the recognized history, Desktop `config.json` current-account UUID, Claude Code `cachedUsageUtilization`, account UUID, and organization UUID fields. Hash the UUIDs immediately and never persist their raw values.
-- In the unreleased development adapter, compare `cachedUsageUtilization.accountUuid` to the current account before assigning ownership. A different stamped account excludes that cache. An unstamped cache remains unowned and cannot establish a Desktop reset join; the surrounding login record alone is not an observation owner.
+- Compare `cachedUsageUtilization.accountUuid` to the current account before assigning ownership. A different stamped account excludes that cache. An unstamped cache remains unowned and cannot establish a Desktop reset join; the surrounding login record alone is not an observation owner.
 - Keep a valid observation successful when the optional sibling source is malformed or oversized, but fail closed before probing when either selected path is unsafe.
 - Keep Desktop history and Claude Code cache observations separate unless the history organization, Desktop current-account UUID, and Claude Code account agree. Transfer a reset only between verified observations in the same quota window.
 - Treat five-hour and seven-day windows as independently optional.
 - Exclude model-specific weekly buckets and Extra Usage.
 - Project a reset into the immediately following window only between observations with matching one-way account fingerprints. Never use unverified Desktop history to advance a reset.
 - Never advance an estimated reset. If only utilization is safe and no one-window projection qualifies, keep `W` and show `P` and comparison as unavailable.
-- In the unreleased development app, when no browser connection owns Claude, the one-minute clock imports changed local observations without any CLI resolution, process, or network request. Preserve source capture time and the prior live-attempt clock, so repeated reads cannot refresh stale data or starve the 14-minute probe guard. Unchanged observations do not overwrite live attempt diagnostics. Only fresh, verified exact reset timing clears a prior live failure; a new balance or an estimated reset alone does not. Do not copy prior diagnostics across a confirmed account or organization change.
+- When no browser connection owns Claude, the one-minute clock imports changed local observations without any CLI resolution, process, or network request. Preserve source capture time and the prior live-attempt clock, so repeated reads cannot refresh stale data or starve the 14-minute probe guard. Unchanged observations do not overwrite live attempt diagnostics. Only fresh, verified exact reset timing clears a prior live failure; a new balance or an estimated reset alone does not. Do not copy prior diagnostics across a confirmed account or organization change.
 - A live request colliding with a local-only read is coalesced into at most one pending request; manual force has priority. Draining rechecks acquisition permission, provider selection, browser ownership, and the normal attempt interval. Minute ticks do not queue behind an active live request, and a failed attempt does not create an automatic extra retry.
-- In the unreleased development app, turning Claude off invalidates queued app acquisition and rejects any late result from an already-started read or probe. Completed work from before OFF cannot overwrite the stored observation. Turning Claude on again may request one new refresh; it cannot revive the cancelled request or inherit its result. A blocking operation already in progress may still finish. The browser extension's separate connection and polling remain under its own explicit Disconnect control.
+- Turning Claude off invalidates queued app acquisition and rejects any late result from an already-started read or probe. Completed work from before OFF cannot overwrite the stored observation. Turning Claude on again may request one new refresh; it cannot revive the cancelled request or inherit its result. A blocking operation already in progress may still finish. The browser extension's separate connection and polling remain under its own explicit Disconnect control.
 
 ### Uncertainty contract
 
@@ -169,7 +172,7 @@ Claude freshness means `last observed on this Mac`, not guaranteed current accou
 | Weekly utilization is valid but compatible reset is absent | `observation_succeeded` | Keep weekly left; show `Reset time unavailable` and no current comparison. |
 | Five-hour window is valid but weekly is absent | `observation_succeeded` | Keep the independent immediate-risk warning when applicable; weekly plan remains unavailable. |
 | No valid local observation | `attempt_failed` or `never_observed` | Keep any prior snapshot under age rules; otherwise unavailable. |
-| No valid observation for more than 30 minutes | `observation_succeeded` | Stale; weekly left only, with no current comparison values. |
+| No valid observation for more than 30 minutes | `observation_succeeded` | Stale; retain last-observed weekly left and any still-valid reset-derived plan, but no balance-derived comparisons. |
 | Confirmed reset has passed and one-window projection qualifies | Any | Advance once and mark the plan estimated. |
 | Estimated reset has passed | Any | Invalidate immediately; never chain an estimate. |
 
