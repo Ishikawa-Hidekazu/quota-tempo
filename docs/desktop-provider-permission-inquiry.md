@@ -1,8 +1,14 @@
 # Desktop quota-reader permission inquiry
 
-Status: prepared, not sent. No provider permission has been received or inferred.
-The inquiry remains a reference, not an outgoing request. An explicitly authorized
-local diagnostic and public distribution are separate decisions.
+Status: historical unsent draft from the pre-release investigation. This is not
+the current release status or user guide, and it is not an outgoing request.
+The opt-in Desktop connection shipped in 0.1.10. See the current
+[connection guide](user-guide.md#claude-desktop-connection),
+[privacy policy](../PRIVACY.md#opt-in-claude-desktop-connection) and
+[research decision history](claude-acquisition-research.md#release-scope-update-2026-10-03).
+The draft below is retained as historical research, not as evidence of a reply.
+
+## Historical draft
 
 Suggested subject: Permission for a local, read-only Claude Desktop quota viewer
 
@@ -33,9 +39,10 @@ viewers' implementations as permission.
    supplies subscription utilization, exact reset timestamps, and account
    ownership to a local application without a separate Claude Code sign-in?
 
-This integration is not shipped. Public distribution remains a separate decision.
-The isolated local diagnostic now has a distinct owner-authorized experiment
-mode; it does not set `providerApproved` or enable a shipped application path.
+At the time of this draft, the integration had not shipped and public distribution
+remained a separate decision. The isolated local diagnostic had a distinct
+owner-authorized experiment mode; it did not set `providerApproved` or enable a
+shipped application path.
 
 Official inquiry route: the authentication-use section of
 [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use)

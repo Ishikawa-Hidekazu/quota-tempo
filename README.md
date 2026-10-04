@@ -246,11 +246,16 @@ For a notarized stable release, generate the signed Sparkle appcast and the Home
 
 Both generators require stable, Developer ID-signed, notarized release metadata and re-run full release verification. The appcast generator uses the explicitly selected Sparkle EdDSA account in the login Keychain, verifies that its public key matches the one embedded in QuotaTempo, and refuses unsigned output. The Cask renderer derives the archive SHA-256 rather than accepting it as manual input. Publishing either artifact remains a separate release operation.
 
-Run the fixture-only menu-bar app locally:
+Run the development app locally (this can access enabled providers; it is not fixture-only):
 
 ```bash
 swift run QuotaTempo
 ```
+
+The following acquisition description applies to Codex and Claude's default
+**Automatic** source. The opt-in **Claude Desktop** connection instead uses the
+separate authentication, five-minute polling and in-memory observation boundary
+documented in [Privacy](PRIVACY.md#opt-in-claude-desktop-connection).
 
 The app reads its own schema-versioned normalized Application Support records and recognized Claude usage and account-identity fields. Snapshot reads are size-bounded and reject symlinks, non-regular files, invalid provider/source combinations, and invalid state or window semantics; one explicit pre-RC13 unversioned format remains readable for upgrade continuity. It combines the newest local utilization with a reset timestamp only when one-way SHA-256 account-owner and organization fingerprints confirm that both observations belong to the same Claude account and quota window. Raw account and organization UUIDs are never persisted. On launch, every 15 minutes while running, after the Mac wakes, and when the user chooses **Refresh**, it refreshes only enabled providers. Claude observations are refreshed automatically every 15 minutes while running; explicit Refresh runs immediately. It may ask the installed official Codex app-server for rate-limit metadata through a bounded child process and rereads the recognized local Claude observations. Menu-open and automatic refreshes retain provider-specific last-attempt guards (five minutes for Codex, 14 minutes for Claude to tolerate timer jitter) and a one-in-flight limit per provider. Cached presentation appears before normalized storage and provider preparation continue away from the main actor. Codex checks at most three recognized candidates. A desktop-bundled executable is accepted only when the outer app and nested executable satisfy the pinned OpenAI identifier and Team ID requirements with strict nested-code validation. Capability failures may fall through to the next candidate; an explicit provider restriction stops immediately. A normalized version probe runs only after all candidates fail, and known `0.133.x` or earlier installations receive an update-specific message. It does not decode or retain provider credentials, tokens, cookies, Keychain values, prompts, transcripts, sessions, raw account identifiers, local paths, or raw responses.
 
@@ -258,9 +263,10 @@ The first launch focuses an independent application window so opening QuotaTempo
 
 Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninstall, first turn off **Launch at login** if enabled, quit the app, and remove `QuotaTempo.app`. Its normalized local snapshot directory is documented in [PRIVACY.md](PRIVACY.md) and may be removed separately if the user wants to erase the last displayed observations. The same policy documents the `co.ishikawa.QuotaTempo` preference domain for erasing display, provider-selection, and onboarding preferences.
 
-If you separately tested the unreleased Desktop connection preview, also follow
-its [permission-removal steps](PRIVACY.md#desktop-preview-removal). Removing the app
-does not remove its macOS Keychain grant.
+If you enabled the **Claude Desktop** connection, also follow the
+[permission-removal steps](PRIVACY.md#desktop-connection-removal). Removing the app
+does not remove its macOS Keychain grant. If you separately tested a local preview,
+also follow the [preview cleanup steps](PRIVACY.md#desktop-preview-removal).
 
 ## Fixture-only visual proof
 
@@ -284,16 +290,18 @@ The extension is disabled until connected by the user. Chrome makes same-origin 
 
 See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). Provider changes may prevent QuotaTempo from retrieving usage data. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
 
-The development app provides **Disconnect browser** in Claude details, including when the extension has been removed. It clears browser values and revokes the local connection without changing Claude sign-in or silently combining accounts. A still-running extension stops after the next host rejection, so an in-flight or next scheduled observation may still run; disconnect or disable it in Chrome for immediate browser-side stop. Reconnect preserves its saved polling deadline. This control is not yet in a published release.
+The app provides **Disconnect browser** in Claude details, including when the extension has been removed. It clears browser values and revokes the local connection without changing Claude sign-in or silently combining accounts. A still-running extension stops after the next host rejection, so an in-flight or next scheduled observation may still run; disconnect or disable it in Chrome for immediate browser-side stop. Reconnect preserves its saved polling deadline. The disconnect control shipped in version 0.1.10; the extension itself remains experimental and is not part of normal installation.
 
 ## Safety boundary
 
 The released local/CLI acquisition path does not read token, cookie, credential, or Keychain contents. Its local Claude adapter decodes only the recognized usage-history, cached-utilization, account UUID, and organization UUID fields, applies file-size and symlink checks, and stores only normalized percentages, reset times, the reset-estimate marker, source, freshness, acquisition state, and one-way SHA-256 ownership fingerprints. Direct OAuth access and extraction of browser sessions are excluded from that path. The experimental opt-in extension above uses Chrome-managed same-origin requests without inspecting or transferring the session.
 
-The isolated Desktop integration preview has a different, explicit consent scope:
+The opt-in **Claude Desktop** connection has a different, explicit consent scope:
 it uses Desktop authentication in process memory to verify the account and read
-usage, without exporting or persisting credentials. It is excluded from default
-product builds. See [Privacy](PRIVACY.md#isolated-desktop-acquisition-experiment)
+usage, without exporting or persisting credentials. It is included in the normal
+app but disabled until selected and authorized. The separate preview and headless
+test entry points remain excluded from public builds.
+See [Privacy](PRIVACY.md#opt-in-claude-desktop-connection)
 for its exact protected reads, scheduling persistence and revocation behavior.
 
 QuotaTempo does not route prompts, switch accounts, bypass quotas, record sessions, or silently infer unavailable provider data. Its only timing estimate is the visibly marked, non-chainable one-window Claude reset projection described above.

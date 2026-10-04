@@ -7,14 +7,14 @@ Thanks for helping improve QuotaTempo. Small, focused changes are easiest to rev
 - Search existing issues before creating a new one.
 - Open an issue before starting a large behavioral or architectural change.
 - Keep provider acquisition local, bounded, and fail-closed.
-- Do not add telemetry, browser-cookie access, credential access, prompt or transcript collection, or automatic provider configuration.
+- Do not add telemetry, prompt or transcript collection, or automatic provider configuration. Do not expand cookie, credential or Keychain access beyond the explicitly consented [Desktop connection boundary](PRIVACY.md#opt-in-claude-desktop-connection); changes to that boundary require a separate privacy review.
 
 ## Development
 
 Requirements: macOS 14 or later and Swift 6.
 
 ```bash
-swift test
+bash scripts/test-swift.sh
 xcrun swift-format lint --strict --recursive Sources Tests
 swift build -c release
 bash -n scripts/*.sh
@@ -22,6 +22,11 @@ bash -n scripts/*.sh
 ./scripts/test-app-bundle.sh --skip-launch
 git diff --check
 ```
+
+Use the test wrapper for filtered tests as well. When using Apple's Command Line
+Tools, scope `DEVELOPER_DIR=/Library/Developer/CommandLineTools` to each Swift
+command; do not change the global developer selection or accept an Xcode license
+as a test workaround. The wrapper supplies the Swift Testing runtime paths.
 
 Run ShellCheck and actionlint when available. Pull requests should explain the user-visible behavior, safety impact, and verification performed.
 

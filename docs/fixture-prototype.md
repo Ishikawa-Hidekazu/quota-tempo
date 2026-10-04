@@ -1,11 +1,13 @@
 # Fixture-only Prototype
 
-The prototype is a native macOS menu-bar view backed exclusively by bundled JSON fixtures and an injectable clock.
+This page records the original fixture-only prototype. The current `QuotaTempo`
+app uses live adapters and is not fixture-only. Use `QuotaTempoFixtureRenderer`
+for isolated visual proof and the [user guide](user-guide.md) for the normal app.
 
 ## Components
 
 - `QuotaTempoCore`: provider-neutral snapshot types, deterministic weekly planning math, localization, and SwiftUI menu content.
-- `QuotaTempo`: a `MenuBarExtra` shell that loads the bundled `baseline` fixture.
+- Original `QuotaTempo` prototype: a `MenuBarExtra` shell that loaded the bundled `baseline` fixture; the current app no longer has this fixture-only boundary.
 - `QuotaTempoFixtureRenderer`: renders the same SwiftUI menu content to reproducible PNG proof images.
 - `QuotaTempoCoreTests`: calculation, state, boundary, localization, and fail-closed tests.
 
@@ -28,9 +30,13 @@ Additional tests construct invalid, expired, future-dated, short-duration, exact
 swift format lint --recursive Package.swift Sources Tests
 shellcheck scripts/render-fixture-proof.sh
 swift build -c release
-swift test
+bash scripts/test-swift.sh
 ./scripts/render-fixture-proof.sh
 ```
+
+Use the wrapper even for filtered tests. With Apple's Command Line Tools, scope
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools` to each Swift command as
+described in [Contributing](../CONTRIBUTING.md#development).
 
 ## Safety boundary
 
