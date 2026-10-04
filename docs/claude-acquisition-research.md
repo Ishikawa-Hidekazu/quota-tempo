@@ -3,6 +3,27 @@
 Research dates: 2026-09-29 and 2026-09-30. This is a source-based feasibility assessment, not a
 runtime compatibility guarantee or a change to the [freshness contract](provider-freshness-contract.md).
 
+## Current release and research status (2026-10-05)
+
+[Version 0.1.11](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/tag/v0.1.11)
+is the current public release. The explicitly selected, consent-based Claude
+Desktop connection shipped in [PR #43](https://github.com/Ishikawa-Hidekazu/quota-tempo/pull/43).
+Use the [user guide](user-guide.md#claude-desktop-connection) and
+[privacy contract](../PRIVACY.md#opt-in-claude-desktop-connection) for current
+behavior. The dated preview, policy proposals and release-blocking statements
+below describe earlier development stages; they are not outstanding release
+instructions.
+
+The separate cache-only experiment in
+[PR #42](https://github.com/Ishikawa-Hidekazu/quota-tempo/pull/42) was closed as
+superseded and never shipped. The initial acquisition research in
+[Issue #23](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/23) is complete
+for the accepted release scope. Natural weekly rollover, credential renewal,
+Keychain-lock behavior and additional Macs have not been newly verified by this
+documentation cleanup. These remain reliability observations rather than claims
+of universal availability or requirements to repeat historical preview QA.
+Provider changes may prevent QuotaTempo from retrieving usage data.
+
 ## Official Mods follow-up (2026-10-03)
 
 [Upstream issue #41456](https://github.com/anthropics/claude-code/issues/41456)
@@ -67,10 +88,10 @@ This is not a claim that Desktop-only acquisition is technically impossible:
 other applications implement active requests using Desktop authentication. The
 expanded comparison below separates technical feasibility, product/security
 approval, and demonstrated runtime reliability.
-Desktop HTTP-cache work in Draft PR #42 remains experimental: organization-level
+Desktop HTTP-cache work in the closed PR #42 remains experimental: organization-level
 ownership and uncertain refresh behavior do not establish account-bound,
 continuous availability. The browser extension prototype is tracked in a
-separate pull request from Draft PR #42. A working browser-session bridge would
+separate pull request from the cache-only PR #42. A working browser-session bridge would
 not, by itself, satisfy the Desktop-only requirement.
 
 The initial metadata-only research and observation preserved these boundaries.

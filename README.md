@@ -47,15 +47,26 @@ This fixture screenshot shows the expected layout. Your values and provider avai
 
 For general questions and first impressions, join the [QuotaTempo discussion](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2). If the first run is unclear or stops before this point, use the privacy-safe [QuotaTempo feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
 
-## Download
+## Download and install
 
-Download the notarized ZIP and its SHA-256 from the [latest GitHub release](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). QuotaTempo currently supports Apple silicon Macs running macOS 14 or later.
+QuotaTempo currently supports Apple silicon Macs running macOS 14 or later. Choose one installation method:
 
-Or install the same notarized release with Homebrew. The first command explicitly trusts this one third-party Cask, adds the QuotaTempo repository as its source, and installs the app:
+### ZIP (Finder)
+
+1. Download the notarized ZIP and its SHA-256 from the [latest GitHub release](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest).
+2. Verify the downloaded ZIP against the SHA-256 published in the release.
+3. In Finder, double-click the ZIP, then drag `QuotaTempo.app` into Applications. Using Finder ensures macOS records the user-approved move and avoids launching the app from App Translocation.
+4. Open QuotaTempo from Applications. The first-run window explains the menu-bar modes.
+
+### Homebrew (third-party Cask)
+
+This installs the same notarized release. The command explicitly trusts only this Cask, adds the QuotaTempo repository as its source, and installs the app:
 
 ```bash
 brew trust --cask ishikawa-hidekazu/quotatempo/quotatempo && brew tap ishikawa-hidekazu/quotatempo https://github.com/Ishikawa-Hidekazu/quota-tempo.git && brew install --cask ishikawa-hidekazu/quotatempo/quotatempo
 ```
+
+Open QuotaTempo from Applications after installation. The first-run window explains the menu-bar modes.
 
 Upgrade later with:
 
@@ -63,13 +74,9 @@ Upgrade later with:
 brew upgrade --cask ishikawa-hidekazu/quotatempo/quotatempo
 ```
 
-1. Verify the downloaded ZIP against the SHA-256 published in the release.
-2. In Finder, double-click the ZIP, then drag `QuotaTempo.app` into Applications. Using Finder ensures macOS records the user-approved move and avoids launching the app from App Translocation.
-3. Open QuotaTempo from Applications. The first-run window explains the menu-bar modes.
-
 Do not bypass Gatekeeper if macOS rejects the app. See the full [installation and usage guide](docs/user-guide.md) or the [Japanese guide](docs/user-guide.ja.md).
 
-Version 0.1.0 is the update-capable bridge release. Install it once from GitHub or Homebrew; later releases can be checked and installed with **Check for Updates...** or `brew upgrade`. The updater uses a signed HTTPS feed, sends no system profile or quota data, and never forces silent installation.
+Install the latest public release from GitHub or Homebrew. Releases from 0.1.0 onward support later updates through **Check for Updates...** or `brew upgrade`. The updater uses a signed HTTPS feed, sends no system profile or quota data, and never forces silent installation.
 
 ## Product focus
 
