@@ -8,7 +8,7 @@
   a crash dialog even for a synthetic, network-free test.
 - Do not accept an Xcode license, change the global developer selection, or
   disable crash reporting as a test workaround.
-- Normal Desktop integration is an explicit opt-in Beta. Follow the current
+- Normal Desktop integration is explicitly opt-in. Follow the current
   release scope in `docs/claude-acquisition-research.md`, including signed-app
   acceptance, source isolation and distribution verification. Synthetic QA does
   not establish native acceptance or provider approval. The separate preview

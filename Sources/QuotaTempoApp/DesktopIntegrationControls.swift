@@ -57,12 +57,12 @@
     var consent: String {
       #if DESKTOP_INTEGRATION_PREVIEW
         return languageCode == "ja"
-          ? "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の許諾は未確認のローカル実験です。同意設定を保存し、次回起動後も自動接続します。接続解除またはClaudeをOFFにすると取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。"
-          : "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider permission is unconfirmed; this is a local experiment. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission."
+          ? "このMacのClaude Desktop認証を端末内で使用し、Anthropicから使用量とリセット日時を取得します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の変更により、取得できなくなる場合があります。同意設定を保存し、次回起動後も自動接続します。接続解除またはClaudeをOFFにすると取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。"
+          : "Uses Claude Desktop authentication locally on this Mac to request usage and reset times from Anthropic. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider changes may prevent QuotaTempo from retrieving usage data. Saves your consent and reconnects after app restarts. Disconnecting or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission."
       #else
         return languageCode == "ja"
-          ? "Claude Desktop (Beta)は非公式の連携で、提供元の許諾は未確認です。このMacのClaude Desktop認証情報を端末内で読み取り、Anthropicへ使用量とリセット日時を問い合わせる認証に使用します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。同意設定を保存し、Desktop選択中かつClaudeがONの場合だけ次回起動時に再接続します。接続解除、自動への切り替え、ClaudeをOFFにする操作は取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。取得に失敗しても別の取得元へ切り替えません。"
-          : "Claude Desktop (Beta) is an unofficial integration; provider permission is unconfirmed. Reads Claude Desktop authentication locally on this Mac and uses it to authenticate requests to Anthropic for usage and reset times. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Saves consent and reconnects at startup only while Desktop is selected and Claude is on. Disconnecting, switching to Automatic or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission. Failures never switch to another source."
+          ? "このMacのClaude Desktop認証情報を端末内で読み取り、Anthropicへ使用量とリセット日時を問い合わせる認証に使用します。macOSで「常に許可」を選ぶと、このアプリにClaude Safe Storageの保護キーへの継続的なアクセスを許可します。認証情報や会話は保存しません。提供元の変更により、取得できなくなる場合があります。同意設定を保存し、Desktop選択中かつClaudeがONの場合だけ次回起動時に再接続します。接続解除、自動への切り替え、ClaudeをOFFにする操作は取得と自動接続を停止しますが、macOSのアクセス許可は取り消しません。取得に失敗しても別の取得元へ切り替えません。"
+          : "Reads Claude Desktop authentication locally on this Mac and uses it to authenticate requests to Anthropic for usage and reset times. Choosing Always Allow in macOS grants this app ongoing access to the Claude Safe Storage protection key. Credentials and conversations are not saved. Provider changes may prevent QuotaTempo from retrieving usage data. Saves consent and reconnects at startup only while Desktop is selected and Claude is on. Disconnecting, switching to Automatic or turning Claude off stops acquisition and automatic reconnection, but does not revoke macOS access permission. Failures never switch to another source."
       #endif
     }
   }
@@ -171,7 +171,7 @@
         #if !DESKTOP_INTEGRATION_PREVIEW
           Picker(text("Claudeの取得元", "Claude source"), selection: source) {
             Text(text("自動", "Automatic")).tag(ClaudeSource.automatic)
-            Text("Claude Desktop (Beta)").tag(ClaudeSource.desktop)
+            Text("Claude Desktop").tag(ClaudeSource.desktop)
           }
           .pickerStyle(.menu)
           if source.wrappedValue == .automatic && connection.consentPersistenceFailed {
@@ -207,7 +207,7 @@
         Text(
           QuotaTempoRuntimePolicy.isDesktopPreview
             ? text("Claude Desktop 接続・ローカル検証版", "Claude Desktop connection · Local preview")
-            : "Claude Desktop (Beta)"
+            : text("Claude Desktop接続", "Claude Desktop connection")
         )
         .font(.headline)
         HStack(alignment: .top, spacing: 8) {

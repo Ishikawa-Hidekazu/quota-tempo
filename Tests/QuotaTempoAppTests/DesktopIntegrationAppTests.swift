@@ -155,10 +155,15 @@
           language == "ja"
             ? "取得と自動接続を停止" : "stops acquisition and automatic reconnection"))
       #expect(copy.consent.contains(language == "ja" ? "取り消しません" : "does not revoke macOS"))
+      #expect(
+        copy.consent.contains(
+          language == "ja"
+            ? "提供元の変更により、取得できなくなる場合があります。"
+            : "Provider changes may prevent QuotaTempo from retrieving usage data."))
+      #expect(!copy.consent.contains("Beta"))
+      #expect(!copy.consent.contains(language == "ja" ? "非公式" : "unofficial"))
+      #expect(!copy.consent.contains(language == "ja" ? "許諾は未確認" : "permission is unconfirmed"))
       #if !DESKTOP_INTEGRATION_PREVIEW
-        #expect(copy.consent.contains("Claude Desktop (Beta)"))
-        #expect(copy.consent.contains(language == "ja" ? "非公式" : "unofficial"))
-        #expect(copy.consent.contains(language == "ja" ? "許諾は未確認" : "permission is unconfirmed"))
         #expect(copy.consent.contains(language == "ja" ? "別の取得元へ切り替えません" : "never switch"))
       #endif
     }

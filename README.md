@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black.svg)](docs/user-guide.md)
 
-**[Download the Public Beta](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest)** · [Japanese guide](docs/user-guide.ja.md) · [Feedback and questions](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2) · [Development story](https://taupe.site/entry/quotatempo-weekly-ai-capacity-planner/)
+**[Download QuotaTempo](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest)** · [Japanese guide](docs/user-guide.ja.md) · [Feedback and questions](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2) · [Development story](https://taupe.site/entry/quotatempo-weekly-ai-capacity-planner/)
 
 QuotaTempo is a weekly AI capacity planner for Codex and Claude. Use either provider by itself or compare both. It is intended to show what you can use today before the weekly reset, without turning provider credentials or session history into application data.
 
@@ -19,19 +19,19 @@ V1 presents accurate numbers and a neutral side-by-side comparison. It does not 
 
 ## Status
 
-The latest QuotaTempo Public Beta remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The public beta has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
+QuotaTempo remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The current release has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
 
-The current beta contains deterministic planning math, a native macOS menu-bar app with a focused first-run and reopenable application window, a bounded Codex app-server reader with verified official-desktop discovery and capability fallback, a hardened local snapshot store, an automatic local-first Claude adapter, provider selection, opt-in login launch, actionable compatibility diagnostics, and direct access to the bundled product policies.
+QuotaTempo contains deterministic planning math, a native macOS menu-bar app with a focused first-run and reopenable application window, a bounded Codex app-server reader with verified official-desktop discovery and capability fallback, a hardened local snapshot store, an automatic local-first Claude adapter, provider selection, opt-in login launch, actionable compatibility diagnostics, and direct access to the bundled product policies.
 
 When recognized local Claude observations lack current reset times, QuotaTempo can launch the already-installed, signed-in Claude Code CLI in a bounded pseudo-terminal and read its rendered `/usage` panel. It does not request provider credentials or depend on CodexBar.
 
-Version 0.1.10 adds an optional **Claude Desktop (Beta)** connection for people
+Version 0.1.10 introduced an optional **Claude Desktop** connection for people
 signed in only to Claude Desktop. It reads current usage and provider-reported
 reset times without a Claude Code login or an open Chrome tab. **Automatic**
 remains the default. Desktop access requires explicit consent and a separate
 macOS permission action; its values never mix with CLI or browser accounts.
-This is an unofficial integration, not an Anthropic-approved API. See the
-[connection guide](docs/user-guide.md#claude-desktop-connection-beta) and
+Provider changes may prevent QuotaTempo from retrieving usage data. See the
+[connection guide](docs/user-guide.md#claude-desktop-connection) and
 [privacy boundary](PRIVACY.md#opt-in-claude-desktop-connection).
 
 ## Your first 60 seconds after launch
@@ -45,7 +45,7 @@ This fixture screenshot shows the expected layout. Your values and provider avai
 
 ![Expected QuotaTempo weekly comparison layout with Codex and Claude rows](docs/assets/fixture-menu-en.png)
 
-For general questions and first impressions, join the [Public Beta discussion](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2). If the first run is unclear or stops before this point, use the privacy-safe [Public Beta feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
+For general questions and first impressions, join the [QuotaTempo discussion](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2). If the first run is unclear or stops before this point, use the privacy-safe [QuotaTempo feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
 
 ## Download
 
@@ -123,7 +123,7 @@ and persistent scheduling contract in [Privacy](PRIVACY.md).
 
 ## Build and test
 
-For the signed and notarized public beta, start with the [installation and usage guide](docs/user-guide.md). A [Japanese guide](docs/user-guide.ja.md) is also available. Ad-hoc development packages are local verification artifacts and must not be redistributed as public builds.
+For the signed and notarized QuotaTempo release, start with the [installation and usage guide](docs/user-guide.md). A [Japanese guide](docs/user-guide.ja.md) is also available. Ad-hoc development packages are local verification artifacts and must not be redistributed as public builds.
 
 Requirements: macOS 14 or later and Swift 6.
 
@@ -201,13 +201,13 @@ open dist/QuotaTempo.app
 
 The bundle sets `LSUIElement`, places the app at `Contents/MacOS/QuotaTempo`, its original application icon at `Contents/Resources/QuotaTempo.icns`, localization resources at `Contents/Resources/QuotaTempoCoreResources`, and the license/privacy/support/update documents under `Contents/Resources`. Development-only fixtures and the rollback-only Claude bridge are not included. It records per-file SHA-256 values at `Contents/Resources/SHA256SUMS`. It never installs a login item automatically. A user may opt in through **Launch at login** only after moving the app to `/Applications` or the user's `Applications` folder. Provider-disabled QA copies never query the macOS login-item service. Distributed binaries are checked for developer home paths.
 
-The current beta support matrix is macOS 14 or later on Apple silicon, with the official Codex app or CLI and Claude Desktop or Claude Code already signed in. QuotaTempo does not perform either provider's login. Unsupported or changed provider data fails closed. When Claude supplies a current balance after its last confirmed reset expires, QuotaTempo may project that exact weekly cadence once only when the new balance has increased, and marks the plan with `≈`. It never chains estimates. A valid weekly balance without confirmed or one-window projected timing remains visible, while its plan is labeled **Reset time unavailable**. Claude Desktop history does not supply reset metadata: a same-account Claude Code cache or signed-in `/usage` panel must provide a current exact reset. This local-only approach cannot guarantee a new exact reset after every weekly rollover when Claude Code remains signed out. A balance still attached to an elapsed reset is hidden as **Waiting for new quota window** until a current observation arrives.
+The current support matrix is macOS 14 or later on Apple silicon, with the official Codex app or CLI and Claude Desktop or Claude Code already signed in. QuotaTempo does not perform either provider's login. Unsupported or changed provider data fails closed. When Claude supplies a current balance after its last confirmed reset expires, QuotaTempo may project that exact weekly cadence once only when the new balance has increased, and marks the plan with `≈`. It never chains estimates. A valid weekly balance without confirmed or one-window projected timing remains visible, while its plan is labeled **Reset time unavailable**. Claude Desktop history does not supply reset metadata: a same-account Claude Code cache or signed-in `/usage` panel must provide a current exact reset. This local-only approach cannot guarantee a new exact reset after every weekly rollover when Claude Code remains signed out. A balance still attached to an elapsed reset is hidden as **Waiting for new quota window** until a current observation arrives.
 
 That reset limitation applies to Automatic's local-history fallback. The opt-in
 Desktop connection obtains provider-reported resets directly and never extends
 an expired reset by seven days. It displays a failure or waiting state when a
-new observation cannot be validated. A successful current observation is not a
-guarantee against future upstream changes.
+new observation cannot be validated.
+Provider changes may prevent QuotaTempo from retrieving usage data.
 
 To create a Developer ID-signed stable package from a clean tree, run:
 
@@ -282,7 +282,7 @@ This branch adds an **opt-in Chrome extension and native messaging host**, separ
 
 The extension is disabled until connected by the user. Chrome makes same-origin web requests with its own existing session; QuotaTempo never reads or exports cookie/token values. The extension pins one account and organization, checks the account before and after the request, and forwards only normalized quota metadata. The app uses the browser observation as a whole, labels its source, and never joins its reset to Desktop or CLI values. A connected Claude tab is required; there is no tab creation or foregrounding.
 
-See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). The web routes are not a stable public API. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
+See [setup and limitations](BrowserExtension/README.md), the [privacy policy](PRIVACY.md), and [fixed-source acquisition research](docs/claude-acquisition-research.md). Provider changes may prevent QuotaTempo from retrieving usage data. Automated fixture tests are not proof of live acquisition. Installed-extension acquisition, account changes, browser restarts, and a real weekly rollover must pass before this route is released as reliable. This work does not make the separate Desktop-cache experiment release-ready.
 
 The development app provides **Disconnect browser** in Claude details, including when the extension has been removed. It clears browser values and revokes the local connection without changing Claude sign-in or silently combining accounts. A still-running extension stops after the next host rejection, so an in-flight or next scheduled observation may still run; disconnect or disable it in Chrome for immediate browser-side stop. Reconnect preserves its saved polling deadline. This control is not yet in a published release.
 

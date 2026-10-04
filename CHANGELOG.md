@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.11 - Clearer Desktop connection wording
+
+- Name the optional source Claude Desktop and simplify the availability notice:
+  provider changes may prevent QuotaTempo from retrieving usage data.
+- Remove Beta labels from current product copy while retaining explicit consent,
+  macOS permission guidance, local authentication handling and privacy boundaries.
+- No changes to acquisition, account isolation, scheduling or stored consent.
+
 ## 0.1.10 - Optional Claude Desktop connection
 
 - Add an explicit opt-in Claude Desktop (Beta) source for usage and

@@ -1,20 +1,20 @@
-name: Public Beta feedback
-description: Share a privacy-safe first-run result for QuotaTempo Public Beta.
-title: "[Beta feedback]: "
+name: QuotaTempo feedback
+description: Share a privacy-safe first-run result for QuotaTempo.
+title: "[QuotaTempo feedback]: "
 labels:
   - feedback
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for testing QuotaTempo Public Beta.
+        Thank you for testing QuotaTempo.
 
         **Do not include quota percentages, reset dates or times, credentials, tokens, cookies, prompts, transcripts, provider files, raw responses, private paths, or screenshots containing private data.**
   - type: input
     id: version
     attributes:
       label: QuotaTempo version
-      placeholder: 0.1.10
+      placeholder: 0.1.11
     validations:
       required: true
   - type: dropdown

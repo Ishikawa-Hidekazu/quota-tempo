@@ -1,6 +1,6 @@
 # Provider Freshness Contract
 
-Status: implemented in the public-beta app.
+Status: implemented in QuotaTempo.
 
 ## Decision
 
