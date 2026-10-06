@@ -280,8 +280,8 @@ Latest coordinating-run results: official 2.1.289 plugin validation and **29
 runtime tests PASS**, plus **83 Node probe tests PASS**. These are isolated
 compatibility/synthetic results, not verified live-account acquisition. The
 earlier three/10-case runtime results, schema-2 transport and six-file packages
-remain historical evidence. The latest preview Swift run passed **897 tests /
-45 suites**, including the existing expected browser watchdog issue and the
+remain historical evidence. The latest preview Swift run passed **902 tests /
+46 suites**, including the existing expected browser watchdog issue and the
 opt-in official-engine wire test. Earlier package failures were caused by
 Foundation rewriting POSIX paths into symlink aliases. The corrected bundle
 source and synthetic fixtures use canonical POSIX paths; strict no-symlink and
@@ -295,6 +295,23 @@ passed 132 tests / 4 suites and the complete preview run passed 897 / 45,
 including the official-engine synthetic wire. Remote CI must also pass before
 the corrected candidate is accepted; these results still do not establish live
 Code-session acquisition.
+
+Although `ce19e67` subsequently passed all remote CI, Finder startup failed twice
+before scene creation on October 6 at 17:24 JST. The Code preview force-unwrapped
+a defaults suite named after its own bundle ID, which
+[Apple explicitly forbids](https://developer.apple.com/documentation/foundation/userdefaults/init(suitename:)).
+It now uses its bundle-isolated standard domain instead. Existing normal-product
+preferences and the legacy Desktop-preview suite are unchanged. Resource-only
+validation bypassed the crashing getter; it was not startup acceptance.
+
+A new preview-only signed-app initialization harness reached the production
+getter and real app composition with fresh injected preferences/support storage:
+7 cases PASS, zero skips, complete cleanup; 19 harness regressions and 5 Swift
+startup tests PASS. Network and normal-HOME access are denied, and HOME-hosted
+apps are explicitly unsupported by this harness. No `App.main()`, window,
+provider acquisition or model request is executed. The old crashing artifact
+must not be reused, and the fixed head still requires its own CI and Finder/Code
+workflow acceptance before distribution.
 
 The checksum-pinned, signature-verified 2.1.289 engine sent inline synthetic usage
 through its real HTTP Unix-socket API to the native HPKE receiver, without

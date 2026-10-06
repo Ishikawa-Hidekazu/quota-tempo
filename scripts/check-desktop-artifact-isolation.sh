@@ -95,6 +95,8 @@ preview_only=(
 code_comparison_markers=(
   -e 'CodeComparison'
   -e 'CodeUsageComparison'
+  -e 'CodeComparisonStartupValidation'
+  -e 'startupValidated'
   -e 'QuotaTempo.CodeComparison'
   -e 'quotatempo-mods-comparison'
   -e 'quotatempo-usage-probe'

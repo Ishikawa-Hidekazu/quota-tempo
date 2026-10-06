@@ -7,6 +7,25 @@ enum QuotaTempoEntryPoint {
   @MainActor
   static func main() {
     let arguments = Array(CommandLine.arguments.dropFirst())
+    if requestsCodeStartupValidation(arguments) {
+      #if DESKTOP_INTEGRATION_PREVIEW
+        let watchdog = DispatchSource.makeTimerSource(queue: .global())
+        watchdog.schedule(deadline: .now() + 25)
+        watchdog.setEventHandler {
+          print("{\"status\":\"startupValidationDeadlineExceeded\",\"passed\":false}")
+          exit(2)
+        }
+        watchdog.resume()
+        setbuf(stdout, nil)
+        let result = CodeComparisonStartupValidation.run(arguments)
+        watchdog.cancel()
+        print(result.json)
+        exit(result.exitCode)
+      #else
+        print("{\"status\":\"startupValidationNotIncluded\",\"passed\":false}")
+        exit(2)
+      #endif
+    }
     if requestsCodePackageValidation(arguments) {
       #if DESKTOP_INTEGRATION_PREVIEW
         let watchdog = DispatchSource.makeTimerSource(queue: .global())
@@ -65,5 +84,9 @@ enum QuotaTempoEntryPoint {
 
   static func requestsCodePackageValidation(_ arguments: [String]) -> Bool {
     arguments.contains { $0.hasPrefix("--code-comparison-package-validation") }
+  }
+
+  static func requestsCodeStartupValidation(_ arguments: [String]) -> Bool {
+    arguments.contains { $0.hasPrefix("--code-comparison-startup-validation") }
   }
 }

@@ -41,6 +41,8 @@ jobs:
         run: node scripts/test-desktop-integration-builder.mjs
       - name: Local Desktop startup harness (synthetic only)
         run: node scripts/test-desktop-integration-startup-tests.mjs
+      - name: Code preview startup harness (synthetic only)
+        run: node --test scripts/test-code-comparison-startup.test.mjs
       - name: Local Desktop integration tests (synthetic only)
         run: QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1 bash scripts/test-swift.sh
       - name: Code-only preview signed resources (local ad-hoc, no live acquisition)
@@ -49,6 +51,7 @@ jobs:
           trap 'rm -rf -- "$temporary"' EXIT
           bash scripts/build-code-comparison-preview.sh "$temporary/CodeComparison.app"
           node scripts/test-code-comparison-signed-package.mjs --app "$temporary/CodeComparison.app"
+          node scripts/test-code-comparison-startup.mjs --app "$temporary/CodeComparison.app"
       - name: Browser bridge fixtures (no browser or provider access)
         run: |
           node --test BrowserExtension/tests/*.test.cjs

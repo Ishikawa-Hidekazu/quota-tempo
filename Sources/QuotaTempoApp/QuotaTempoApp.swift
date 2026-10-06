@@ -550,7 +550,9 @@ enum QuotaTempoAppDefaults {
   static var defaults: UserDefaults {
     #if DESKTOP_INTEGRATION_PREVIEW
       if isBundledCodePreview {
-        return UserDefaults(suiteName: "co.ishikawa.QuotaTempo.CodeComparisonPreview")!
+        // The preview's unique bundle ID already isolates its standard domain.
+        // Passing that same ID as a suite name returns nil on macOS.
+        return .standard
       }
       // Retain the original preview preference suite so existing versioned
       // consent is not silently discarded by a cosmetic bundle-ID alignment.
@@ -955,12 +957,18 @@ struct QuotaTempoApp: App {
   )
 
   init() {
-    let arguments = CommandLine.arguments
+    self.init(
+      arguments: CommandLine.arguments,
+      supportDirectory: FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask)[0],
+      defaults: QuotaTempoAppDefaults.defaults)
+  }
+
+  init(arguments: [String], supportDirectory: URL, defaults: UserDefaults) {
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       let desktopConfiguration = DesktopIntegrationConfiguration(
         arguments: arguments,
-        supportDirectory: FileManager.default.urls(
-          for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        supportDirectory: supportDirectory)
       let providerDisabled = desktopConfiguration.providerDisabled
     #else
       let providerDisabled = QuotaTempoRuntimePolicy.providersDisabled(arguments: arguments)
@@ -975,15 +983,14 @@ struct QuotaTempoApp: App {
         providerDisabled
         ? nil
         : ClaudeSourcePreferences(
-          defaults: QuotaTempoAppDefaults.defaults)
+          defaults: defaults)
     #endif
-    let defaults = QuotaTempoAppDefaults.defaults
     let directory: URL
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       #if DESKTOP_INTEGRATION_PREVIEW
         directory =
           QuotaTempoAppDefaults.isBundledCodePreview
-          ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+          ? supportDirectory
             .appendingPathComponent(
               "QuotaTempoCodeComparisonPreview/Observations", isDirectory: true)
           : desktopConfiguration.appDirectory
@@ -994,10 +1001,7 @@ struct QuotaTempoApp: App {
       if let index = arguments.firstIndex(of: "--storage-directory"), index + 1 < arguments.count {
         directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
       } else {
-        directory = FileManager.default.urls(
-          for: .applicationSupportDirectory,
-          in: .userDomainMask
-        )[0].appendingPathComponent("QuotaTempo", isDirectory: true)
+        directory = supportDirectory.appendingPathComponent("QuotaTempo", isDirectory: true)
       }
     #endif
     #if DESKTOP_INTEGRATION_PREVIEW

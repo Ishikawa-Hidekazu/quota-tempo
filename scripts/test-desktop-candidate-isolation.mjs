@@ -23,13 +23,13 @@ const featureSetting = { kind: { define: { _0: featureDefine } }, tool: "swift" 
 const previewSetting = { kind: { define: { _0: previewDefine } }, tool: "swift" };
 const normalExcludes = {
   [app]: [
-    "CodeComparisonEncryption.swift", "CodeComparisonIPC.swift", "CodeComparisonPackageValidation.swift", "CodeComparisonPluginPackage.swift", "CodeUsageComparison.swift",
+    "CodeComparisonEncryption.swift", "CodeComparisonIPC.swift", "CodeComparisonPackageValidation.swift", "CodeComparisonStartupValidation.swift", "CodeComparisonPluginPackage.swift", "CodeUsageComparison.swift",
     "CodeUsageComparisonConnection.swift", "CodeUsageComparisonControls.swift",
   ],
   [appTests]: [
     "CodeComparisonAppWiringTests.swift", "CodeComparisonConnectionTests.swift",
     "CodeComparisonDecoderTests.swift", "CodeComparisonEncryptionTests.swift",
-    "CodeComparisonIPCTests.swift", "CodeComparisonOfficialWireTests.swift", "CodeComparisonPackageValidationTests.swift", "CodeComparisonPluginPackageTests.swift", "CodeComparisonUITests.swift",
+    "CodeComparisonIPCTests.swift", "CodeComparisonOfficialWireTests.swift", "CodeComparisonPackageValidationTests.swift", "CodeComparisonStartupValidationTests.swift", "CodeComparisonPluginPackageTests.swift", "CodeComparisonUITests.swift",
   ],
   [candidate]: [
     "DesktopPreviewModel.swift", "DesktopPreviewMenu.swift",

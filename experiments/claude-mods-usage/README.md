@@ -121,7 +121,7 @@ must not become Automatic or a planning source.
 Current 0.0.4 validation reported by the coordinating run: official 2.1.289 plugin
 validation and **29 runtime tests PASS**; **83 Node probe tests PASS**. These are
 isolated/synthetic compatibility results, not live-account acquisition evidence.
-The latest preview Swift run passed **897 tests / 45 suites**, including the
+The latest preview Swift run passed **902 tests / 46 suites**, including the
 opt-in official-engine native wire test and the existing expected browser
 watchdog issue. The four earlier package failures came from Foundation rewriting
 POSIX paths to symlink aliases; the corrected paths retain the strict no-symlink
@@ -136,6 +136,36 @@ assertions exercise the production bridge directly, with explicit bounded
 fixture deadlines. Product timers, guards and shutdown behavior are unchanged.
 The focused regression run passed **132 tests / 4 suites**. Remote CI acceptance
 of this correction remains separate from these local results.
+
+### Finder startup failure and regression gate
+
+The `ce19e67` candidate's macOS CI and CodeQL succeeded, but real Finder launches
+on October 6 at 17:24 JST crashed twice before scene creation. Its defaults getter
+force-unwrapped `UserDefaults(suiteName:)` with the preview's own bundle ID.
+[Apple disallows that suite name](https://developer.apple.com/documentation/foundation/userdefaults/init(suitename:)).
+The Code preview now uses `.standard`, isolated by its unique bundle identifier;
+the legacy Desktop-preview suite and normal application's behavior are retained.
+
+Earlier resource validation returned before app composition and could not detect
+this startup error. A separate, preview-only startup validation entry point now
+exercises the production defaults getter and real app initializer, injecting a
+fresh preference suite and private support directory. Provider acquisition is
+disabled; `App.main()` is not called. The signed Developer ID candidate passed
+all **7 cases / zero skips**, with complete temporary cleanup. **19 harness
+regressions** and **5 Swift startup tests** also passed. This is initialization
+acceptance, not Finder/window acceptance or live Code usage. Do not reuse the
+crashing `ce19e67` preview. The corrected commit needs its own CI and native
+workflow acceptance.
+
+```bash
+node scripts/test-code-comparison-startup.mjs --app /private/tmp/CodeComparisonPreview.app
+```
+
+The startup harness denies network access and reads/writes under the normal
+HOME. It intentionally rejects apps under HOME, including Downloads; use an
+explicitly verified private temporary build. Each child has a fresh HOME, and
+only bounded, recognized results authorize adoption and cleanup of its private
+outputs. Its fixed result reports `guiStarted: false` and `liveCodeAccepted: false`.
 
 The checksum-pinned, signature-verified official 2.1.289 engine sent encrypted
 synthetic usage over its real HTTP Unix-socket API to the native receiver. No
@@ -165,13 +195,14 @@ usage. A skipped required case is incomplete, never PASS.
 | Current verification | Result | Boundary |
 | --- | --- | --- |
 | Default Swift graph | PASS, 764 tests / 30 suites | Existing expected browser watchdog issue |
-| Preview Swift graph | PASS, 897 tests / 45 suites | Includes isolated official-engine synthetic wire; same expected watchdog issue |
+| Preview Swift graph | PASS, 902 tests / 46 suites | Includes isolated official-engine synthetic wire; same expected watchdog issue |
 | Node metadata, packaging and helper regressions | PASS, 288 tests | No live account acquisition |
 | Official 2.1.289 plugin validator / runtime | PASS / 29 tests | HTTP fixtures in `plugin test` |
 | Signed resource rejection harness | PASS, 11 cases / zero skips | Disposable copies; no Code UI or authentication |
+| Signed app initialization harness | PASS, 7 cases / zero skips; 19 harness regressions | Defaults getter and isolated app composition; no GUI startup |
 | Preview builder | PASS, 21 cases | Synthetic builder fixtures |
-| Compiled-artifact isolation | PASS, 552 regressions and two actual normal bundles | Code comparison implementation excluded from normal artifacts |
-| Manifest isolation | PASS, 13 positive / 320 negative cases | Preview-only app and test graph |
+| Compiled-artifact isolation | PASS, 588 regressions and two actual normal bundles | Code comparison implementation excluded from normal artifacts |
+| Manifest isolation | PASS, 13 positive / 328 negative cases | Preview-only app and test graph |
 | Crypto bundle reproducibility, format and release policies | PASS | Published app version remains 0.1.11 |
 | Revised plugin's real session measurement and final distribution | NOT ACCEPTED | No public enablement or release claim |
 

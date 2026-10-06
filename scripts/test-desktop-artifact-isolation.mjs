@@ -43,6 +43,7 @@ const previewOnly = [
 const codeComparisonMarkers = [
   "CodeComparison", "CodeUsageComparison", "CodeComparisonIPCBridge", "CodeComparisonIPCSession",
   "CodeComparisonEncryption", "CodeUsageComparisonController", "CodeUsageComparisonControls",
+  "CodeComparisonStartupValidation", "startupValidated",
   "QuotaTempo.CodeComparison.IPC", "QuotaTempo.CodeComparison.response.v3",
   "quotatempo-mods-comparison", "quotatempo-usage-probe", "quotatempo-code-comparison-plugin",
   "quotatempo-code-plugin-management", "probe-grant.json", "bridge.sock",
@@ -50,6 +51,8 @@ const codeComparisonMarkers = [
 ];
 const allowed = [
   "Claude Desktop", "claudeDesktopHistory", "Library/Application Support/Claude",
+  "--code-comparison-startup-validation",
+  '{"status":"startupValidationNotIncluded","passed":false}',
 ];
 
 function fixture(t) {
@@ -186,6 +189,8 @@ const pluginMaterialPaths = [
   "Contents/Helpers/module.mjs", "Contents/Resources/.quotatempo-code-plugin-management",
   "Contents/Resources/probe-grant.json", "Contents/Resources/bridge.sock",
   "Contents/Resources/CodeComparisonIPC.swift", "Contents/Resources/CodeUsageComparison.swift",
+  "Contents/Resources/CodeComparisonStartupValidation.swift",
+  "Contents/Resources/CodeComparisonStartupValidationTests.swift",
 ];
 for (const path of pluginMaterialPaths) {
   for (const kind of ["file", "directory", "symlink", "dangling-symlink"]) {
