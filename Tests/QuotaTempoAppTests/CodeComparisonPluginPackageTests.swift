@@ -67,7 +67,7 @@ struct CodeComparisonPluginPackageTests {
   }
 
   @Test(
-    "Eight resources plus manifest stage privately, reuse without writes, and expose only builtin plans"
+    "Eight resources plus manifest stage privately and reuse without writes"
   )
   func stageAndReuse() throws {
     let (root, source, storage) = try fixture()
@@ -80,11 +80,6 @@ struct CodeComparisonPluginPackageTests {
     #expect(before[.systemFileNumber] as? NSNumber == after[.systemFileNumber] as? NSNumber)
     #expect(before[.modificationDate] as? Date == after[.modificationDate] as? Date)
     #expect(first.pluginID == "quotatempo-usage-probe@\(marketplace)")
-    #expect(first.marketplaceAdd == "/plugin marketplace add \"\(first.directory.path)\"")
-    #expect(first.install == "/plugin install \(first.pluginID)")
-    #expect(first.disable == "/plugin disable")
-    #expect(first.enable == "/plugin enable")
-    #expect(first.uninstall == "/plugin uninstall")
     #expect(CodeComparisonPluginPackage.files.count == 8)
     for file in CodeComparisonPluginPackage.files + [CodeComparisonPluginPackage.manifestName] {
       let attrs = try FileManager.default.attributesOfItem(
@@ -101,6 +96,18 @@ struct CodeComparisonPluginPackageTests {
       let attrs = try FileManager.default.attributesOfItem(atPath: directory.path)
       #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o700)
     }
+  }
+
+  @Test("Setup guide is a pinned public document, not a Desktop installation command")
+  func setupGuide() {
+    let url = CodeComparisonPluginCommands.setupGuideURL
+    #expect(url.scheme == "https" && url.host == "github.com")
+    #expect(
+      url.path
+        == "/Ishikawa-Hidekazu/quota-tempo/blob/76f911283104e0208b761c34d39fc9e6c2788d3e/experiments/claude-mods-usage/README.md"
+    )
+    #expect(url.fragment == "desktop-onboarding-route-mismatch-2026-10-06")
+    #expect(url.query == nil)
   }
 
   @Test("Tampered existing staging is not repaired, deleted or replaced")

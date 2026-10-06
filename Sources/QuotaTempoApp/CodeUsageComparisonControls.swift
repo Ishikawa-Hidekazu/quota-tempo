@@ -6,6 +6,7 @@ struct CodeUsageComparisonControls: View {
   @ObservedObject var connection: CodeUsageComparisonController
   let enabled: Bool
   @Environment(\.locale) private var locale
+  @Environment(\.openURL) private var openURL
   @State private var expanded = false
   @State private var showingConsent = false
   @State private var pending = false
@@ -13,15 +14,18 @@ struct CodeUsageComparisonControls: View {
   @State private var copiedCommand: String?
   @State private var preparedPackage: CodeComparisonPluginCommands?
   @State private var packageFailed = false
+  @State private var showingPluginManagement = false
 
   init(
     connection: CodeUsageComparisonController, enabled: Bool, initiallyExpanded: Bool = false,
-    initiallyPreparedPackage: CodeComparisonPluginCommands? = nil
+    initiallyPreparedPackage: CodeComparisonPluginCommands? = nil,
+    initiallyExpandedManagement: Bool = false
   ) {
     self.connection = connection
     self.enabled = enabled
     _expanded = State(initialValue: initiallyExpanded)
     _preparedPackage = State(initialValue: initiallyPreparedPackage)
+    _showingPluginManagement = State(initialValue: initiallyExpandedManagement)
   }
 
   private var japanese: Bool { locale.language.languageCode?.identifier == "ja" }
@@ -65,10 +69,6 @@ struct CodeUsageComparisonControls: View {
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         }
-        if let package = connection.pluginPackage ?? preparedPackage {
-          packageBody(package)
-        }
-
         HStack(alignment: .top, spacing: 8) {
           if busy {
             ProgressView()
@@ -96,9 +96,18 @@ struct CodeUsageComparisonControls: View {
           timestamp(text("Code観測日時", "Code observed"), date: receivedAt)
         }
 
-        if connection.view.status != .disconnected && connection.view.status != .preparing,
+        if Self.showsConnectionArguments(connection.view.status),
           let command = connection.command
         {
+          Text(
+            text(
+              "Codeの入力欄で /quotatempo-probe を選び、下の接続用引数を実行してください。設定画面では接続できません。",
+              "In Code's input, select /quotatempo-probe and run the connection arguments below. The settings screen does not connect."
+            )
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
           commandBody(command)
         }
 
@@ -109,6 +118,9 @@ struct CodeUsageComparisonControls: View {
             HStack(spacing: 12) { actionButtons }
             VStack(alignment: .leading, spacing: 8) { actionButtons }
           }
+        }
+        if let package = connection.pluginPackage ?? preparedPackage {
+          packageBody(package)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -128,6 +140,10 @@ struct CodeUsageComparisonControls: View {
     .onDisappear { dismissConsent() }
   }
 
+  static func showsConnectionArguments(_ status: CodeUsageComparisonStatus) -> Bool {
+    status == .waitingForConnection
+  }
+
   private var statusText: String {
     switch connection.view.status {
     case .disconnected:
@@ -136,8 +152,8 @@ struct CodeUsageComparisonControls: View {
       return text("比較用接続を準備しています。", "Preparing the comparison connection.")
     case .waitingForConnection:
       return text(
-        "初回はClaude Code側のメニューから接続コマンドを実行してください。準備だけでは接続しません。",
-        "First run the connection command from Claude Code's menu. Preparation alone does not connect."
+        "Code側からの接続を待っています。準備だけでは接続しません。接続準備は15分で期限切れになります。",
+        "Waiting for Code to connect. Preparation alone does not connect and expires after 15 minutes."
       )
     case .waitingForMeasurement:
       return text(
@@ -176,76 +192,82 @@ struct CodeUsageComparisonControls: View {
     }
   }
 
-  private func commandBody(_ command: String, requiresConnection: Bool = true) -> some View {
+  private func commandBody(_ command: String) -> some View {
     VStack(alignment: .leading, spacing: 6) {
       Text(verbatim: command)
         .font(.caption.monospaced())
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       Button {
-        guard !busy else { return }
-        if requiresConnection {
-          guard enabled, connection.command == command else { return }
-        }
+        guard !busy, enabled, Self.showsConnectionArguments(connection.view.status),
+          connection.command == command
+        else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         copiedCommand = pasteboard.setString(command, forType: .string) ? command : nil
       } label: {
         Label(
-          copiedCommand == command ? text("コピーしました", "Copied") : text("コマンドをコピー", "Copy command"),
+          copiedCommand == command
+            ? text("コピーしました", "Copied") : text("接続用引数をコピー", "Copy connection arguments"),
           systemImage: copiedCommand == command ? "checkmark" : "doc.on.doc")
       }
-      .disabled(busy || (requiresConnection && !enabled))
+      .disabled(busy || !enabled)
     }
   }
 
   private func packageBody(_ package: CodeComparisonPluginCommands) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text(
-        text(
-          "プラグイン \(package.version) 配置済み・導入状況は未確認",
-          "Plugin \(package.version) staged; installation unverified")
-      )
-      .font(.caption.weight(.semibold))
-      .fixedSize(horizontal: false, vertical: true)
-      Text(
-        text(
-          "ローカルpreviewです。ad-hoc署名は配布元の信頼性を保証しません。",
-          "Local preview. Ad-hoc signing does not establish publisher trust.")
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-      Text(
-        text(
-          "選んだローカルprojectのCodeで順に確認してください。導入画面ではlocal-onlyを選びます。起動中のセッションで読み込めたことを確認してから接続してください。",
-          "Review these in Code in the chosen local project, in order. Choose local-only in the installation panel and confirm loading in the active session before connecting."
+    DisclosureGroup(
+      text("プラグインの導入・管理", "Plugin setup and management"),
+      isExpanded: $showingPluginManagement
+    ) {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(
+          text(
+            "プラグイン \(package.version) 配置済み・導入状況は未確認",
+            "Plugin \(package.version) staged; installation unverified")
         )
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
-      commandBody(package.marketplaceAdd, requiresConnection: false)
-      commandBody(package.install, requiresConnection: false)
-      DisclosureGroup(text("プラグインの管理", "Plugin management")) {
-        VStack(alignment: .leading, spacing: 8) {
-          Text(
-            text(
-              "各コマンドはCodeの管理画面を開きます。表示されたIDとlocal scopeを確認してください。実行結果はこのアプリでは確認しません。接続解除だけではプラグインは無効化・削除されません。資材とmarketplaceは自動削除しません。",
-              "These commands open Code's management panel. Check the displayed ID and local scope. This app does not verify their results. Disconnecting does not disable or uninstall the plugin. Packages and marketplaces are not removed automatically."
-            )
+        .font(.caption.weight(.semibold))
+        .fixedSize(horizontal: false, vertical: true)
+        Text(
+          text(
+            "Code接続のローカル検証版です。この追加機能は一般公開されていません。",
+            "Local Code connection preview. This additional feature is not publicly released.")
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        Text(
+          text(
+            "導入・管理は、選んだprojectのセッションを閉じてから、手順書のlocal scope管理ツールで行います。Desktopのプラグイン設定画面ではこのローカル資材を追加できません。このアプリは導入結果を確認しません。",
+            "Install or manage with the guide's local-scope management tool after closing the chosen project's sessions. Desktop's plugin settings cannot add this local package. This app does not verify installation."
           )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-          Text(verbatim: package.pluginID)
-            .font(.caption.monospaced())
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-          commandBody(package.disable, requiresConnection: false)
-          commandBody(package.enable, requiresConnection: false)
-          commandBody(package.uninstall, requiresConnection: false)
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        Button {
+          openURL(CodeComparisonPluginCommands.setupGuideURL)
+        } label: {
+          Label(
+            text("導入・管理の手順書", "Setup and management guide"), systemImage: "book")
         }
+        Text(verbatim: package.pluginID)
+          .font(.caption.monospaced())
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(verbatim: package.directory.path)
+          .font(.caption.monospaced())
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(
+          text(
+            "既に /quotatempo-probe status が固定応答を返す場合、再導入は不要です。接続解除だけではプラグインは無効化・削除されません。資材とmarketplaceは自動削除しません。",
+            "If /quotatempo-probe status already returns its fixed response, do not reinstall. Disconnecting does not disable or uninstall the plugin. Packages and marketplaces are not removed automatically."
+          )
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       }
     }
   }
@@ -294,8 +316,8 @@ struct CodeUsageComparisonControls: View {
         .font(.subheadline.weight(.semibold))
       Text(
         text(
-          "Code専用previewの同梱プラグインを検証し、アプリ専用のprivate領域へ変更せず配置します。使用量はファイルへ保存しません。導入は選んだprojectのCode内で行い、local-onlyを選びます。接続もCode側のメニューから明示的に行います。このアプリはCLI起動、インストール、モデルへのリクエスト、画面の切り替えを行いません。",
-          "Validates the Code preview's bundled plugin and stages unchanged bytes in private app-owned storage. Usage is not saved to files. Install explicitly inside Code in the chosen project using local-only, then connect from Code's menu. This app does not start a CLI, install plugins, request model responses or switch apps."
+          "Code専用previewの同梱プラグインを検証し、アプリ専用のprivate領域へ変更せず配置します。使用量はファイルへ保存しません。導入は別途、選んだprojectにlocal scopeで行います。接続はCodeの入力欄で登録されたコマンドから明示的に行います。このアプリはCLI起動、インストール、モデルへのリクエスト、画面の切り替えを行いません。",
+          "Validates the Code preview's bundled plugin and stages unchanged bytes in private app-owned storage. Usage is not saved to files. Install separately at local scope in the chosen project, then explicitly connect using the registered command in Code's input. This app does not start a CLI, install plugins, request model responses or switch apps."
         )
       )
       .font(.caption)

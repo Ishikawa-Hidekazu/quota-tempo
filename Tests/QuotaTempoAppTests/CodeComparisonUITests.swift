@@ -9,6 +9,19 @@ import Testing
 @MainActor
 struct CodeComparisonUITests {
   @Test(
+    "Connection arguments are shown only while waiting for a fresh connection",
+    arguments: [
+      CodeUsageComparisonStatus.disconnected, .preparing, .waitingForConnection,
+      .waitingForMeasurement, .comparisonOnly, .stale, .resetPassed, .multipleSessions,
+      .unavailable, .invalidClock, .storageUnavailable,
+    ])
+  func connectionArguments(_ status: CodeUsageComparisonStatus) {
+    #expect(
+      CodeUsageComparisonControls.showsConnectionArguments(status)
+        == (status == .waitingForConnection))
+  }
+
+  @Test(
     "Expanded controls fit the menu width without opening a window", arguments: ["en", "ja"],
     [
       CodeUsageComparisonStatus.comparisonOnly, .waitingForConnection, .waitingForMeasurement,
@@ -18,8 +31,10 @@ struct CodeComparisonUITests {
     try await validate(language, status, package: nil)
   }
 
-  @Test("Staged plugin onboarding fits with a long private path", arguments: ["en", "ja"])
-  func onboarding(_ language: String) async throws {
+  @Test(
+    "Staged plugin onboarding fits with a long private path", arguments: ["en", "ja"],
+    [false, true])
+  func onboarding(_ language: String, _ expandedManagement: Bool) async throws {
     let digest = String(repeating: "a", count: 64)
     let package = CodeComparisonPluginCommands(
       directory: URL(
@@ -28,19 +43,21 @@ struct CodeComparisonUITests {
       ),
       pluginID: "quotatempo-usage-probe@quotatempo-code-11111111-1111-4111-8111-111111111111",
       version: "0.0.4", digest: digest)
-    try await validate(language, .waitingForConnection, package: package)
+    try await validate(
+      language, .waitingForConnection, package: package, expandedManagement: expandedManagement)
   }
 
   private func validate(
     _ language: String, _ status: CodeUsageComparisonStatus,
-    package: CodeComparisonPluginCommands?
+    package: CodeComparisonPluginCommands?, expandedManagement: Bool = false
   ) async throws {
     let controller = CodeUsageComparisonController(service: RenderComparisonService(status: status))
     await controller.prepare()
     await controller.refresh()
+    #expect(controller.command?.hasSuffix(" " + String(repeating: "a", count: 64)) == true)
     let controls = CodeUsageComparisonControls(
       connection: controller, enabled: true, initiallyExpanded: true,
-      initiallyPreparedPackage: package
+      initiallyPreparedPackage: package, initiallyExpandedManagement: expandedManagement
     )
     .environment(\.locale, Locale(identifier: language))
     .environment(\.colorScheme, .light)
@@ -78,7 +95,7 @@ struct CodeComparisonUITests {
       try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
       try png.write(
         to: path.appendingPathComponent(
-          "code-comparison-\(language)-\(status.rawValue)\(package == nil ? "" : "-onboarding").png"
+          "code-comparison-\(language)-\(status.rawValue)\(package == nil ? "" : "-onboarding")\(expandedManagement ? "-setup-open" : "").png"
         ))
     }
     await controller.disconnect()
@@ -92,7 +109,8 @@ private actor RenderComparisonService: CodeComparisonServing {
   func prepare(now: Date) throws -> CodeComparisonSetup {
     CodeComparisonSetup(
       directory: URL(fileURLWithPath: "/private/tmp/quotatempo-synthetic-comparison"),
-      connectionID: "11111111-1111-4111-8111-111111111111", grant: Data(), device: 0, inode: 0)
+      connectionID: "11111111-1111-4111-8111-111111111111", grant: Data(), device: 0, inode: 0,
+      publicKey: String(repeating: "a", count: 64))
   }
   func poll(connectionID: String, clock: @Sendable () -> Date) -> CodeUsageComparisonView {
     guard status == .comparisonOnly else { return CodeUsageComparisonView(status: status) }

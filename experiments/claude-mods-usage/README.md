@@ -4,7 +4,8 @@ Experimental and **not connected to the shipped app**. The pure producer has
 an original Mods adapter, a metadata-only receiver and a bounded comparison observer.
 The separate Code comparison preview includes native bundled-plugin staging and
 comparison controls; normal release targets and artifacts exclude Code implementation and
-plugin material. This onboarding prepares installation commands, not an installed plugin.
+plugin material. This onboarding stages a package and prepares connection
+arguments, not an installed plugin.
 Loading the source alone installs nothing into the user's Claude setup.
 The optional local-marketplace trial below changes plugin settings only when
 explicitly invoked. No production source, preference, snapshot, scheduling
@@ -82,10 +83,12 @@ contains a **Claude Code usage** disclosure, separate from the main Claude row.
 Explicit consent verifies and stages its bundled plugin in private app-owned
 Application Support, then prepares a fresh 0700 `/private/tmp/qtc-<UUID>` directory,
 0600 metadata-only grant and Unix socket. It does not install a plugin, connect
-Code, activate an app or request a model turn. The app exposes copyable builtin
-marketplace/install commands and management panels, but the observed Desktop
-route below does not complete local installation. Use the explicit local-scope
-CLI management procedure instead, and verify loading before connecting. Staging,
+Code, activate an app or request a model turn. The app shows connection arguments
+separately from a collapsed setup/management section containing the package
+identity, location and a pinned setup guide. It no longer offers Desktop
+marketplace/install commands that navigate to the wrong settings screen.
+Use the explicit local-scope CLI management procedure instead, and verify
+loading before connecting. Staging,
 command copying and a connected handshake are not installation or measurement receipts.
 Preparation expires after 15 minutes without a stream.
 
@@ -100,8 +103,10 @@ installation, active-session loading or live measurement was confirmed.
 Do not keep navigating this dialog, upload the package, invent a Git URL for its
 local path, or treat the displayed command as an executed installation.
 
-This is an unresolved onboarding defect in the preview's instructions, not a
-provider authentication failure. Native onboarding acceptance remains HOLD.
+This was an onboarding-instruction defect, not a provider authentication failure.
+The revised controls remove those navigation commands and their unsupported
+local-only installation-panel instructions. This corrects the misleading UI;
+it does not implement a public installer. Native onboarding acceptance remains HOLD.
 For this local trial, use `manage-code-comparison-plugin.mjs` below with a
 compatible explicitly selected CLI, an explicitly selected project, local scope,
 and that project's Code sessions closed. Do not upgrade the normal CLI or switch
@@ -113,8 +118,19 @@ establishes Desktop loading.
 After installation, start the selected Code session and verify command loading.
 Only then prepare a fresh connection in the app; previously displayed connection
 arguments can expire after 15 minutes and must not be reused after expiry.
-The app's copy-command UI still needs to distinguish Desktop navigation from
-actual CLI installation before release.
+Use the registered `/quotatempo-probe` command in Code's input, not Desktop's
+plugin settings. Run `status`; its fixed disconnected response establishes
+command execution, not a connection or quota measurement. If it is registered,
+do not reinstall. Select that command again and supply the app's newly prepared
+`connect <directory> <public key>` arguments. Connection arguments are hidden
+after the handshake or expiry; a stale preparation must be replaced, not recopied.
+
+The coordinating run has user-reported fixed `status` and successful connected
+responses for the unmodified 0.0.4 plugin. This advances command and handshake
+acceptance only; native measurement receipt remains unconfirmed. The active
+session's genuine README review and subsequent normal work may produce
+`session.measure` events. Do not submit a dummy request just to provoke quota
+data, reread a provider cache, or promise that idle waiting will produce an event.
 
 Primary references: [install from your shell](https://code.claude.com/docs/en/discover-plugins#install-from-your-shell)
 and [Desktop shared configuration](https://code.claude.com/docs/en/desktop#shared-configuration).

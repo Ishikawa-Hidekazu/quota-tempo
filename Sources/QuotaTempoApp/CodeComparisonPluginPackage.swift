@@ -14,12 +14,10 @@ struct CodeComparisonPluginCommands: Equatable, Sendable {
   let version: String
   let digest: String
 
-  // These are interactive Code commands, not shell commands or execution receipts.
-  var marketplaceAdd: String { "/plugin marketplace add \"\(directory.path)\"" }
-  var install: String { "/plugin install \(pluginID)" }
-  var disable: String { "/plugin disable" }
-  var enable: String { "/plugin enable" }
-  var uninstall: String { "/plugin uninstall" }
+  static let setupGuideURL = URL(
+    string:
+      "https://github.com/Ishikawa-Hidekazu/quota-tempo/blob/76f911283104e0208b761c34d39fc9e6c2788d3e/experiments/claude-mods-usage/README.md#desktop-onboarding-route-mismatch-2026-10-06"
+  )!
 }
 
 enum CodeComparisonPluginPackage {
