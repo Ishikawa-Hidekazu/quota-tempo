@@ -61,8 +61,8 @@ struct CodeUsageComparisonControls: View {
         if packageFailed {
           Text(
             text(
-              "同梱プラグインを安全に配置できません。Code専用previewと資材を確認してください。インストールは実行していません。",
-              "The bundled plugin could not be staged safely. Check the Code preview and its resources. No installation was performed."
+              "同梱プラグインを安全に配置できません。アプリの署名と資材を確認してください。インストールは実行していません。",
+              "The bundled plugin could not be staged safely. Check the app signature and resources. No installation was performed."
             )
           )
           .font(.caption)
@@ -230,16 +230,17 @@ struct CodeUsageComparisonControls: View {
         .fixedSize(horizontal: false, vertical: true)
         Text(
           text(
-            "Code接続のローカル検証版です。この追加機能は一般公開されていません。",
-            "Local Code connection preview. This additional feature is not publicly released.")
+            "Claude Code 2.1.287以降の2.1系CLIとNode.js 20以降が導入時に必要です。接続後、QuotaTempoはCLIやNode.jsを起動しません。",
+            "Setup requires a Claude Code 2.1 CLI at version 2.1.287 or later and Node.js 20 or later. QuotaTempo does not start either after connection."
+          )
         )
         .font(.caption)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         Text(
           text(
-            "導入・管理は、選んだprojectのセッションを閉じてから、手順書のlocal scope管理ツールで行います。Desktopのプラグイン設定画面ではこのローカル資材を追加できません。このアプリは導入結果を確認しません。",
-            "Install or manage with the guide's local-scope management tool after closing the chosen project's sessions. Desktop's plugin settings cannot add this local package. This app does not verify installation."
+            "導入・管理は、選んだprojectのセッションを閉じてから、手順書のlocal scope管理ツールをTerminalで実行します。Desktopのプラグイン設定画面では追加しません。導入後、Codeで /quotatempo-probe status の固定応答を確認してください。このアプリは導入結果を確認しません。",
+            "After closing the chosen project's sessions, run the guide's local-scope management tool in Terminal, not Desktop's plugin settings. After installation, verify the fixed /quotatempo-probe status response in Code. This app does not verify installation."
           )
         )
         .font(.caption)
@@ -316,8 +317,8 @@ struct CodeUsageComparisonControls: View {
         .font(.subheadline.weight(.semibold))
       Text(
         text(
-          "Code専用previewの同梱プラグインを検証し、アプリ専用のprivate領域へ変更せず配置します。使用量はファイルへ保存しません。導入は別途、選んだprojectにlocal scopeで行います。接続はCodeの入力欄で登録されたコマンドから明示的に行います。このアプリはCLI起動、インストール、モデルへのリクエスト、画面の切り替えを行いません。",
-          "Validates the Code preview's bundled plugin and stages unchanged bytes in private app-owned storage. Usage is not saved to files. Install separately at local scope in the chosen project, then explicitly connect using the registered command in Code's input. This app does not start a CLI, install plugins, request model responses or switch apps."
+          "同梱プラグインを検証し、アプリ専用のprivate領域へ変更せず配置します。使用量はファイルへ保存しません。導入は別途、選んだprojectにlocal scopeで行います。接続はCodeの入力欄で登録されたコマンドから明示的に行います。このアプリはCLI起動、インストール、モデルへのリクエスト、画面の切り替えを行いません。",
+          "Validates the bundled plugin and stages unchanged bytes in private app-owned storage. Usage is not saved to files. Install separately at local scope in the chosen project, then explicitly connect using the registered command in Code's input. This app does not start a CLI, install plugins, request model responses or switch apps."
         )
       )
       .font(.caption)

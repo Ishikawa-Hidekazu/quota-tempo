@@ -57,6 +57,112 @@ require_main_markers() {
 }
 require_main_markers 'Public Desktop refusal' "${required_refusal[@]}"
 require_main_markers 'Desktop connection inclusion' "${required_inclusion[@]}"
+required_code_refusal=(
+  '--code-comparison-startup-validation'
+  '--code-comparison-package-validation'
+  '{"status":"startupValidationNotIncluded","passed":false}'
+  '{"status":"codePackageValidationNotIncluded","passed":false}'
+)
+required_code_inclusion=(
+  'CodeComparisonIPCBridge'
+  'CodeComparisonEncryption'
+  'CodeComparisonPluginPackage'
+  'CodeUsageComparisonController'
+  'CodeUsageComparisonControls'
+  'QuotaTempo.CodeComparison.IPC'
+  'QuotaTempo.CodeComparison.response.v3'
+)
+require_main_markers 'Public Code refusal' "${required_code_refusal[@]}"
+require_main_markers 'Code comparison inclusion' "${required_code_inclusion[@]}"
+
+# Public resources have bundle modes, not the installer's owner-only modes.
+# Pin the captured manifest bytes independently of its self-reported hashes.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+node --input-type=module - "$app" "$repo_root" <<'JS'
+import { constants, lstatSync, readdirSync, openSync, fstatSync, readFileSync, readSync, closeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+const app = process.argv[2], root = process.argv[3];
+const files = ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'hooks/hooks.json',
+  'hooks/register.mjs', 'producer.mjs', 'protocol.mjs', 'transport-crypto.mjs', 'THIRD_PARTY_NOTICES.txt'];
+const tools = ['manage-code-comparison-plugin.mjs', 'package-code-comparison-plugin.mjs'];
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+function reject() { throw new Error('invalid_public_code_resources'); }
+function directory(path) {
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || (stat.mode & 0o7777) !== 0o755) reject();
+}
+function regular(path, limit = 262144) {
+  const before = lstatSync(path);
+  if (!before.isFile() || before.nlink !== 1 || (before.mode & 0o7777) !== 0o644 || before.size > limit) reject();
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(fd);
+    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) reject();
+    const bytes = Buffer.alloc(limit + 1);
+    let length = 0;
+    // Bound reads even if a same-UID writer changes the file after lstat.
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, length);
+      if (!count) break;
+      length += count;
+    }
+    const after = fstatSync(fd), named = lstatSync(path);
+    for (const info of [after, named]) {
+      if (info.dev !== before.dev || info.ino !== before.ino || info.size !== before.size
+        || info.mode !== before.mode || info.nlink !== 1 || info.mtimeMs !== before.mtimeMs
+        || info.ctimeMs !== before.ctimeMs) reject();
+    }
+    if (length !== before.size || length > limit) reject();
+    return bytes.subarray(0, length);
+  } finally { closeSync(fd); }
+}
+function inventory(path, expected) {
+  directory(path);
+  const actual = readdirSync(path);
+  if (actual.length !== expected.length || actual.some(name => !expected.includes(name))) reject();
+}
+const native = readFileSync(join(root, 'Sources/QuotaTempoApp/CodeComparisonPluginPackage.swift'), 'utf8');
+function constant(name, pattern) {
+  const matches = [...native.matchAll(new RegExp('^  static let ' + name + '[ \\t]*=[ \\t]*(?:\\r?\\n[ \\t]*)?"([^"\\r\\n]*)"[ \\t]*$', 'gm'))];
+  if (matches.length !== 1 || !pattern.test(matches[0][1])) reject();
+  return matches[0][1];
+}
+const digest = constant('nativeManifestDigest', /^[0-9a-f]{64}$/);
+const marketplace = constant('nativeMarketplaceName', /^quotatempo-code-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+directory(app); directory(join(app, 'Contents')); directory(join(app, 'Contents/Resources'));
+const plist = spawnSync('plutil', ['-convert', 'json', '-o', '-', '--', '-'], {
+  input: regular(join(app, 'Contents/Info.plist'), 65536), encoding: 'utf8', timeout: 10000, maxBuffer: 131072,
+});
+if (plist.error || plist.signal || plist.status !== 0) reject();
+const info = JSON.parse(plist.stdout);
+if (info.CFBundleIdentifier !== 'co.ishikawa.QuotaTempo' || info.QTCodeComparisonPluginBundled !== true
+  || info.QTCodeComparisonManifestDigest !== digest || !/^(development|stable|rc\.[1-9][0-9]*)$/.test(info.QTReleaseChannel ?? '')) reject();
+if (info.QTCodeComparisonSigningMode === 'developer-id') {
+  if (info.QTCodeComparisonSigningTeam !== '9AQKR642UU') reject();
+} else if (info.QTCodeComparisonSigningMode !== 'local-ad-hoc'
+  || Object.hasOwn(info, 'QTCodeComparisonSigningTeam') || info.QTReleaseChannel === 'stable') reject();
+const packageRoot = join(app, 'Contents/Resources/CodeComparisonPlugin');
+inventory(packageRoot, ['.claude-plugin', 'hooks', 'quotatempo-package.json', ...files.filter(file => !file.includes('/'))]);
+inventory(join(packageRoot, '.claude-plugin'), ['plugin.json', 'marketplace.json']);
+inventory(join(packageRoot, 'hooks'), ['hooks.json', 'register.mjs']);
+const bytes = regular(join(packageRoot, 'quotatempo-package.json'), 16384);
+if (hash(bytes) !== digest) reject();
+const manifest = JSON.parse(bytes.toString('utf8'));
+if (manifest.schemaVersion !== 1 || manifest.purpose !== 'quotatempo-code-comparison-plugin'
+  || manifest.releaseVersion !== '0.0.4'
+  || Object.keys(manifest.files ?? {}).sort().join('\n') !== [...files].sort().join('\n')) reject();
+for (const file of files) if (hash(regular(join(packageRoot, file))) !== manifest.files[file]) reject();
+const plugin = JSON.parse(regular(join(packageRoot, files[0])).toString('utf8'));
+const market = JSON.parse(regular(join(packageRoot, files[1])).toString('utf8'));
+if (plugin.name !== 'quotatempo-usage-probe' || plugin.version !== '0.0.4' || market.name !== marketplace
+  || market.metadata?.version !== '0.0.4' || market.plugins?.length !== 1
+  || market.plugins[0].name !== plugin.name || market.plugins[0].source !== './') reject();
+const toolRoot = join(app, 'Contents/Resources/CodePluginTools');
+inventory(toolRoot, tools);
+for (const tool of tools) if (hash(regular(join(toolRoot, tool))) !== hash(readFileSync(join(root, 'scripts', tool)))) reject();
+JS
 
 # Stable module/type names plus runtime identifiers, not mutable UI copy.
 # A stripped candidate still carries runtime strings; an unstripped leak can
@@ -105,6 +211,15 @@ code_comparison_markers=(
   -e 'probe-grant.json'
   -e 'bridge.sock'
 )
+code_preview_only=(
+  -e 'CodeComparisonStartupValidation'
+  -e 'CodeComparisonPackageValidation'
+  -e 'CodeComparisonOfficialWireTests'
+  -e 'startupValidated'
+  -e 'startupValidationDeadlineExceeded'
+  -e 'packageValidationDeadlineExceeded'
+  -e 'packageValidated'
+)
 
 files="$(mktemp "${TMPDIR:-/tmp}/quota-tempo-artifact-isolation.XXXXXX")"
 trap 'rm -f -- "$files"' EXIT
@@ -120,11 +235,14 @@ find "$app/Contents" \( \
   \) \) -o \( \
     -name '.claude-plugin' -o -path '*/.claude-plugin/*' \
     -o -name 'CodeComparisonPlugin' -o -path '*/CodeComparisonPlugin/*' \
+    -o -name 'CodePluginTools' -o -path '*/CodePluginTools/*' \
     -o -name 'plugin.json' -o -name 'marketplace.json' -o -name 'quotatempo-package.json' \
     -o -path '*/hooks/hooks.json' -o -name '*.mjs' \
     -o -name '.quotatempo-code-plugin-management' -o -path '*/.quotatempo-code-plugin-management/*' \
     -o -name 'probe-grant.json' -o -name 'bridge.sock' \
-    -o -name 'CodeComparison*.swift' -o -name 'CodeUsageComparison*.swift' \
+    -o -name 'CodeComparison' -o -name 'CodeComparisonIPC' -o -name 'CodeComparisonPlugins' \
+    -o -name '*.swift' -o -name 'test-code-comparison-*' -o -name 'official-ipc-client*' \
+    -o -name 'node_modules' -o -name 'crypto-build' -o -name '.git' \
   \) \) -print0 > "$files"
 if [[ ! -s "$files" ]]; then
   echo 'No compiled bundle artifacts found.' >&2
@@ -142,10 +260,18 @@ while true; do
     break
   fi
   case "$artifact" in
+    "$app/Contents/Resources/CodeComparisonPlugin"|"$app/Contents/Resources/CodeComparisonPlugin/"* \
+      |"$app/Contents/Resources/CodePluginTools"|"$app/Contents/Resources/CodePluginTools/"*)
+      # Only the exact inventory already verified above is exempted.
+      continue
+      ;;
     */.claude-plugin|*/.claude-plugin/*|*/CodeComparisonPlugin|*/CodeComparisonPlugin/*|*/plugin.json|*/marketplace.json \
+      |*/CodePluginTools|*/CodePluginTools/* \
       |*/quotatempo-package.json|*/hooks/hooks.json|*.mjs \
       |*/.quotatempo-code-plugin-management|*/.quotatempo-code-plugin-management/* \
-      |*/probe-grant.json|*/bridge.sock|*/CodeComparison*.swift|*/CodeUsageComparison*.swift)
+      |*/probe-grant.json|*/bridge.sock|*.swift|*/test-code-comparison-*|*/official-ipc-client* \
+      |*/CodeComparison|*/CodeComparisonIPC|*/CodeComparisonPlugins \
+      |*/node_modules|*/crypto-build|*/.git)
       echo "Code comparison plugin material found in bundle: $artifact" >&2
       exit 2
       ;;
@@ -155,7 +281,9 @@ while true; do
     echo "Unable to inspect compiled artifact: $artifact" >&2
     exit 2
   fi
-  if grep -aF "${code_comparison_markers[@]}" "$artifact" >/dev/null; then
+  code_forbidden=("${code_preview_only[@]}")
+  if [[ "$artifact" != "$binary" ]]; then code_forbidden+=("${code_comparison_markers[@]}"); fi
+  if grep -aF "${code_forbidden[@]}" "$artifact" >/dev/null; then
     echo "Code comparison implementation found in compiled artifact: $artifact" >&2
     exit 2
   else

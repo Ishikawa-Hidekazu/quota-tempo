@@ -16,7 +16,7 @@ struct CodeComparisonPluginCommands: Equatable, Sendable {
 
   static let setupGuideURL = URL(
     string:
-      "https://github.com/Ishikawa-Hidekazu/quota-tempo/blob/76f911283104e0208b761c34d39fc9e6c2788d3e/experiments/claude-mods-usage/README.md#desktop-onboarding-route-mismatch-2026-10-06"
+      "https://github.com/Ishikawa-Hidekazu/quota-tempo/blob/main/docs/claude-code-usage.md"
   )!
 }
 
@@ -25,6 +25,8 @@ enum CodeComparisonPluginPackage {
   static let resourceName = "CodeComparisonPlugin"
   static let bundleID = "co.ishikawa.QuotaTempo.CodeComparisonPreview"
   static let channel = "code-comparison-preview"
+  static let productionBundleID = "co.ishikawa.QuotaTempo"
+  static let productionTeam = "9AQKR642UU"
   static let nativeMarketplaceName = "quotatempo-code-d276298d-6c66-477a-8c58-cf2b5d8e6104"
   // This digest pins the deterministic bundled payload to the compiled executable.
   static let nativeManifestDigest =
@@ -38,12 +40,38 @@ enum CodeComparisonPluginPackage {
   static let maximumFileBytes = 256 * 1_024
   static let maximumManifestBytes = 16 * 1_024
 
+  struct BundleConfiguration: Equatable {
+    let identifier: String
+    let channel: String
+    let preview: Bool
+
+    var storageComponent: String {
+      preview ? "QuotaTempoCodeComparisonPreview" : "QuotaTempo/CodeComparison"
+    }
+  }
+
+  static func configuration(identifier: String?, channel: String?, bundled: Bool?)
+    -> BundleConfiguration?
+  {
+    guard bundled == true, let identifier, let channel else { return nil }
+    if identifier == bundleID && channel == self.channel {
+      return BundleConfiguration(identifier: identifier, channel: channel, preview: true)
+    }
+    guard identifier == productionBundleID,
+      channel == "development" || channel == "stable"
+        || channel.range(of: "^rc\\.[1-9][0-9]*$", options: .regularExpression) != nil
+    else { return nil }
+    return BundleConfiguration(identifier: identifier, channel: channel, preview: false)
+  }
+
   static func stageBundled(bundle: Bundle = .main, storageOverride: URL? = nil) throws
     -> CodeComparisonPluginCommands
   {
-    guard bundle.bundleIdentifier == bundleID,
-      bundle.object(forInfoDictionaryKey: "QTReleaseChannel") as? String == channel,
-      bundle.object(forInfoDictionaryKey: "QTCodeComparisonPluginBundled") as? Bool == true,
+    guard
+      let configuration = configuration(
+        identifier: bundle.bundleIdentifier,
+        channel: bundle.object(forInfoDictionaryKey: "QTReleaseChannel") as? String,
+        bundled: bundle.object(forInfoDictionaryKey: "QTCodeComparisonPluginBundled") as? Bool),
       let resources = bundle.resourceURL,
       let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         .first
@@ -54,7 +82,7 @@ enum CodeComparisonPluginPackage {
     let result = try stage(
       source: source,
       storage: storageOverride
-        ?? support.appendingPathComponent("QuotaTempoCodeComparisonPreview", isDirectory: true)
+        ?? support.appendingPathComponent(configuration.storageComponent, isDirectory: true)
         .appendingPathComponent("PluginPackages", isDirectory: true),
       expectedDigest: nativeManifestDigest,
       expectedMarketplace: nativeMarketplaceName)
@@ -125,13 +153,14 @@ enum CodeComparisonPluginPackage {
     let diskInfo = try signingInformation(disk)
     guard let hash = liveInfo[kSecCodeInfoUnique as String] as? Data,
       !hash.isEmpty, diskInfo[kSecCodeInfoUnique as String] as? Data == hash,
-      liveInfo[kSecCodeInfoIdentifier as String] as? String == bundleID,
-      diskInfo[kSecCodeInfoIdentifier as String] as? String == bundleID,
       let flags = diskInfo[kSecCodeInfoFlags as String] as? NSNumber,
       let signedInfo = liveInfo[kSecCodeInfoPList as String] as? [String: Any],
-      signedInfo["CFBundleIdentifier"] as? String == bundleID,
-      signedInfo["QTReleaseChannel"] as? String == channel,
-      signedInfo["QTCodeComparisonPluginBundled"] as? Bool == true,
+      let configuration = configuration(
+        identifier: signedInfo["CFBundleIdentifier"] as? String,
+        channel: signedInfo["QTReleaseChannel"] as? String,
+        bundled: signedInfo["QTCodeComparisonPluginBundled"] as? Bool),
+      liveInfo[kSecCodeInfoIdentifier as String] as? String == configuration.identifier,
+      diskInfo[kSecCodeInfoIdentifier as String] as? String == configuration.identifier,
       let manifestDigest = signedInfo["QTCodeComparisonManifestDigest"] as? String,
       manifestDigest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
     else { throw CodeComparisonPluginPackageError.invalidPackage }
@@ -141,19 +170,20 @@ enum CodeComparisonPluginPackage {
     }
     if flags.uint32Value & SecCodeSignatureFlags.adhoc.rawValue != 0 {
       // Ad-hoc seals provide integrity for a local preview, not publisher trust.
-      guard team == nil,
+      guard configuration.preview, team == nil,
         signedInfo["QTCodeComparisonSigningMode"] as? String == "local-ad-hoc",
         signedInfo["QTCodeComparisonSigningTeam"] == nil
       else { throw CodeComparisonPluginPackageError.invalidPackage }
     } else {
       guard let team, team.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil,
         signedInfo["QTCodeComparisonSigningMode"] as? String == "developer-id",
-        signedInfo["QTCodeComparisonSigningTeam"] as? String == team
+        signedInfo["QTCodeComparisonSigningTeam"] as? String == team,
+        configuration.preview || team == productionTeam
       else { throw CodeComparisonPluginPackageError.invalidPackage }
       let text =
         "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
         + " and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
-        + " and certificate leaf[subject.OU] = \"\(team)\" and identifier \"\(bundleID)\""
+        + " and certificate leaf[subject.OU] = \"\(team)\" and identifier \"\(configuration.identifier)\""
       var requirement: SecRequirement?
       guard
         SecRequirementCreateWithString(text as CFString, defaults, &requirement) == errSecSuccess,

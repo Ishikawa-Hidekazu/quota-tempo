@@ -602,7 +602,7 @@ final class QuotaTempoPresentationModel: ObservableObject {
 final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
   private var contentFactory: (() -> AnyView)?
   private var onPresent: (() -> Void)?
-  #if DESKTOP_INTEGRATION_PREVIEW
+  #if CODE_USAGE_COMPARISON
     private var onTerminate: (() -> Void)?
   #endif
   private var onboardingProvider: (() -> Bool)?
@@ -637,13 +637,13 @@ final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if CODE_USAGE_COMPARISON
       self.onTerminate?()
     #endif
     FoundationBoundedProcessRunner.terminateAllRunningProcesses()
   }
 
-  #if DESKTOP_INTEGRATION_PREVIEW
+  #if CODE_USAGE_COMPARISON
     func configureApplicationTermination(_ onTerminate: @escaping () -> Void) {
       self.onTerminate = onTerminate
     }
@@ -755,7 +755,7 @@ struct QuotaTempoApplicationContent: View {
   @ObservedObject var model: LiveQuotaModel
   @ObservedObject var settings: QuotaTempoSettingsModel
   @ObservedObject var presentation: QuotaTempoPresentationModel
-  #if DESKTOP_INTEGRATION_PREVIEW
+  #if CODE_USAGE_COMPARISON
     @ObservedObject var codeComparison = CodeUsageComparisonController()
   #endif
   #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
@@ -790,7 +790,7 @@ struct QuotaTempoApplicationContent: View {
   }
 
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if CODE_USAGE_COMPARISON
       if provider == .claude && !enabled && model.enabledProviders.count > 1 {
         codeComparison.setEnabled(false)
       }
@@ -800,7 +800,7 @@ struct QuotaTempoApplicationContent: View {
     #else
       model.setProviderEnabled(provider, enabled: enabled)
     #endif
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if CODE_USAGE_COMPARISON
       codeComparison.setEnabled(!providerDisabled && model.enabledProviders.contains(.claude))
     #endif
   }
@@ -815,7 +815,7 @@ struct QuotaTempoApplicationContent: View {
             desktopConnectionControls
           #endif
         #endif
-        #if DESKTOP_INTEGRATION_PREVIEW
+        #if CODE_USAGE_COMPARISON
           if !providerDisabled {
             CodeUsageComparisonControls(
               connection: codeComparison, enabled: model.enabledProviders.contains(.claude))
@@ -932,7 +932,7 @@ struct QuotaTempoApp: App {
   @StateObject private var model: LiveQuotaModel
   @StateObject private var settings: QuotaTempoSettingsModel
   @StateObject private var presentation: QuotaTempoPresentationModel
-  #if DESKTOP_INTEGRATION_PREVIEW
+  #if CODE_USAGE_COMPARISON
     @StateObject private var codeComparison: CodeUsageComparisonController
   #endif
   #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
@@ -944,7 +944,7 @@ struct QuotaTempoApp: App {
   private let providerDisabled: Bool
   private let updater: QuotaTempoUpdater
   private let clock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-  #if DESKTOP_INTEGRATION_PREVIEW
+  #if CODE_USAGE_COMPARISON
     private let codeComparisonClock = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
   #endif
   private let scheduledRefreshClock = Timer.publish(
@@ -1048,7 +1048,7 @@ struct QuotaTempoApp: App {
       model.explicitRefresh()
     }
     self._model = StateObject(wrappedValue: model)
-    #if DESKTOP_INTEGRATION_PREVIEW
+    #if CODE_USAGE_COMPARISON
       let codeComparison = CodeUsageComparisonController()
       codeComparison.setEnabled(!providerDisabled && model.enabledProviders.contains(.claude))
       self._codeComparison = StateObject(wrappedValue: codeComparison)
@@ -1079,7 +1079,7 @@ struct QuotaTempoApp: App {
       .onReceive(self.clock) { _ in self.model.clockAdvanced() }
       .onReceive(self.scheduledRefreshClock) { _ in self.model.scheduledRefresh() }
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
-      #if DESKTOP_INTEGRATION_PREVIEW
+      #if CODE_USAGE_COMPARISON
         .onReceive(self.codeComparisonClock) { _ in
           Task { await self.codeComparison.refresh() }
         }
@@ -1110,7 +1110,7 @@ struct QuotaTempoApp: App {
             self.settings.refreshLoginItemState()
           }
         }
-        #if DESKTOP_INTEGRATION_PREVIEW
+        #if CODE_USAGE_COMPARISON
           self.appDelegate.configureApplicationTermination {
             self.codeComparison.applicationWillTerminate()
           }
@@ -1159,10 +1159,10 @@ struct QuotaTempoApp: App {
         }
       )
     #endif
-    #if DESKTOP_INTEGRATION_PREVIEW
-      var previewContent = content
-      previewContent.codeComparison = self.codeComparison
-      return previewContent
+    #if CODE_USAGE_COMPARISON
+      var sharedContent = content
+      sharedContent.codeComparison = self.codeComparison
+      return sharedContent
     #else
       return content
     #endif

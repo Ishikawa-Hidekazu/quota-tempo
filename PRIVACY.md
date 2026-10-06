@@ -23,12 +23,13 @@ also rereads these same allowlisted local sources. This does not introduce a new
 file, permission, provider request, or CLI process, and does not relabel the data
 as newly captured.
 
-## Unreleased Claude Code comparison integration
+## Claude Code usage comparison
 
-The local integration build includes a separate, explicitly prepared comparison
-with an already authorized Claude Code trial plugin. This does not change the
-released Automatic or Desktop sources. The normal distribution UI does not
-offer this connection yet; it is not enabled or restored automatically.
+The app offers a separate, explicitly prepared comparison with an already
+authorized Claude Code plugin. This does not change Automatic or Desktop
+sources. It is not enabled or restored automatically. Installation and loading
+are separate from connection preparation; follow the
+[Code usage guide](docs/claude-code-usage.md) before connecting.
 
 After consent, the app creates a fresh 0700 `qtc-<UUID>` directory in `/private/tmp`,
 a 0600 metadata-only grant and a 0600 Unix socket. Connection and stream
@@ -66,7 +67,7 @@ the native UI never prepares its grants or falls back to it.
 
 The plugin includes pinned MIT-licensed cryptographic dependencies as a local
 bundle with third-party notices. It does not download dependencies at runtime.
-The Code-only preview can explicitly stage eight bundled plugin files plus a
+The app can explicitly stage eight bundled plugin files plus a
 quota-free checksum manifest in private, app-owned storage. It checks the running
 app's signature, the sealed resources and a manifest digest compiled into the
 executable. Existing or unknown staged files are never overwritten or repaired.
@@ -77,18 +78,18 @@ rebuilds; developer packages otherwise receive fresh marketplace UUIDs.
 The official Mods HTTP API buffers responses and exposes no documented HTTP
 cancellation or pre-read size limit. A caller deadline is not proof that the
 host's underlying request was cancelled; uncertain requests are not replayed.
-Native distribution and real-Code acceptance remain required before public
-enablement of this additional source.
+Comparison-only status does not establish account identity or provider freshness.
 
-Developer-only packaging and management tools now support a versioned,
+Bundled, user-run management tools support a versioned,
 allowlisted plugin package and explicit project-local install, refresh, staged
 update, disable, re-enable and uninstall. They are not invoked by the app. Applying them
-requires an explicit local-trial acknowledgement and confirmation that the
+requires explicit local-management consent and confirmation that the
 selected project's Code sessions are closed. No model request, account switch,
 normal CLI upgrade or broad plugin cleanup is performed. The official CLI may
 maintain its own global cache even when local scope is selected.
 
-Each developer package has a unique marketplace name. A private management journal below
+Developer packages use unique marketplace names; the bundled release uses its
+fixed, immutable namespace. A private management journal below
 the chosen project (`.quotatempo-code-plugin-management`) and a separately chosen
 private receipt contain package paths, hashes, versions, project filesystem
 identity and operation stages only. They contain no quota values or authentication.
@@ -97,7 +98,13 @@ stop without automatic replay; changing the receipt cannot bypass that stop.
 Updates preserve disabled state, and uninstall is limited to the exact managed
 local plugin ID. Marketplace registrations, package directories and plugin data
 are retained rather than deleting material potentially used elsewhere. This is
-isolated CLI acceptance, not general-distribution or native app acceptance.
+not proof of loading in Code or receipt of a measurement. The bundled tools
+require Node.js 20 or later and a compatible official 2.1-series Code CLI; the
+app never launches either for this comparison. The normal release stages under
+`~/Library/Application Support/QuotaTempo/CodeComparison/PluginPackages`, separate
+from the local preview. Production package staging requires QuotaTempo's
+Developer ID publisher team, not an ad-hoc seal or an arbitrary team declared in
+a modified bundle. Ad-hoc staging is limited to the separate local Code preview.
 
 ## Opt-in Claude Desktop connection
 

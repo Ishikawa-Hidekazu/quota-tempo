@@ -6,10 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { spawnSync } from "node:child_process";
 import { packPlugin, PLUGIN_FILES } from "./package-code-comparison-plugin.mjs";
 import { applyManagement, planManagement, runCommand } from "./manage-code-comparison-plugin.mjs";
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../experiments/claude-mods-usage");
+const manager = fileURLToPath(new URL("./manage-code-comparison-plugin.mjs", import.meta.url));
 const currentVersion = JSON.parse(fs.readFileSync(path.join(source, ".claude-plugin/plugin.json"), "utf8")).version;
 const nextVersion = currentVersion.split(".").map((part, index) => index === 2 ? Number(part) + 1 : part).join(".");
 
@@ -26,7 +28,7 @@ async function fixture(t) {
   const calls = [];
   const runner = async (file, argv, cwd) => { calls.push({ file, argv, cwd }); return { ok: true }; };
   const options = { action: "install", project, executable, packageDirectory,
-    receiptDirectory: path.join(root, "receipt"), localTrial: true, sessionsClosed: true };
+    receiptDirectory: path.join(root, "receipt"), consentLocalManagement: true, sessionsClosed: true };
   return { root, calls, runner, options };
 }
 
@@ -61,7 +63,7 @@ test("planning makes no receipt or CLI mutation and fixes local scope", async t 
   assert.match(plan.pluginID, /^quotatempo-usage-probe@quotatempo-code-/);
 });
 
-test("install records only metadata and never submits a turn", async t => {
+test("public consent install records only metadata and never submits a turn", async t => {
   const { options, runner, calls } = await fixture(t);
   assert.equal((await applyManagement(options, { runner })).status, "ready");
   assert.equal(calls.length, 3);
@@ -77,13 +79,86 @@ test("install records only metadata and never submits a turn", async t => {
   assert.equal(Object.keys(receipt).some(key => /stdout|stderr|auth|token|cookie/.test(key)), false);
 });
 
-for (const missing of ["localTrial", "sessionsClosed"]) {
-  test(`requires explicit ${missing} acknowledgement`, async t => {
-    const { options, calls, runner } = await fixture(t);
-    options[missing] = false;
-    await assert.rejects(applyManagement(options, { runner }), /explicit_trial_ack_required/);
-    assert.equal(calls.length, 0);
+for (const missing of ["consentLocalManagement", "sessionsClosed"]) {
+  for (const value of [undefined, false, "true", 1]) {
+    test(`requires boolean true ${missing} acknowledgement, not ${String(value)}`, async t => {
+      const { options, calls, runner } = await fixture(t);
+      options[missing] = value;
+      await assert.rejects(applyManagement(options, { runner }), /explicit_trial_ack_required/);
+      assert.equal(calls.length, 0);
+      assert.equal(fs.existsSync(options.receiptDirectory), false);
+      assert.equal(fs.existsSync(path.join(options.project, ".quotatempo-code-plugin-management")), false);
+    });
+  }
+}
+
+test("legacy localTrial consent still permits a synthetic install", async t => {
+  const { options, calls, runner } = await fixture(t);
+  delete options.consentLocalManagement;
+  options.localTrial = true;
+  assert.equal((await applyManagement(options, { runner })).status, "ready");
+  assert.equal(calls.length, 3);
+});
+
+test("legacy localTrial consent cannot bypass the closed-session requirement", async t => {
+  const { options, calls, runner } = await fixture(t);
+  delete options.consentLocalManagement;
+  options.localTrial = true;
+  options.sessionsClosed = false;
+  await assert.rejects(applyManagement(options, { runner }), /explicit_trial_ack_required/);
+  assert.equal(calls.length, 0);
+  assert.equal(fs.existsSync(options.receiptDirectory), false);
+  assert.equal(fs.existsSync(path.join(options.project, ".quotatempo-code-plugin-management")), false);
+});
+
+function invokeCLI(options, flags) {
+  const result = spawnSync(process.execPath, [manager, options.action,
+    "--project", options.project, "--cli", options.executable,
+    "--package", options.packageDirectory, "--receipt", options.receiptDirectory, ...flags],
+  { encoding: "utf8", timeout: 10000 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, null);
+  assert.equal(result.stderr, "");
+  return { exitCode: result.status, report: JSON.parse(result.stdout) };
+}
+
+for (const consentProvided of [false, true]) {
+  test(`CLI stays plan-only without apply, public consent ${consentProvided}`, async t => {
+    const { options } = await fixture(t);
+    const flags = consentProvided ? ["--consent-local-management", "--code-sessions-closed"] : [];
+    const { exitCode, report } = invokeCLI(options, flags);
+    assert.equal(exitCode, 0);
+    assert.equal(report.status, "planOnly");
+    assert.equal(report.requiresExplicitConsent, true);
+    assert.equal(report.requiresClosedSessions, true);
+    assert.equal(Object.hasOwn(report, "localTrialOnly"), false);
+    assert.deepEqual(report.commands, (await planManagement(options)).commands);
     assert.equal(fs.existsSync(options.receiptDirectory), false);
+    assert.equal(fs.existsSync(path.join(options.project, ".quotatempo-code-plugin-management")), false);
+  });
+}
+
+for (const acknowledgement of ["--consent-local-management", "--code-sessions-closed"]) {
+  test(`CLI cannot apply with only ${acknowledgement}`, async t => {
+    const { options } = await fixture(t);
+    const { exitCode, report } = invokeCLI(options, ["--apply", acknowledgement]);
+    assert.equal(exitCode, 1);
+    assert.deepEqual(report, { status: "stopped", reason: "explicit_trial_ack_required" });
+    assert.equal(fs.existsSync(options.receiptDirectory), false);
+    assert.equal(fs.existsSync(path.join(options.project, ".quotatempo-code-plugin-management")), false);
+  });
+}
+
+for (const acknowledgement of ["--consent-local-management", "--local-trial"]) {
+  test(`CLI accepts ${acknowledgement} for synthetic local install only`, async t => {
+    const { options } = await fixture(t);
+    const { exitCode, report } = invokeCLI(options, ["--apply", acknowledgement, "--code-sessions-closed"]);
+    assert.equal(exitCode, 0);
+    assert.deepEqual(report, { status: "ready", completedSteps: 2, runtimeAccepted: false,
+      marketplacesRetained: true });
+    const receipt = JSON.parse(fs.readFileSync(path.join(options.receiptDirectory, "receipt.json"), "utf8"));
+    assert.equal(receipt.status, "ready");
+    assert.equal(receipt.completedSteps, 2);
   });
 }
 
@@ -171,7 +246,7 @@ test("ready enable rejects without a CLI preflight or journal mutation", async t
   assert.equal(fs.existsSync(path.join(options.project, ".quotatempo-code-plugin-management", "operation.lock")), false);
 });
 
-for (const missing of ["localTrial", "sessionsClosed"]) {
+for (const missing of ["consentLocalManagement", "sessionsClosed"]) {
   test(`enable still requires ${missing} acknowledgement`, async t => {
     const { options, runner, calls } = await fixture(t);
     await applyManagement(options, { runner });

@@ -24,10 +24,37 @@ documentation cleanup. These remain reliability observations rather than claims
 of universal availability or requirements to repeat historical preview QA.
 Provider changes may prevent QuotaTempo from retrieving usage data.
 
-The separate Code comparison preview remains unreleased. The normal Desktop
-release above does not imply acceptance of its bundled plugin, encrypted Code
-transport or live-account acquisition. Current Code status is recorded in the
-0.0.4 increment below; dated Code checkpoints remain historical evidence.
+The separate Code comparison preview's initial restrictions below are historical
+checkpoints. The 2026-10-07 normal-product integration is a release candidate,
+not yet a published version. It keeps the received Code-session values isolated
+from W/P and provider-source selection. Current instructions are in the
+[Code usage guide](claude-code-usage.md), not the early Desktop settings route.
+
+### Normal-product candidate (2026-10-07)
+
+The user accepted unmodified 0.0.4 command registration, connection and native
+measurement display. Account identity and provider freshness remain unverified.
+At `7fcd313`, all seven remote checks passed and central read-only review found
+no issue in the additional two-file raster/documentation change. These results
+do not stand in for the normal-product integration or its final distribution.
+
+The candidate now compiles comparison into the ordinary app while preserving
+normal acquisition, Automatic defaults, Desktop consent and shared window
+controllers. Only the preview/headless validation paths remain excluded.
+Compiled package validation accepts the exact production bundle/channel and
+pins its Developer ID team; preview storage and permissions are not migrated.
+Optional user-run local-scope tools and a complete setup/removal guide are
+bundled separately from the plugin. The app does not launch them.
+
+Candidate verification passed 850 normal and 906 preview Swift tests, each with
+the existing expected browser watchdog issue. Package/management tests passed
+154 cases, compiled-artifact regressions 658, release-resource checks 12, and
+source containment 13 positive / 336 negative cases. The actual normal app bundle
+passed the expanded resource and implementation checks. English and Japanese
+offscreen onboarding/expiry images were inspected; this is not foreground native
+acceptance. Public signing, notarization,
+final artifact verification and central integration review are still required.
+Neither natural rollover nor a provider-permission inquiry is added as a gate.
 
 ## Official Mods follow-up (2026-10-03)
 

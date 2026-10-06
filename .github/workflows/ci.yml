@@ -27,7 +27,9 @@ jobs:
       - name: Mods metadata experiment (synthetic only)
         run: node --test experiments/claude-mods-usage/producer.test.mjs experiments/claude-mods-usage/probe.test.mjs experiments/claude-mods-usage/observe.test.mjs experiments/claude-mods-usage/tests/official-ipc-client.test.mjs
       - name: Code comparison packaging and project-local lifecycle (synthetic only)
-        run: node --test scripts/package-code-comparison-plugin.test.mjs scripts/manage-code-comparison-plugin.test.mjs
+        run: |
+          node --test scripts/package-code-comparison-plugin.test.mjs scripts/manage-code-comparison-plugin.test.mjs
+          node scripts/test-code-comparison-release-resources.mjs
       - name: Code preview builder and compiled-artifact isolation regressions
         run: |
           node scripts/test-code-comparison-preview-builder.mjs

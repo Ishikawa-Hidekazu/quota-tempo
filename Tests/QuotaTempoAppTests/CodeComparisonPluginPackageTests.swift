@@ -98,16 +98,46 @@ struct CodeComparisonPluginPackageTests {
     }
   }
 
-  @Test("Setup guide is a pinned public document, not a Desktop installation command")
+  @Test("Setup guide is the public Code guide, not a Desktop installation command")
   func setupGuide() {
     let url = CodeComparisonPluginCommands.setupGuideURL
     #expect(url.scheme == "https" && url.host == "github.com")
     #expect(
       url.path
-        == "/Ishikawa-Hidekazu/quota-tempo/blob/76f911283104e0208b761c34d39fc9e6c2788d3e/experiments/claude-mods-usage/README.md"
+        == "/Ishikawa-Hidekazu/quota-tempo/blob/main/docs/claude-code-usage.md"
     )
-    #expect(url.fragment == "desktop-onboarding-route-mismatch-2026-10-06")
+    #expect(url.fragment == nil)
     #expect(url.query == nil)
+  }
+
+  @Test("Production and preview bundle identities have separate storage and exact channels")
+  func bundleConfigurations() throws {
+    let production = try #require(
+      CodeComparisonPluginPackage.configuration(
+        identifier: "co.ishikawa.QuotaTempo", channel: "stable", bundled: true))
+    #expect(!production.preview && production.storageComponent == "QuotaTempo/CodeComparison")
+    let preview = try #require(
+      CodeComparisonPluginPackage.configuration(
+        identifier: CodeComparisonPluginPackage.bundleID,
+        channel: CodeComparisonPluginPackage.channel, bundled: true))
+    #expect(preview.preview && preview.storageComponent == "QuotaTempoCodeComparisonPreview")
+    #expect(
+      CodeComparisonPluginPackage.configuration(
+        identifier: "co.ishikawa.QuotaTempo", channel: "rc.1", bundled: true) != nil)
+    for channel in ["code-comparison-preview", "rc.0", "rc.01", "stable-extra", "", "unknown"] {
+      #expect(
+        CodeComparisonPluginPackage.configuration(
+          identifier: "co.ishikawa.QuotaTempo", channel: channel, bundled: true) == nil)
+    }
+    #expect(
+      CodeComparisonPluginPackage.configuration(
+        identifier: CodeComparisonPluginPackage.bundleID, channel: "stable", bundled: true) == nil)
+    #expect(
+      CodeComparisonPluginPackage.configuration(
+        identifier: "co.ishikawa.QuotaTempo", channel: "stable", bundled: false) == nil)
+    #expect(
+      CodeComparisonPluginPackage.configuration(
+        identifier: "other.publisher", channel: "stable", bundled: true) == nil)
   }
 
   @Test("Tampered existing staging is not repaired, deleted or replaced")
@@ -242,7 +272,7 @@ struct CodeComparisonPluginPackageTests {
     }
   }
 
-  @Test("Non-preview bundles cannot stage resources")
+  @Test("Unbundled test hosts cannot stage resources")
   func distributionRefusal() {
     #expect(throws: CodeComparisonPluginPackageError.notBundledPreview) {
       try CodeComparisonPluginPackage.stageBundled(bundle: .main)

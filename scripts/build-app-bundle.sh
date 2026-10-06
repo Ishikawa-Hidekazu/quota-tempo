@@ -33,10 +33,41 @@ install -m 644 "$repo_root/SUPPORT.md" "$stage/Contents/Resources/SUPPORT.md"
 install -m 644 "$repo_root/UPDATES.md" "$stage/Contents/Resources/UPDATES.md"
 install -m 644 "$repo_root/.build/artifacts/sparkle/Sparkle/LICENSE" \
   "$stage/Contents/Resources/SPARKLE-LICENSE"
+# Package immutable Code resources while they still have private staging modes.
+# The app never executes the optional Node tools; users invoke them explicitly.
+node --input-type=module - "$repo_root" "$stage" <<'JS'
+import { readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const root = realpathSync(process.argv[2]);
+const stage = realpathSync(process.argv[3]);
+const source = readFileSync(join(root, 'Sources/QuotaTempoApp/CodeComparisonPluginPackage.swift'), 'utf8');
+function constant(name, pattern) {
+  const matches = [...source.matchAll(new RegExp('^  static let ' + name + '[ \\t]*=[ \\t]*(?:\\r?\\n[ \\t]*)?"([^"\\r\\n]*)"[ \\t]*$', 'gm'))];
+  if (matches.length !== 1 || !pattern.test(matches[0][1])) throw new Error('native_package_pin_unset_or_invalid');
+  return matches[0][1];
+}
+const marketplaceName = constant('nativeMarketplaceName', /^quotatempo-code-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const digest = constant('nativeManifestDigest', /^[0-9a-f]{64}$/);
+const { packPlugin, verifyPackage } = await import(pathToFileURL(join(root, 'scripts/package-code-comparison-plugin.mjs')));
+const destination = join(stage, 'Contents/Resources/CodeComparisonPlugin');
+await packPlugin({ source: join(root, 'experiments/claude-mods-usage'), destination, marketplaceName });
+const result = await verifyPackage(destination);
+if (result.version !== '0.0.4' || result.packageDigest !== digest || result.marketplaceName !== marketplaceName)
+  throw new Error('public_code_package_pin_mismatch');
+JS
+manifest_digest="$(shasum -a 256 "$stage/Contents/Resources/CodeComparisonPlugin/quotatempo-package.json" | awk '{print $1}')"
+plist=/usr/libexec/PlistBuddy
+[[ "$("$plist" -c 'Print :QTCodeComparisonManifestDigest' "$stage/Contents/Info.plist")" == "$manifest_digest" ]]
+[[ "$("$plist" -c 'Print :QTCodeComparisonPluginBundled' "$stage/Contents/Info.plist")" == true ]]
+mkdir -p "$stage/Contents/Resources/CodePluginTools"
+for tool in manage-code-comparison-plugin.mjs package-code-comparison-plugin.mjs; do
+  install -m 644 "$repo_root/scripts/$tool" "$stage/Contents/Resources/CodePluginTools/$tool"
+done
 install -m 755 "$build_dir/QuotaTempo" "$binary_stage/QuotaTempo"
 strip -x "$binary_stage/QuotaTempo"
 install_name_tool -add_rpath @executable_path/../Frameworks "$binary_stage/QuotaTempo"
-codesign --force --sign - --timestamp=none "$binary_stage/QuotaTempo"
+codesign --force --sign - --timestamp=none --identifier co.ishikawa.QuotaTempo "$binary_stage/QuotaTempo"
 install -m 755 "$binary_stage/QuotaTempo" "$stage/Contents/MacOS/QuotaTempo"
 install -m 755 "$build_dir/QuotaTempoBrowserHost" "$binary_stage/QuotaTempoBrowserHost"
 strip -x "$binary_stage/QuotaTempoBrowserHost"

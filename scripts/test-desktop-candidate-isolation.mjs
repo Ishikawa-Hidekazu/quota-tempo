@@ -10,6 +10,7 @@ const candidate = "QuotaTempoDesktopCandidate";
 const testTarget = `${candidate}Tests`;
 const previewEnvironment = "QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW";
 const featureDefine = "DESKTOP_CONNECTION";
+const codeDefine = "CODE_USAGE_COMPARISON";
 const previewDefine = "DESKTOP_INTEGRATION_PREVIEW";
 const app = "QuotaTempoApp";
 const appTests = "QuotaTempoAppTests";
@@ -20,16 +21,14 @@ const isolatedTargets = [
 const candidateDependency = { target: [candidate, null] };
 const candidateTestDependency = { byName: [candidate, null] };
 const featureSetting = { kind: { define: { _0: featureDefine } }, tool: "swift" };
+const codeSetting = { kind: { define: { _0: codeDefine } }, tool: "swift" };
 const previewSetting = { kind: { define: { _0: previewDefine } }, tool: "swift" };
 const normalExcludes = {
   [app]: [
-    "CodeComparisonEncryption.swift", "CodeComparisonIPC.swift", "CodeComparisonPackageValidation.swift", "CodeComparisonStartupValidation.swift", "CodeComparisonPluginPackage.swift", "CodeUsageComparison.swift",
-    "CodeUsageComparisonConnection.swift", "CodeUsageComparisonControls.swift",
+    "CodeComparisonPackageValidation.swift", "CodeComparisonStartupValidation.swift",
   ],
   [appTests]: [
-    "CodeComparisonAppWiringTests.swift", "CodeComparisonConnectionTests.swift",
-    "CodeComparisonDecoderTests.swift", "CodeComparisonEncryptionTests.swift",
-    "CodeComparisonIPCTests.swift", "CodeComparisonOfficialWireTests.swift", "CodeComparisonPackageValidationTests.swift", "CodeComparisonStartupValidationTests.swift", "CodeComparisonPluginPackageTests.swift", "CodeComparisonUITests.swift",
+    "CodeComparisonOfficialWireTests.swift", "CodeComparisonPackageValidationTests.swift", "CodeComparisonStartupValidationTests.swift",
   ],
   [candidate]: [
     "DesktopPreviewModel.swift", "DesktopPreviewMenu.swift",
@@ -128,6 +127,8 @@ function validate(input, preview) {
     }
     assert.deepEqual(defineSettings(item, featureDefine), isFeatureTarget ? [featureSetting] : [],
       `Feature define must be exact, unconditional and limited to App/AppTests: ${item.name}`);
+    assert.deepEqual(defineSettings(item, codeDefine), isFeatureTarget ? [codeSetting] : [],
+      `Code define must be exact, unconditional and limited to App/AppTests: ${item.name}`);
     assert.deepEqual(defineSettings(item, previewDefine), preview && isFeatureTarget ? [previewSetting] : [],
       `Preview define must be exact and limited to App/AppTests: ${item.name}`);
   }
@@ -146,24 +147,33 @@ function validatePair(defaultManifest, previewManifest) {
 // Source-level checks supplement the synthetic graph without executing Swift.
 function validateAppGuards(source) {
   const branches = [];
+  const previewBranches = [];
   let references = 0;
   for (const line of source.split("\n")) {
     const directive = line.trim().match(/^#(if|elseif|else|endif)(?:\s+(.+))?$/);
     if (directive) {
       const [, kind, condition] = directive;
-      if (kind === "if") branches.push(condition === previewDefine);
+      if (kind === "if") {
+        branches.push(condition === codeDefine);
+        previewBranches.push(condition === previewDefine);
+      }
       else {
         assert(branches.length > 0, "Unbalanced Swift conditional compilation");
-        if (kind === "endif") branches.pop();
-        else branches[branches.length - 1] = kind === "elseif" && condition === previewDefine;
+        if (kind === "endif") { branches.pop(); previewBranches.pop(); }
+        else {
+          branches[branches.length - 1] = kind === "elseif" && condition === codeDefine;
+          previewBranches[previewBranches.length - 1] = kind === "elseif" && condition === previewDefine;
+        }
       }
     } else if (/(?:Code(?:Usage)?Comparison|codeComparison|onTerminate|configureApplicationTermination)/.test(line)) {
-      assert(branches.includes(true), `Code comparison must be preview-only: ${line.trim()}`);
+      const previewIdentity = /^\s*(?:Bundle\.main\.bundleIdentifier == CodeComparisonPluginPackage\.bundleID|== CodeComparisonPluginPackage\.channel|&& Bundle\.main\.object\(forInfoDictionaryKey: "QTCodeComparisonPluginBundled"\) as\? Bool|"QuotaTempoCodeComparisonPreview\/Observations", isDirectory: true\))\s*$/.test(line);
+      assert(branches.includes(true) || (previewIdentity && previewBranches.includes(true)),
+        `Code comparison must use its feature define: ${line.trim()}`);
       references += 1;
     }
   }
   assert.equal(branches.length, 0, "Unclosed Swift conditional compilation");
-  assert(references > 0, "Preview Code comparison wiring must remain present");
+  assert(references > 0, "Public Code comparison wiring must remain present");
 }
 
 const packageSource = readFileSync(new URL("../Package.swift", import.meta.url), "utf8");
@@ -171,22 +181,54 @@ const appSource = readFileSync(new URL("../Sources/QuotaTempoApp/QuotaTempoApp.s
 for (const [name, directory] of [[app, "Sources/QuotaTempoApp"], [appTests, "Tests/QuotaTempoAppTests"]]) {
   const files = readdirSync(new URL(`../${directory}/`, import.meta.url))
     .filter((file) => /^Code.*\.swift$/.test(file)).sort();
-  assert.deepEqual([...normalExcludes[name]].sort(), files, `All Code sources/tests need exclusion: ${name}`);
+  const validationFiles = files.filter(file => /(?:PackageValidation|StartupValidation|OfficialWireTests)/.test(file));
+  assert.deepEqual([...normalExcludes[name]].sort(), validationFiles, `Only debug Code sources/tests need exclusion: ${name}`);
   const block = packageSource.match(new RegExp(`name: "${name}",[\\s\\S]*?exclude:\\s*desktopIntegrationPreview\\s*\\?\\s*\\[\\]\\s*:\\s*\\[([\\s\\S]*?)\\]`));
-  assert(block, `${name} must exclude Code files only outside the exact preview flag`);
+  assert(block, `${name} must exclude Code debug validation only outside the exact preview flag`);
   assert.deepEqual([...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]), normalExcludes[name]);
 }
 validateAppGuards(appSource);
 for (const symbol of [
   "CodeUsageComparisonController()", "self.codeComparison.applicationWillTerminate()",
-  "codeComparison.setEnabled(false)", "previewContent.codeComparison = self.codeComparison",
+  "codeComparison.setEnabled(false)", "sharedContent.codeComparison = self.codeComparison",
   "self.onTerminate?()", "self.appDelegate.configureApplicationTermination",
 ]) {
-  assert(appSource.includes(symbol), `Expected preview wiring missing: ${symbol}`);
-  assert.throws(() => validateAppGuards(`${symbol}\n${appSource}`), /Code comparison must be preview-only/);
+  assert(appSource.includes(symbol), `Expected Code wiring missing: ${symbol}`);
+  assert.throws(() => validateAppGuards(`${symbol}\n${appSource}`), /Code comparison must use its feature define/);
 }
-assert.throws(() => validateAppGuards(appSource.replaceAll(previewDefine, featureDefine)),
-  /Code comparison must be preview-only/, "Normal Desktop inclusion must not enable Code comparison");
+for (const replacement of [featureDefine, previewDefine]) {
+  assert.throws(() => validateAppGuards(appSource.replaceAll(codeDefine, replacement)),
+    /Code comparison must use its feature define/, "Code must not depend on the Desktop or preview define");
+}
+const entryPoint = readFileSync(new URL("../Sources/QuotaTempoApp/QuotaTempoEntryPoint.swift", import.meta.url), "utf8");
+function validateEntryPointGuards(source) {
+  const branches = [], seen = new Set();
+  for (const line of source.split("\n")) {
+    const directive = line.trim().match(/^#(if|elseif|else|endif)(?:\s+(.+))?$/);
+    if (directive) {
+      const [, kind, condition] = directive;
+      if (kind === "if") branches.push(condition === previewDefine);
+      else {
+        assert(branches.length > 0, "Unbalanced entrypoint conditional");
+        if (kind === "endif") branches.pop();
+        else branches[branches.length - 1] = kind === "elseif" && condition === previewDefine;
+      }
+    }
+    for (const name of ["CodeComparisonStartupValidation", "CodeComparisonPackageValidation"]) {
+      if (line.includes(name)) {
+        assert(branches.includes(true), `${name} must remain preview-only`);
+        seen.add(name);
+      }
+    }
+  }
+  assert.equal(branches.length, 0);
+  assert.equal(seen.size, 2, "Both preview runners must retain their guarded entrypoints");
+}
+validateEntryPointGuards(entryPoint);
+for (const name of ["CodeComparisonStartupValidation", "CodeComparisonPackageValidation"]) {
+  assert.throws(() => validateEntryPointGuards(`${name}.run([])\n${entryPoint}`), /must remain preview-only/);
+}
+assert.throws(() => validateEntryPointGuards(entryPoint.replaceAll(previewDefine, codeDefine)), /must remain preview-only/);
 
 function validateNonPreview(defaultManifest, manifest, value) {
   validate(manifest, false);
@@ -205,11 +247,11 @@ function syntheticManifest() {
     targets: [
       item("QuotaTempoCore", "regular", []),
       item(candidate, "regular", ["QuotaTempoCore"]),
-      item(app, "executable", ["QuotaTempoCore"], [featureSetting]),
+      item(app, "executable", ["QuotaTempoCore"], [featureSetting, codeSetting]),
       ...isolatedTargets.filter((name) => name !== "QuotaTempoCore")
         .map((name) => item(name, "executable", ["QuotaTempoCore"])),
       item("QuotaTempoCoreTests", "test", ["QuotaTempoCore"]),
-      item(appTests, "test", [app, "QuotaTempoCore"], [featureSetting]),
+      item(appTests, "test", [app, "QuotaTempoCore"], [featureSetting, codeSetting]),
       item(testTarget, "test", [candidate, "QuotaTempoCore"]),
     ],
   };
@@ -267,8 +309,12 @@ for (const preview of [false, true]) {
     const sharedFiles = name === candidate
       ? ["DesktopPreviewServing.swift", "DesktopPreviewPresentation.swift", "DesktopConnectionController.swift"]
       : name === testTarget ? ["DesktopPreviewPresentationTests.swift", "DesktopConnectionControllerTests.swift"]
-        : name === app ? ["QuotaTempoApp.swift", "DesktopIntegrationLifecycle.swift", "DesktopIntegrationControls.swift"]
-          : ["DesktopIntegrationAppTests.swift", "ApplicationContentObservationTests.swift"];
+        : name === app ? ["QuotaTempoApp.swift", "DesktopIntegrationLifecycle.swift", "DesktopIntegrationControls.swift",
+          "CodeComparisonIPC.swift", "CodeComparisonEncryption.swift", "CodeComparisonPluginPackage.swift",
+          "CodeUsageComparison.swift", "CodeUsageComparisonConnection.swift", "CodeUsageComparisonControls.swift"]
+          : ["DesktopIntegrationAppTests.swift", "ApplicationContentObservationTests.swift",
+            "CodeComparisonAppWiringTests.swift", "CodeComparisonConnectionTests.swift", "CodeComparisonDecoderTests.swift",
+            "CodeComparisonEncryptionTests.swift", "CodeComparisonIPCTests.swift", "CodeComparisonPluginPackageTests.swift", "CodeComparisonUITests.swift"];
     for (const file of sharedFiles) {
       rejects(preview, (input) => target(input, name).exclude.push(file), `Shared code must remain included: ${file}`);
     }
@@ -322,11 +368,12 @@ for (const preview of [false, true]) {
   }
 
   for (const name of featureTargets) {
-    for (const define of [featureDefine, ...(preview ? [previewDefine] : [])]) {
+    for (const define of [featureDefine, codeDefine, ...(preview ? [previewDefine] : [])]) {
       rejects(preview, (input) => {
         target(input, name).settings = target(input, name).settings.filter((setting) => setting.kind.define?._0 !== define);
       }, `Missing ${define} on ${name}`);
-      rejects(preview, (input) => target(input, name).settings.push(structuredClone(define === featureDefine ? featureSetting : previewSetting)),
+      rejects(preview, (input) => target(input, name).settings.push(structuredClone(
+        define === featureDefine ? featureSetting : define === codeDefine ? codeSetting : previewSetting)),
         `Duplicate ${define} on ${name}`);
       for (const condition of [{ config: "debug" }, { platformNames: ["macos"] }]) {
         rejects(preview, (input) => defineSettings(target(input, name), define)[0].condition = condition,
@@ -338,7 +385,7 @@ for (const preview of [false, true]) {
     if (!preview) rejects(false, (input) => target(input, name).settings.push(previewSetting), `Preview define in normal ${name}`);
   }
   for (const name of [candidate, testTarget, ...isolatedTargets, "QuotaTempoCoreTests"]) {
-    for (const setting of [featureSetting, previewSetting]) {
+    for (const setting of [featureSetting, codeSetting, previewSetting]) {
       rejects(preview, (input) => target(input, name).settings.push(setting), `Define leak into ${name}`);
     }
   }

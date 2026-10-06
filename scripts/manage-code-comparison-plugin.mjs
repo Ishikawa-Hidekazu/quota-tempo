@@ -204,7 +204,8 @@ export async function planManagement({ action, project, executable, packageDirec
 }
 
 export async function applyManagement(options, { runner = runCommand } = {}) {
-  if (options.localTrial !== true || options.sessionsClosed !== true) fail("explicit_trial_ack_required");
+  if ((options.consentLocalManagement !== true && options.localTrial !== true)
+      || options.sessionsClosed !== true) fail("explicit_trial_ack_required");
   const plan = await planManagement(options);
   const ledgerDirectory = projectLedger(plan.project);
   let createdLedger = false;
@@ -294,7 +295,8 @@ async function main(argv) {
   const action = argv.shift();
   const flags = { action };
   const values = { "--project": "project", "--cli": "executable", "--package": "packageDirectory", "--receipt": "receiptDirectory" };
-  const toggles = { "--apply": "apply", "--local-trial": "localTrial", "--code-sessions-closed": "sessionsClosed" };
+  const toggles = { "--apply": "apply", "--consent-local-management": "consentLocalManagement",
+    "--local-trial": "localTrial", "--code-sessions-closed": "sessionsClosed" };
   while (argv.length) {
     const key = argv.shift();
     if (values[key] && argv.length && flags[values[key]] === undefined) flags[values[key]] = argv.shift();
@@ -305,7 +307,7 @@ async function main(argv) {
   if (flags.apply) return applyManagement(flags);
   const plan = await planManagement(flags);
   return { status: "planOnly", action: plan.action, scope: "local", project: plan.project,
-    commands: plan.commands, requiresClosedSessions: true, localTrialOnly: true };
+    commands: plan.commands, requiresClosedSessions: true, requiresExplicitConsent: true };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

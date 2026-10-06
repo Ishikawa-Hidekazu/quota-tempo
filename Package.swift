@@ -50,16 +50,10 @@ let package = Package(
       exclude: desktopIntegrationPreview
         ? []
         : [
-          "CodeComparisonEncryption.swift",
-          "CodeComparisonIPC.swift",
           "CodeComparisonPackageValidation.swift",
           "CodeComparisonStartupValidation.swift",
-          "CodeComparisonPluginPackage.swift",
-          "CodeUsageComparison.swift",
-          "CodeUsageComparisonConnection.swift",
-          "CodeUsageComparisonControls.swift",
         ],
-      swiftSettings: [.define("DESKTOP_CONNECTION")]
+      swiftSettings: [.define("DESKTOP_CONNECTION"), .define("CODE_USAGE_COMPARISON")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .executableTarget(
@@ -87,18 +81,11 @@ let package = Package(
       exclude: desktopIntegrationPreview
         ? []
         : [
-          "CodeComparisonAppWiringTests.swift",
-          "CodeComparisonConnectionTests.swift",
-          "CodeComparisonDecoderTests.swift",
-          "CodeComparisonEncryptionTests.swift",
-          "CodeComparisonIPCTests.swift",
           "CodeComparisonOfficialWireTests.swift",
           "CodeComparisonPackageValidationTests.swift",
           "CodeComparisonStartupValidationTests.swift",
-          "CodeComparisonPluginPackageTests.swift",
-          "CodeComparisonUITests.swift",
         ],
-      swiftSettings: [.define("DESKTOP_CONNECTION")]
+      swiftSettings: [.define("DESKTOP_CONNECTION"), .define("CODE_USAGE_COMPARISON")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .testTarget(

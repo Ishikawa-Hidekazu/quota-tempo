@@ -19,9 +19,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.11</string>
+  <string>0.1.12</string>
   <key>CFBundleVersion</key>
-  <string>31</string>
+  <string>32</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSApplicationCategoryType</key>
@@ -46,5 +46,11 @@
   <string>development</string>
   <key>QTSourceCommit</key>
   <string>development</string>
+  <key>QTCodeComparisonPluginBundled</key>
+  <true/>
+  <key>QTCodeComparisonManifestDigest</key>
+  <string>22024700344b34c645f47906425d90a375a46e14c1e3e17c90a729393215766c</string>
+  <key>QTCodeComparisonSigningMode</key>
+  <string>local-ad-hoc</string>
 </dict>
 </plist>
