@@ -34,6 +34,13 @@ Provider changes may prevent QuotaTempo from retrieving usage data. See the
 [connection guide](docs/user-guide.md#claude-desktop-connection) and
 [privacy boundary](PRIVACY.md#opt-in-claude-desktop-connection).
 
+An optional **Claude Code usage** section also compares weekly and five-hour
+values from an explicitly connected Code session. It is separate from the main
+provider rows: its account and provider freshness are unverified, and its values
+never change W/P or planning. The [setup guide](docs/claude-code-usage.md) explains
+the bundled, project-local plugin tools, prerequisites, connection and removal.
+No extra setup is required to continue using the ordinary Codex or Claude rows.
+
 ## Your first 60 seconds after launch
 
 1. Confirm that the QuotaTempo guide opens in its own window.

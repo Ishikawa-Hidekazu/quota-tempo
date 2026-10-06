@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.12 - Optional Claude Code usage comparison
+
+- Add a separate, explicitly connected Code-session comparison showing weekly
+  and five-hour remaining values and reset times. It never affects W/P,
+  planning, Automatic selection or the existing Desktop connection.
+- Bundle the immutable 0.0.4 plugin and explicit project-local management tools.
+  Keep installation, command loading, connection and measurement as distinct
+  steps, with setup, expiry and removal guidance.
+- Encrypt allowlisted metadata over a private local Unix socket. Usage and
+  ephemeral private keys stay in memory; disconnect, Claude off and Quit revoke
+  the receiver. No automatic plugin installation or model request is performed.
+- Retain preview-only validation isolation and pin production package staging
+  to the signed QuotaTempo publisher, compiled manifest and exact inventory.
+
+Account identity and provider freshness are unverified for Code comparison;
+ordinary Desktop Chat/Cowork are not supported by that route. Optional setup
+requires Node.js 20+ and a compatible official 2.1-series Code CLI at 2.1.287+.
+Normal QuotaTempo usage does not acquire these new requirements.
+
 ## 0.1.11 - Clearer Desktop connection wording
 
 - Name the optional source Claude Desktop and simplify the availability notice:

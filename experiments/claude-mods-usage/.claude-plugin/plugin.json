@@ -1,0 +1,6 @@
+{
+  "name": "quotatempo-usage-probe",
+  "version": "0.0.4",
+  "author": { "name": "Ishikawa Hidekazu" },
+  "description": "Explicit, comparison-only export of Claude Code quota metadata. Not a production QuotaTempo source."
+}

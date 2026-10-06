@@ -120,6 +120,23 @@ refresh; **Repair scheduling state** disconnects and preserves known provider
 deadlines. If storage cannot be opened, resolve the storage issue and connect
 again. Do not delete scheduling files to bypass a wait.
 
+## Claude Code usage comparison
+
+The optional **Claude Code usage** section shows weekly and five-hour values
+from an explicitly connected Code session. It is separate from the main Claude
+row: account identity and provider freshness are unverified, so these values
+never change W/P, planning or Automatic source selection. Normal Codex and
+Claude acquisition remains active; the separate Code-only test app intentionally
+disables it and is not the public distribution.
+
+Use the [setup and removal guide](claude-code-usage.md). Plugin setup uses the
+bundled local-scope management tool in Terminal, not Desktop's plugin settings.
+Only this optional setup requires Node.js 20+ and an official 2.1-series Claude
+Code CLI at 2.1.287+. QuotaTempo itself does not launch them for comparison.
+After connection, values arrive during genuine Code work and expire rather than
+being kept indefinitely. Disconnect or Quit clears the memory-only connection;
+restarting does not restore it automatically.
+
 ## Refresh and freshness
 
 The following 15-minute schedule applies to Codex and Claude Automatic. Desktop

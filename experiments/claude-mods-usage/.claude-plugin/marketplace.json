@@ -1,0 +1,12 @@
+{
+  "name": "quotatempo-local-probe",
+  "owner": { "name": "Ishikawa Hidekazu" },
+  "metadata": { "description": "Isolated, comparison-only QuotaTempo usage experiment.", "version": "0.0.4" },
+  "plugins": [
+    {
+      "name": "quotatempo-usage-probe",
+      "source": "./",
+      "description": "Comparison-only quota probe for a separate local test project."
+    }
+  ]
+}

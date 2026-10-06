@@ -31,12 +31,14 @@ let package = Package(
     .target(
       name: "QuotaTempoDesktopCandidate",
       dependencies: ["QuotaTempoCore"],
-      exclude: desktopIntegrationPreview ? [] : [
-        "DesktopPreviewModel.swift",
-        "DesktopPreviewMenu.swift",
-        "DesktopPreviewInstanceLock.swift",
-        "DesktopPreviewTermination.swift",
-      ]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "DesktopPreviewModel.swift",
+          "DesktopPreviewMenu.swift",
+          "DesktopPreviewInstanceLock.swift",
+          "DesktopPreviewTermination.swift",
+        ]
     ),
     .executableTarget(
       name: "QuotaTempoApp",
@@ -45,7 +47,13 @@ let package = Package(
         .product(name: "Sparkle", package: "Sparkle"),
         .target(name: "QuotaTempoDesktopCandidate"),
       ],
-      swiftSettings: [.define("DESKTOP_CONNECTION")]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "CodeComparisonPackageValidation.swift",
+          "CodeComparisonStartupValidation.swift",
+        ],
+      swiftSettings: [.define("DESKTOP_CONNECTION"), .define("CODE_USAGE_COMPARISON")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .executableTarget(
@@ -70,18 +78,27 @@ let package = Package(
       dependencies: [
         "QuotaTempoApp", "QuotaTempoCore", .target(name: "QuotaTempoDesktopCandidate"),
       ],
-      swiftSettings: [.define("DESKTOP_CONNECTION")]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "CodeComparisonOfficialWireTests.swift",
+          "CodeComparisonPackageValidationTests.swift",
+          "CodeComparisonStartupValidationTests.swift",
+        ],
+      swiftSettings: [.define("DESKTOP_CONNECTION"), .define("CODE_USAGE_COMPARISON")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .testTarget(
       name: "QuotaTempoDesktopCandidateTests",
       dependencies: ["QuotaTempoDesktopCandidate", "QuotaTempoCore"],
-      exclude: desktopIntegrationPreview ? [] : [
-        "DesktopPreviewModelTests.swift",
-        "DesktopPreviewMenuTests.swift",
-        "DesktopPreviewInstanceLockTests.swift",
-        "DesktopPreviewTerminationTests.swift",
-      ]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "DesktopPreviewModelTests.swift",
+          "DesktopPreviewMenuTests.swift",
+          "DesktopPreviewInstanceLockTests.swift",
+          "DesktopPreviewTerminationTests.swift",
+        ]
     ),
   ]
 )

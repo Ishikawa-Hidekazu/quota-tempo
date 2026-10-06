@@ -23,6 +23,89 @@ also rereads these same allowlisted local sources. This does not introduce a new
 file, permission, provider request, or CLI process, and does not relabel the data
 as newly captured.
 
+## Claude Code usage comparison
+
+The app offers a separate, explicitly prepared comparison with an already
+authorized Claude Code plugin. This does not change Automatic or Desktop
+sources. It is not enabled or restored automatically. Installation and loading
+are separate from connection preparation; follow the
+[Code usage guide](docs/claude-code-usage.md) before connecting.
+
+After consent, the app creates a fresh 0700 `qtc-<UUID>` directory in `/private/tmp`,
+a 0600 metadata-only grant and a 0600 Unix socket. Connection and stream
+UUIDs are random labels, not account IDs or authentication tokens. Code must be
+connected explicitly. The app never installs a plugin, switches apps, sends a
+model request or reads provider caches, transcripts or authentication for this
+comparison. The schema-3 plugin sends only encrypted, allowlisted usage metadata directly to
+the local app, not to TCP or a provider. There is no file-transport fallback.
+Multiple streams are rejected, not merged. Values never affect W/P or planning.
+Local exporter time is not a verified provider observation time.
+
+Usage remains in memory; the grant contains no quota values. The app checks the
+grant/directory/socket identity and permissions, the connecting client UID,
+bounded HTTP framing, ordering and expiry. The UI samples the in-memory state
+every two seconds. Disconnect closes the receiver immediately and removes the
+exact grant and socket; unknown
+files are not deleted. Cleanup failure is reported separately from usable values
+and does not prevent newly consenting to another connection. Normal termination
+revokes grants and sockets through gates shared with preparation, including a
+preparation reply not yet returned to the UI. A crash can leave quota-free grant
+and socket paths behind; they are not resumed or reused automatically.
+
+Version 0.0.4 pins the app's ephemeral X25519 public key in the copied connection
+command, not in the mutable grant. Each request uses a fresh RFC 9180 HPKE context
+(X25519/HKDF-SHA-256/ChaCha20-Poly1305); connection, stream, request and operation
+are bound to the encryption context. The app proves successful receipt using a
+derived response key. Replaced endpoints receive ciphertext and cannot forge an
+accepted response. Private keys and usage remain in memory; the app never writes
+private keys, quota values or response keys to the grant. Replays are rejected.
+The grant is checked before each request, but it is not treated as an identity
+proof. This does not protect against a compromised trusted app, plugin or Code
+runtime, or an attacker able to alter the copied command. The old plaintext
+schema-2 route is rejected. Schema-1 remains a separate developer experiment;
+the native UI never prepares its grants or falls back to it.
+
+The plugin includes pinned MIT-licensed cryptographic dependencies as a local
+bundle with third-party notices. It does not download dependencies at runtime.
+The app can explicitly stage eight bundled plugin files plus a
+quota-free checksum manifest in private, app-owned storage. It checks the running
+app's signature, the sealed resources and a manifest digest compiled into the
+executable. Existing or unknown staged files are never overwritten or repaired.
+This preparation is not proof that Code installed, enabled or loaded the plugin.
+Installation, local project scope and reload remain explicit Code operations.
+The release-specific native package identity is immutable across identical
+rebuilds; developer packages otherwise receive fresh marketplace UUIDs.
+The official Mods HTTP API buffers responses and exposes no documented HTTP
+cancellation or pre-read size limit. A caller deadline is not proof that the
+host's underlying request was cancelled; uncertain requests are not replayed.
+Comparison-only status does not establish account identity or provider freshness.
+
+Bundled, user-run management tools support a versioned,
+allowlisted plugin package and explicit project-local install, refresh, staged
+update, disable, re-enable and uninstall. They are not invoked by the app. Applying them
+requires explicit local-management consent and confirmation that the
+selected project's Code sessions are closed. No model request, account switch,
+normal CLI upgrade or broad plugin cleanup is performed. The official CLI may
+maintain its own global cache even when local scope is selected.
+
+Developer packages use unique marketplace names; the bundled release uses its
+fixed, immutable namespace. A private management journal below
+the chosen project (`.quotatempo-code-plugin-management`) and a separately chosen
+private receipt contain package paths, hashes, versions, project filesystem
+identity and operation stages only. They contain no quota values or authentication.
+CLI output is discarded, except bounded version parsing. Uncertain operations
+stop without automatic replay; changing the receipt cannot bypass that stop.
+Updates preserve disabled state, and uninstall is limited to the exact managed
+local plugin ID. Marketplace registrations, package directories and plugin data
+are retained rather than deleting material potentially used elsewhere. This is
+not proof of loading in Code or receipt of a measurement. The bundled tools
+require Node.js 20 or later and a compatible official 2.1-series Code CLI; the
+app never launches either for this comparison. The normal release stages under
+`~/Library/Application Support/QuotaTempo/CodeComparison/PluginPackages`, separate
+from the local preview. Production package staging requires QuotaTempo's
+Developer ID publisher team, not an ad-hoc seal or an arbitrary team declared in
+a modified bundle. Ad-hoc staging is limited to the separate local Code preview.
+
 ## Opt-in Claude Desktop connection
 
 Version 0.1.10 introduced `QuotaTempoDesktopCandidate` only in the main app,

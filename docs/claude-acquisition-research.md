@@ -24,6 +24,38 @@ documentation cleanup. These remain reliability observations rather than claims
 of universal availability or requirements to repeat historical preview QA.
 Provider changes may prevent QuotaTempo from retrieving usage data.
 
+The separate Code comparison preview's initial restrictions below are historical
+checkpoints. The 2026-10-07 normal-product integration is a release candidate,
+not yet a published version. It keeps the received Code-session values isolated
+from W/P and provider-source selection. Current instructions are in the
+[Code usage guide](claude-code-usage.md), not the early Desktop settings route.
+
+### Normal-product candidate (2026-10-07)
+
+The user accepted unmodified 0.0.4 command registration, connection and native
+measurement display. Account identity and provider freshness remain unverified.
+At `7fcd313`, all seven remote checks passed and central read-only review found
+no issue in the additional two-file raster/documentation change. These results
+do not stand in for the normal-product integration or its final distribution.
+
+The candidate now compiles comparison into the ordinary app while preserving
+normal acquisition, Automatic defaults, Desktop consent and shared window
+controllers. Only the preview/headless validation paths remain excluded.
+Compiled package validation accepts the exact production bundle/channel and
+pins its Developer ID team; preview storage and permissions are not migrated.
+Optional user-run local-scope tools and a complete setup/removal guide are
+bundled separately from the plugin. The app does not launch them.
+
+Candidate verification passed 850 normal and 906 preview Swift tests, each with
+the existing expected browser watchdog issue. Package/management tests passed
+154 cases, compiled-artifact regressions 658, release-resource checks 12, and
+source containment 13 positive / 336 negative cases. The actual normal app bundle
+passed the expanded resource and implementation checks. English and Japanese
+offscreen onboarding/expiry images were inspected; this is not foreground native
+acceptance. Public signing, notarization,
+final artifact verification and central integration review are still required.
+Neither natural rollover nor a provider-permission inquiry is added as a gate.
+
 ## Official Mods follow-up (2026-10-03)
 
 [Upstream issue #41456](https://github.com/anthropics/claude-code/issues/41456)
@@ -40,12 +72,298 @@ returns recent response-derived rate limits, not a stable account/org identifier
 with an upstream capture time. `sessionId` is not an account identity, and a new
 local read timestamp is not proof that the provider refreshed its observation.
 
-`experiments/claude-mods-usage/` contains an original, synthetic-only metadata
+At the October 3 checkpoint, `experiments/claude-mods-usage/` contained an original, synthetic-only metadata
 producer. It accepts recognized percentages and exact future reset timestamps,
 keeps first-seen and last-read times separate, and has no network, filesystem,
 plugin registration or runtime installation. It is not wired into the product.
 Account binding, freshness and runtime compatibility remain separate research
 items; they do not block release of the existing opt-in Desktop connection.
+
+### Comparison-only adapter follow-up (2026-10-06)
+
+The [WeekToken comment](https://github.com/anthropics/claude-code/issues/41456#issuecomment-5997953251)
+prompted an original, isolated adapter around that producer. It observes official
+`session.measure` events after an explicit connection command and exports only
+allowlisted quota/timing metadata into a prepared owner-only scratch directory.
+Each connection has its own stream, and the receiver does not merge sources or
+borrow resets. Identical tuples retain their first-seen time; reset expiry,
+invalid data, disconnect and local comparison expiry withhold values.
+
+The [probe instructions and boundaries](../experiments/claude-mods-usage/README.md)
+separate quota comparison from production ingestion. The API still lacks an
+account binding and provider observation time. Every receiver result explicitly
+withholds automatic source selection and planning. Identical values after an
+account switch cannot prove ownership. No existing Desktop/browser/CLI source,
+release artifact, updater or installed app is changed.
+
+The existing CLI was 2.1.267. Instead of upgrading it, verification used the
+official 2.1.289 binary in a temporary empty-HOME, network-denied environment.
+Its published SHA-256 and macOS signature were verified. Plugin validation and
+three official runtime tests passed after adjusting the adapter to the host's
+API-call restrictions; the API object is never saved for later events.
+Node regressions additionally cover protocol, ordering, expiry, cancellation,
+paths and temporary-file transport. Independent review identified and the probe
+fixed delayed connection activation after disconnect and dropped invalidations
+during a pending write. Generation fences and a bounded latest-measurement slot
+have synthetic regressions. A comparison-only observer retains replay state in
+one process, checks the chosen metadata stream, expires unchanged values and
+stops within a chosen loop duration or on disconnect. Delayed I/O is checked
+against the clock after the read, not a pre-reset timestamp. The follow-up
+independent review found no remaining P0/P1/P2 in the reviewed prototype;
+60 Node tests and three official harness tests passed. It is not a daemon or
+product ingestion path. These are synthetic/harness results, not
+live Desktop capture. No real account, cache, transcript or credential was read.
+
+The first separate local-project Desktop trial did not register the command in
+the UI: its status text reached the model instead. No probe connection or live
+quota capture was established. The checked installed source files matched the
+trial copy. A signature-verified copy of Desktop's actual 2.1.288 Code engine
+passed three official runtime tests and fixed-response status checks through
+both inline and installed loading, in an empty-HOME, network-denied environment.
+The system CLI was not upgraded. These results narrow the failure to the live
+Desktop loading/routing context, but do not establish its exact cause. The next
+bounded check is whether the command appears in Desktop's Slash commands menu;
+do not repeatedly submit an unregistered command, inspect user log bodies or
+bypass host policy. The [Desktop loading checkpoint](../experiments/claude-mods-usage/README.md#desktop-loading-checkpoint-2026-10-06)
+records the evidence and stop conditions.
+
+The subsequent user-reported check returned the fixed disconnected status after
+selecting the command in Desktop. This establishes command interception from
+the user's report, while the first failure's exact cause remains unresolved.
+Connection and live quota transport still require acceptance. Preparing a fresh
+private comparison grant does not connect the probe or change a product source.
+
+The user then confirmed the fixed comparison-only connected response. That
+establishes connection activation from the user's report, not quota reception
+or provider identity. The event reference describes `session.measure` after a
+turn and on plan-limit percentage changes; no extra model request is submitted
+to force it. Only the explicitly returned stream is eligible for this comparison
+check, and absence of its export alone does not locate a failure.
+
+The agent's bounded 90-second observation ended without the selected export
+file or quota values. Directory safety checks and all 60 Node regressions
+passed; live capture remains pending. The observer exited without disconnecting
+the mod, submitting a model request or creating a recurring monitor. No
+production snapshot/source was changed.
+
+After the user's genuine trial-README review turn, the agent's receiver accepted
+the chosen allowlisted export as `comparison_only`, with both five-hour and
+seven-day percentages and exact future resets. This directly establishes live
+transport in one Desktop Code session, not a synthetic fixture or a seven-day
+extension of a previous reset. User quota values and stream labels are not
+recorded here. Provider freshness, ownership, Chat-only operation and idle
+availability remain unverified. No value is eligible for automatic selection or
+planning. The README now supplies step-by-step expected responses, preparation,
+stream inspection, disconnect and scoped cleanup rather than prohibition-only
+instructions.
+
+Explicit disconnect also passed: after the user's fixed response, the receiver
+returned `disconnected` with both windows null. The selected private grant and
+stream output were removed only after scoped path/file safety checks. All bounded
+observers had exited; no recurring monitor exists. The local trial project and
+plugin remain, disconnected; no product or other project's configuration changed.
+
+Next acceptance needs comparison with that session's own provider display;
+live Code transport and disconnect invalidation are now directly observed.
+Ordinary Chat-only support, availability without Code, same-account
+proof and source freshness remain separate open research questions. The current
+released Desktop connection is unaffected.
+
+### Native comparison integration follow-up (2026-10-06)
+
+The successful Code transport now has a native app implementation in
+`CodeUsageComparison.swift`, `CodeUsageComparisonConnection.swift` and
+`CodeUsageComparisonControls.swift`, wired through the existing app content and
+lifecycle. It is exposed only by the local integration build, not the released
+distribution UI. Explicit consent prepares the connection destination; one
+recognized stream is then ingested automatically. Its state, values and reset
+times are isolated from source selection, account binding, W/P and planning.
+No plugin installation, provider request or foreground operation is automated.
+
+Independent review found and the implementation corrected grant revocation
+depending on directory enumeration, preparation racing normal quit, cleanup
+failure permanently blocking reconnect, and tuple-age renewal after an error.
+The hook now rechecks exact grant contents before exports and invalidates an
+existing value even when its clock fails. Synthetic regressions cover these
+cases; tests use temporary private fixtures, not provider stores.
+
+At the file-transport checkpoint, the official [FsStat contract](https://github.com/anthropics/claude-code/blob/main/mods/types/claude-code.d.ts)
+does not expose POSIX mode, ownership or inode. The narrow Mods-only writer
+cannot detect a post-connect permission change or prove directory identity.
+Native read rejection did not solve writer confidentiality. This was an explicit
+general-distribution gate for that file writer; the encrypted schema-3 route
+below supersedes it. Do not fabricate unsupported API fields or add unrestricted
+shell execution to bypass host boundaries. Native acceptance and signed public
+distribution remain open for the revised Code route.
+
+The historical lifecycle increment added a strict six-file, versioned plugin packager
+and an explicit project-local management tool. Packages have unique marketplace
+names, private permissions and SHA-256 manifests for byte integrity, not publisher
+authentication. Management uses only qualified IDs and official CLI subcommands,
+with a canonical per-project journal, exclusive lock and metadata-only receipt.
+Uncertain stages are not retried automatically or bypassed by another receipt.
+Staged updates preserve disabled state and old bindings; unknown global
+marketplace usage is not guessed, so registry/package cleanup is not automatic.
+
+The verified official 2.1.289 binary passed package validation, install, cache
+refresh, disable, staged higher-version update and uninstall in an empty HOME
+with networking and the normal home directory denied. No model request was made.
+The higher version was synthetic and was not published. This establishes the
+manager's CLI lifecycle, not application onboarding, live acquisition or writer
+confidentiality. At that checkpoint, the tools remained explicitly local-trial-only
+pending replacement of the writer boundary and native distribution acceptance.
+The [implementation checkpoint](../experiments/claude-mods-usage/README.md#native-app-integration-checkpoint-2026-10-06)
+contains the connection, failure, cleanup and remaining acceptance contract.
+
+Historical checkpoint (plugin 0.0.3): this increment replaced the native preparation/ingestion route
+with the official `$.http.fetch(..., {socketPath})` Unix HTTP transport. The app
+creates a fresh private temporary directory, metadata-only grant and socket;
+explicit handshake binds one stream before accepting measurements. Quota values
+stay in memory, not exported files. The native server validates client UID,
+socket/directory/grant identity, bounded framing, ordering and freshness; normal
+quit/off/disconnect close it without foreground operations. Schema-1 remains a
+separate developer experiment and is not a fallback.
+
+Independent review of 0.0.3 identified a P1 in endpoint authentication:
+client-UID validation by the genuine server does not authenticate the server to
+Mods. A process able to replace the socket can forge a fixed handshake and receive
+plaintext quota. Rechecking a readable grant or returning a nonce is not proof of
+server identity. No writer-confidentiality or public-release approval is claimed.
+The next transport gate requires a channel-bound trusted identity or authenticated
+encryption, and adversarial replacement tests that prove the fake endpoint receives
+no quota, including replacement after handshake. Do not use unrestricted process
+execution or unsupported Mods API fields as a workaround.
+
+The bounded IPC checkpoint passed 60 native comparison tests, 209 Node tests,
+default/integration Swift suites (824/869 tests), and official 2.1.289 validation
+plus 10 stubbed runtime cases in an isolated HOME with networking denied. Actual
+Node-hook-to-Swift socket fixtures establish native protocol interoperability,
+not the official engine's real wire behavior or user acceptance. Independent
+rereview confirmed lifecycle race fixes, including pre-actor-hop tickets and
+serialized clock sampling. An ad-hoc local app and immutable plugin package were
+built but not launched, installed, notarized or published. Endpoint authentication
+was an open P1 at that checkpoint and blocked public enablement of this additional Code route.
+
+### Encrypted comparison increment (0.0.4, 2026-10-06)
+
+The current schema-3 native command pins the app's ephemeral X25519 public key outside the
+mutable grant. Requests use RFC 9180 HPKE with X25519/HKDF-SHA-256 and
+ChaCha20-Poly1305. Connection, stream, unique request and operation are bound to
+the context; successful responses use an exported response key to authenticate
+the result. The native receiver rejects replays and plaintext schema-2 grants.
+The key is memory-only and is revoked with disconnect, quit or a conflicting
+stream. Socket substitution before or after handshake receives ciphertext, not
+quota plaintext. This resolves the demonstrated plaintext endpoint-substitution
+path, subject to trust in the copied command, app, plugin and Code runtime.
+
+The plugin vendors pinned MIT-licensed cryptographic implementations with
+lockfile, reproducibility check and notices; installation has no runtime package
+download. Native CryptoKit and JavaScript interoperate in real local-socket
+synthetic tests. The official Code `plugin test` suite stubs HTTP by design: its
+public test API has no live-I/O fallback. Those 29 cases establish runtime
+API/crypto compatibility, not native wire or public app acceptance. The separate
+opt-in immediate-command wire test described below exercises real HTTP with
+synthetic input, without changing production hooks.
+
+The official HTTP contract exposes buffered replies but no documented HTTP
+abort, timeout or pre-read response-size cap. The probe enforces caller deadlines,
+which cannot establish host-side cancellation. Late responses must not revive a
+connection, and quota delivery is never replayed after an uncertain result.
+
+Native bundled onboarding is implemented in the separate Code comparison preview.
+Explicit consent verifies the bundle and stages exactly eight payload files plus
+the quota-free integrity manifest in private app-owned Application Support.
+Inventory, size, hash and symlink checks fail closed. The compiled manifest pin
+anchors the bytes copied, independently of a mutable package manifest; bundle
+signature validation before and after staging is an additional integrity gate.
+Unique private staging is fully verified and fsynced before exclusive rename;
+existing final packages are verified only, never repaired or overwritten, and
+unknown stale stages are not automatically deleted. No installed-app Node
+runtime, automatic CLI invocation, plugin installation or model request is required.
+
+Onboarding exposes builtin marketplace/install commands and management panels,
+not execution receipts. The user chooses local-only in Code's installation panel
+and verifies runtime loading before explicit connection. The documented CLI
+manager separately uses explicit local scope; CLI flags are not invented for
+interactive slash commands. Shared controller memory retains the staged command
+plan across views without claiming that install, disable or uninstall occurred.
+The Code preview has its own channel, preferences and observation storage, with
+provider acquisition disabled. Normal release targets and artifacts exclude all
+Code implementation and plugin material; the existing normal Desktop connection
+remains unchanged.
+
+Default developer packaging continues to generate a fresh UUID marketplace for
+each package. Native plugin release 0.0.4 intentionally uses the immutable fixed
+namespace `quotatempo-code-d276298d-6c66-477a-8c58-cf2b5d8e6104` and compiled manifest
+SHA-256 pin
+`22024700344b34c645f47906425d90a375a46e14c1e3e17c90a729393215766c`.
+The preview builder supplies that namespace and rejects a digest mismatch without
+rewriting compiled source. Rebuilding the same immutable release preserves its
+plugin identity; this exception does not change default developer packaging or
+authorize overwriting an installed plugin. Ad-hoc previews do not establish
+public publisher trust.
+
+Latest coordinating-run results: official 2.1.289 plugin validation and **29
+runtime tests PASS**, plus **83 Node probe tests PASS**. These are isolated
+compatibility/synthetic results, not verified live-account acquisition. The
+earlier three/10-case runtime results, schema-2 transport and six-file packages
+remain historical evidence. The latest preview Swift run passed **902 tests /
+46 suites**, including the existing expected browser watchdog issue and the
+opt-in official-engine wire test. Earlier package failures were caused by
+Foundation rewriting POSIX paths into symlink aliases. The corrected bundle
+source and synthetic fixtures use canonical POSIX paths; strict no-symlink and
+ancestor-permission rejection remain in force.
+
+The subsequent macOS CI failures at `1809254` exposed test isolation and executor
+starvation, not a reason to relax product safeguards. Provider-process fixtures
+now share one serialized parent suite, and blocking IPC fixture waits run on
+Dispatch rather than Swift's cooperative executor. The focused regression run
+passed 132 tests / 4 suites and the complete preview run passed 897 / 45,
+including the official-engine synthetic wire. Remote CI must also pass before
+the corrected candidate is accepted; these results still do not establish live
+Code-session acquisition.
+
+Although `ce19e67` subsequently passed all remote CI, Finder startup failed twice
+before scene creation on October 6 at 17:24 JST. The Code preview force-unwrapped
+a defaults suite named after its own bundle ID, which
+[Apple explicitly forbids](https://developer.apple.com/documentation/foundation/userdefaults/init(suitename:)).
+It now uses its bundle-isolated standard domain instead. Existing normal-product
+preferences and the legacy Desktop-preview suite are unchanged. Resource-only
+validation bypassed the crashing getter; it was not startup acceptance.
+
+A new preview-only signed-app initialization harness reached the production
+getter and real app composition with fresh injected preferences/support storage:
+7 cases PASS, zero skips, complete cleanup; 19 harness regressions and 5 Swift
+startup tests PASS. Network and normal-HOME access are denied, and HOME-hosted
+apps are explicitly unsupported by this harness. No `App.main()`, window,
+provider acquisition or model request is executed. The old crashing artifact
+must not be reused, and the fixed head still requires its own CI and Finder/Code
+workflow acceptance before distribution.
+
+The checksum-pinned, signature-verified 2.1.289 engine sent inline synthetic usage
+through its real HTTP Unix-socket API to the native HPKE receiver, without
+authentication or model requests. Only the private copy of `hooks/register.mjs`
+was mechanically instrumented for a test-only command; seven remaining copied
+files were byte-identical and production hooks were unchanged. This is isolated
+wire acceptance, not an unmodified plugin's live session measurement, another
+runtime's compatibility, account identity or provider observation freshness.
+Ad-hoc and Developer ID local app builds separately passed headless signed
+resource validation; neither result establishes notarization or Code UI
+acceptance.
+
+The signed-resource harness passed **11 cases / zero skips** against a Developer
+ID preview: clean and ad-hoc controls, resource tampering, a rewritten and
+re-signed self-consistent manifest, writable ancestors and malformed arguments.
+The compiled pin rejected the changed manifest even after a valid local
+re-signing. Disposable copies and assigned validation outputs were cleaned;
+normal app, Code configuration, account state and provider usage were untouched.
+
+Native package, synthetic wire and resource-rejection QA are recorded in the
+experiment README's current verification table. Live Code acceptance and final
+public distribution remain open. Comparison values remain excluded from
+Automatic, W/P and planning because account identity and provider freshness are
+unproven. The earlier schema-1 live trial is not acceptance of this schema-3
+release or its native onboarding.
 
 ## Release-scope update (2026-10-03)
 

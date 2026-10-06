@@ -538,8 +538,22 @@ enum LaunchPresentationPolicy {
 
 enum QuotaTempoAppDefaults {
   static let menuBarDisplayMode = MenuBarDisplayMode.iconOnly
+  #if DESKTOP_INTEGRATION_PREVIEW
+    static var isBundledCodePreview: Bool {
+      Bundle.main.bundleIdentifier == CodeComparisonPluginPackage.bundleID
+        && Bundle.main.object(forInfoDictionaryKey: "QTReleaseChannel") as? String
+          == CodeComparisonPluginPackage.channel
+        && Bundle.main.object(forInfoDictionaryKey: "QTCodeComparisonPluginBundled") as? Bool
+          == true
+    }
+  #endif
   static var defaults: UserDefaults {
     #if DESKTOP_INTEGRATION_PREVIEW
+      if isBundledCodePreview {
+        // The preview's unique bundle ID already isolates its standard domain.
+        // Passing that same ID as a suite name returns nil on macOS.
+        return .standard
+      }
       // Retain the original preview preference suite so existing versioned
       // consent is not silently discarded by a cosmetic bundle-ID alignment.
       return UserDefaults(suiteName: "com.ishikawa.QuotaTempo.IntegrationPreview")!
@@ -588,6 +602,9 @@ final class QuotaTempoPresentationModel: ObservableObject {
 final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
   private var contentFactory: (() -> AnyView)?
   private var onPresent: (() -> Void)?
+  #if CODE_USAGE_COMPARISON
+    private var onTerminate: (() -> Void)?
+  #endif
   private var onboardingProvider: (() -> Bool)?
   private var windowController: NSWindowController?
   private var presentationPending = false
@@ -620,8 +637,17 @@ final class QuotaTempoApplicationDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    #if CODE_USAGE_COMPARISON
+      self.onTerminate?()
+    #endif
     FoundationBoundedProcessRunner.terminateAllRunningProcesses()
   }
+
+  #if CODE_USAGE_COMPARISON
+    func configureApplicationTermination(_ onTerminate: @escaping () -> Void) {
+      self.onTerminate = onTerminate
+    }
+  #endif
 
   func configureApplicationWindow(
     content: @escaping () -> AnyView,
@@ -729,6 +755,9 @@ struct QuotaTempoApplicationContent: View {
   @ObservedObject var model: LiveQuotaModel
   @ObservedObject var settings: QuotaTempoSettingsModel
   @ObservedObject var presentation: QuotaTempoPresentationModel
+  #if CODE_USAGE_COMPARISON
+    @ObservedObject var codeComparison = CodeUsageComparisonController()
+  #endif
   #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
     @ObservedObject var desktopConnection: DesktopConnectionController
   #endif
@@ -753,23 +782,46 @@ struct QuotaTempoApplicationContent: View {
   }
 
   var desktopActionsAllowed: Bool {
-    !providerDisabled && model.claudeSource == .desktop && model.enabledProviders.contains(.claude)
+    #if DESKTOP_INTEGRATION_PREVIEW
+      if QuotaTempoAppDefaults.isBundledCodePreview { return false }
+    #endif
+    return !providerDisabled && model.claudeSource == .desktop
+      && model.enabledProviders.contains(.claude)
   }
 
   func setProviderEnabled(_ provider: ProviderID, enabled: Bool) {
+    #if CODE_USAGE_COMPARISON
+      if provider == .claude && !enabled && model.enabledProviders.count > 1 {
+        codeComparison.setEnabled(false)
+      }
+    #endif
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       desktopLifecycle.setProviderEnabled(provider, enabled: enabled, model: model)
     #else
       model.setProviderEnabled(provider, enabled: enabled)
     #endif
+    #if CODE_USAGE_COMPARISON
+      codeComparison.setEnabled(!providerDisabled && model.enabledProviders.contains(.claude))
+    #endif
   }
 
   private var connectionControls: AnyView? {
-    #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
-      return AnyView(desktopConnectionControls)
-    #else
-      return nil
-    #endif
+    AnyView(
+      VStack(alignment: .leading, spacing: 12) {
+        #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
+          #if DESKTOP_INTEGRATION_PREVIEW
+            if !QuotaTempoAppDefaults.isBundledCodePreview { desktopConnectionControls }
+          #else
+            desktopConnectionControls
+          #endif
+        #endif
+        #if CODE_USAGE_COMPARISON
+          if !providerDisabled {
+            CodeUsageComparisonControls(
+              connection: codeComparison, enabled: model.enabledProviders.contains(.claude))
+          }
+        #endif
+      })
   }
 
   #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
@@ -880,6 +932,9 @@ struct QuotaTempoApp: App {
   @StateObject private var model: LiveQuotaModel
   @StateObject private var settings: QuotaTempoSettingsModel
   @StateObject private var presentation: QuotaTempoPresentationModel
+  #if CODE_USAGE_COMPARISON
+    @StateObject private var codeComparison: CodeUsageComparisonController
+  #endif
   #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
     @StateObject private var desktopConnection: DesktopConnectionController
     private let desktopClock = Timer.publish(
@@ -889,6 +944,9 @@ struct QuotaTempoApp: App {
   private let providerDisabled: Bool
   private let updater: QuotaTempoUpdater
   private let clock = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+  #if CODE_USAGE_COMPARISON
+    private let codeComparisonClock = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+  #endif
   private let scheduledRefreshClock = Timer.publish(
     every: ProviderRefreshSchedule.interval,
     on: .main,
@@ -899,12 +957,18 @@ struct QuotaTempoApp: App {
   )
 
   init() {
-    let arguments = CommandLine.arguments
+    self.init(
+      arguments: CommandLine.arguments,
+      supportDirectory: FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask)[0],
+      defaults: QuotaTempoAppDefaults.defaults)
+  }
+
+  init(arguments: [String], supportDirectory: URL, defaults: UserDefaults) {
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       let desktopConfiguration = DesktopIntegrationConfiguration(
         arguments: arguments,
-        supportDirectory: FileManager.default.urls(
-          for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        supportDirectory: supportDirectory)
       let providerDisabled = desktopConfiguration.providerDisabled
     #else
       let providerDisabled = QuotaTempoRuntimePolicy.providersDisabled(arguments: arguments)
@@ -919,34 +983,53 @@ struct QuotaTempoApp: App {
         providerDisabled
         ? nil
         : ClaudeSourcePreferences(
-          defaults: QuotaTempoAppDefaults.defaults)
+          defaults: defaults)
     #endif
-    let defaults = QuotaTempoAppDefaults.defaults
     let directory: URL
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
-      directory = desktopConfiguration.appDirectory
+      #if DESKTOP_INTEGRATION_PREVIEW
+        directory =
+          QuotaTempoAppDefaults.isBundledCodePreview
+          ? supportDirectory
+            .appendingPathComponent(
+              "QuotaTempoCodeComparisonPreview/Observations", isDirectory: true)
+          : desktopConfiguration.appDirectory
+      #else
+        directory = desktopConfiguration.appDirectory
+      #endif
     #else
       if let index = arguments.firstIndex(of: "--storage-directory"), index + 1 < arguments.count {
         directory = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
       } else {
-        directory = FileManager.default.urls(
-          for: .applicationSupportDirectory,
-          in: .userDomainMask
-        )[0].appendingPathComponent("QuotaTempo", isDirectory: true)
+        directory = supportDirectory.appendingPathComponent("QuotaTempo", isDirectory: true)
       }
+    #endif
+    #if DESKTOP_INTEGRATION_PREVIEW
+      let acquisitionEnabled = !providerDisabled && !QuotaTempoAppDefaults.isBundledCodePreview
+    #else
+      let acquisitionEnabled = !providerDisabled
     #endif
     let model = LiveQuotaModel(
       store: NormalizedSnapshotStore(directory: directory),
-      acquisitionEnabled: !providerDisabled,
+      acquisitionEnabled: acquisitionEnabled,
       preferences: providerDisabled ? nil : ProviderSelectionPreferences(defaults: defaults),
       claudeSource: source, sourcePreferences: sourcePreferences
     )
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
       // Share the existing helper's exclusive scheduling store. A new UI must
       // not create a fresh identity-independent provider backoff namespace.
+      #if DESKTOP_INTEGRATION_PREVIEW
+        let schedulingDirectory =
+          QuotaTempoAppDefaults.isBundledCodePreview
+          ? directory.deletingLastPathComponent().appendingPathComponent(
+            "DesktopConnection", isDirectory: true)
+          : desktopConfiguration.schedulingDirectory
+      #else
+        let schedulingDirectory = desktopConfiguration.schedulingDirectory
+      #endif
       self._desktopConnection = StateObject(
         wrappedValue: DesktopConnectionController(
-          directory: desktopConfiguration.schedulingDirectory,
+          directory: schedulingDirectory,
           consentDefaults: providerDisabled ? nil : defaults))
     #endif
     self._presentation = StateObject(wrappedValue: QuotaTempoPresentationModel(defaults: defaults))
@@ -965,6 +1048,11 @@ struct QuotaTempoApp: App {
       model.explicitRefresh()
     }
     self._model = StateObject(wrappedValue: model)
+    #if CODE_USAGE_COMPARISON
+      let codeComparison = CodeUsageComparisonController()
+      codeComparison.setEnabled(!providerDisabled && model.enabledProviders.contains(.claude))
+      self._codeComparison = StateObject(wrappedValue: codeComparison)
+    #endif
   }
 
   var body: some Scene {
@@ -991,6 +1079,14 @@ struct QuotaTempoApp: App {
       .onReceive(self.clock) { _ in self.model.clockAdvanced() }
       .onReceive(self.scheduledRefreshClock) { _ in self.model.scheduledRefresh() }
       .onReceive(self.wakeNotifications) { _ in self.model.systemDidWake() }
+      #if CODE_USAGE_COMPARISON
+        .onReceive(self.codeComparisonClock) { _ in
+          Task { await self.codeComparison.refresh() }
+        }
+        .onChange(of: self.model.enabledProviders) { _, providers in
+          self.codeComparison.setEnabled(!self.providerDisabled && providers.contains(.claude))
+        }
+      #endif
       #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
         .task {
           self.desktopLifecycle.providersChanged(self.model.enabledProviders)
@@ -1014,6 +1110,11 @@ struct QuotaTempoApp: App {
             self.settings.refreshLoginItemState()
           }
         }
+        #if CODE_USAGE_COMPARISON
+          self.appDelegate.configureApplicationTermination {
+            self.codeComparison.applicationWillTerminate()
+          }
+        #endif
       }
     }
     .menuBarExtraStyle(.window)
@@ -1029,7 +1130,7 @@ struct QuotaTempoApp: App {
 
   private func applicationContent(maximumViewportHeight: CGFloat?) -> some View {
     #if DESKTOP_CONNECTION || DESKTOP_INTEGRATION_PREVIEW
-      return QuotaTempoApplicationContent(
+      let content = QuotaTempoApplicationContent(
         model: self.model, settings: self.settings, presentation: self.presentation,
         desktopConnection: self.desktopConnection,
         appDelegate: self.appDelegate, productVersion: self.productVersion, updater: self.updater,
@@ -1040,7 +1141,7 @@ struct QuotaTempoApp: App {
         },
         onQuit: { NSApplication.shared.terminate(nil) })
     #else
-      return QuotaTempoApplicationContent(
+      let content = QuotaTempoApplicationContent(
         model: self.model,
         settings: self.settings,
         presentation: self.presentation,
@@ -1057,6 +1158,13 @@ struct QuotaTempoApp: App {
           NSApplication.shared.terminate(nil)
         }
       )
+    #endif
+    #if CODE_USAGE_COMPARISON
+      var sharedContent = content
+      sharedContent.codeComparison = self.codeComparison
+      return sharedContent
+    #else
+      return content
     #endif
   }
 
@@ -1076,7 +1184,10 @@ struct QuotaTempoApp: App {
       DesktopIntegrationLifecycle(
         connection: desktopConnection,
         acquisitionAllowed: {
-          !self.providerDisabled && self.model.claudeSource == .desktop
+          #if DESKTOP_INTEGRATION_PREVIEW
+            if QuotaTempoAppDefaults.isBundledCodePreview { return false }
+          #endif
+          return !self.providerDisabled && self.model.claudeSource == .desktop
             && self.model.enabledProviders.contains(.claude)
         })
     }
@@ -1088,6 +1199,7 @@ struct QuotaTempoApp: App {
 
   private var productVersion: String {
     #if DESKTOP_INTEGRATION_PREVIEW
+      if QuotaTempoAppDefaults.isBundledCodePreview { return "Code comparison preview (local)" }
       return "Desktop integration preview (local)"
     #else
       let version =

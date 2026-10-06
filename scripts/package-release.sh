@@ -53,6 +53,17 @@ rm "$app/Contents/Resources/SHA256SUMS"
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 /usr/libexec/PlistBuddy -c "Set :QTReleaseChannel $release_channel" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :QTSourceCommit $commit" "$app/Contents/Info.plist"
+# These declarations are sealed by the final outer signature below. Derive the
+# Developer ID team from signed code, not the user-supplied identity label.
+plist=/usr/libexec/PlistBuddy
+if [[ "$sign_identity" == "-" ]]; then
+  "$plist" -c 'Set :QTCodeComparisonSigningMode local-ad-hoc' "$app/Contents/Info.plist"
+  if "$plist" -c 'Print :QTCodeComparisonSigningTeam' "$app/Contents/Info.plist" >/dev/null 2>&1; then
+    "$plist" -c 'Delete :QTCodeComparisonSigningTeam' "$app/Contents/Info.plist"
+  fi
+else
+  "$plist" -c 'Set :QTCodeComparisonSigningMode developer-id' "$app/Contents/Info.plist"
+fi
 sign_args=(--force --options runtime --sign "$sign_identity")
 if [[ "$sign_identity" == "-" ]]; then
   sign_args+=(--timestamp=none)
@@ -67,8 +78,19 @@ codesign "${sign_args[@]}" "$sparkle/Versions/B/Autoupdate"
 codesign "${sign_args[@]}" "$sparkle/Versions/B/Updater.app"
 codesign "${sign_args[@]}" "$sparkle"
 codesign "${sign_args[@]}" "$app/Contents/MacOS/QuotaTempoBrowserHost"
-codesign "${sign_args[@]}" "$app/Contents/MacOS/QuotaTempo"
-codesign "${sign_args[@]}" "$app"
+codesign "${sign_args[@]}" --identifier co.ishikawa.QuotaTempo "$app/Contents/MacOS/QuotaTempo"
+if [[ "$sign_identity" != "-" ]]; then
+  code_details="$(codesign -dv --verbose=4 "$app/Contents/MacOS/QuotaTempo" 2>&1)"
+  code_team="$(awk -F= '/^TeamIdentifier=/ {print $2; exit}' <<< "$code_details")"
+  code_identifier="$(awk -F= '/^Identifier=/ {print $2; exit}' <<< "$code_details")"
+  if [[ "$code_team" != '9AQKR642UU' || "$code_identifier" != 'co.ishikawa.QuotaTempo' ]] \
+    || ! grep -E -e '^Authority=Developer ID Application: ' <<< "$code_details" >/dev/null; then
+    echo 'Code plugin requires the pinned Developer ID publisher.' >&2
+    exit 2
+  fi
+  "$plist" -c "Add :QTCodeComparisonSigningTeam string $code_team" "$app/Contents/Info.plist"
+fi
+codesign "${sign_args[@]}" --identifier co.ishikawa.QuotaTempo "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
 codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempo"
 codesign --verify --strict --verbose=2 "$app/Contents/MacOS/QuotaTempoBrowserHost"
@@ -110,6 +132,10 @@ nested_code_identifier="$(signature_value Identifier "$nested_signature_details"
 outer_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdentifier "$outer_signature_details")")"
 nested_team_identifier="$(normalize_team_identifier "$(signature_value TeamIdentifier "$nested_signature_details")")"
 team_identifier="$outer_team_identifier"
+if [[ "$sign_identity" != "-" ]]; then
+  [[ "$("$plist" -c 'Print :QTCodeComparisonSigningTeam' "$app/Contents/Info.plist")" == "$team_identifier" ]]
+  grep -E -e '^Authority=Developer ID Application: ' <<< "$outer_signature_details" >/dev/null
+fi
 
 "$repo_root/scripts/check-release-identity.sh" \
   "$signing" \

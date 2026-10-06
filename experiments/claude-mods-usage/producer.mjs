@@ -1,4 +1,4 @@
-// Synthetic-only experiment. No live adapter or shipped-app integration.
+// Pure normalization for the isolated comparison probe; no shipped-app integration.
 const KINDS = ["five_hour", "seven_day"];
 const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/;
 
