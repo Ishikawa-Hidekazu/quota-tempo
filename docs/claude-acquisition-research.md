@@ -281,11 +281,20 @@ runtime tests PASS**, plus **83 Node probe tests PASS**. These are isolated
 compatibility/synthetic results, not verified live-account acquisition. The
 earlier three/10-case runtime results, schema-2 transport and six-file packages
 remain historical evidence. The latest preview Swift run passed **897 tests /
-44 suites**, including the existing expected browser watchdog issue and the
+45 suites**, including the existing expected browser watchdog issue and the
 opt-in official-engine wire test. Earlier package failures were caused by
 Foundation rewriting POSIX paths into symlink aliases. The corrected bundle
 source and synthetic fixtures use canonical POSIX paths; strict no-symlink and
 ancestor-permission rejection remain in force.
+
+The subsequent macOS CI failures at `1809254` exposed test isolation and executor
+starvation, not a reason to relax product safeguards. Provider-process fixtures
+now share one serialized parent suite, and blocking IPC fixture waits run on
+Dispatch rather than Swift's cooperative executor. The focused regression run
+passed 132 tests / 4 suites and the complete preview run passed 897 / 45,
+including the official-engine synthetic wire. Remote CI must also pass before
+the corrected candidate is accepted; these results still do not establish live
+Code-session acquisition.
 
 The checksum-pinned, signature-verified 2.1.289 engine sent inline synthetic usage
 through its real HTTP Unix-socket API to the native HPKE receiver, without

@@ -121,11 +121,21 @@ must not become Automatic or a planning source.
 Current 0.0.4 validation reported by the coordinating run: official 2.1.289 plugin
 validation and **29 runtime tests PASS**; **83 Node probe tests PASS**. These are
 isolated/synthetic compatibility results, not live-account acquisition evidence.
-The latest preview Swift run passed **897 tests / 44 suites**, including the
+The latest preview Swift run passed **897 tests / 45 suites**, including the
 opt-in official-engine native wire test and the existing expected browser
 watchdog issue. The four earlier package failures came from Foundation rewriting
 POSIX paths to symlink aliases; the corrected paths retain the strict no-symlink
 and ancestor-permission checks. Earlier full-suite counts below are historical.
+
+Both macOS CI runs at `1809254` failed in integration-test fixtures, despite
+passing locally. Global provider-process shutdown fixtures could terminate a
+different suite's process, and synchronous IPC barriers occupied Swift's
+cooperative executor. The corrected fixtures share a serialized parent suite;
+blocking socket and semaphore work runs on Dispatch queues. Clock-ordering
+assertions exercise the production bridge directly, with explicit bounded
+fixture deadlines. Product timers, guards and shutdown behavior are unchanged.
+The focused regression run passed **132 tests / 4 suites**. Remote CI acceptance
+of this correction remains separate from these local results.
 
 The checksum-pinned, signature-verified official 2.1.289 engine sent encrypted
 synthetic usage over its real HTTP Unix-socket API to the native receiver. No
@@ -154,8 +164,8 @@ usage. A skipped required case is incomplete, never PASS.
 
 | Current verification | Result | Boundary |
 | --- | --- | --- |
-| Default Swift graph | PASS, 764 tests / 29 suites | Existing expected browser watchdog issue |
-| Preview Swift graph | PASS, 897 tests / 44 suites | Includes isolated official-engine synthetic wire; same expected watchdog issue |
+| Default Swift graph | PASS, 764 tests / 30 suites | Existing expected browser watchdog issue |
+| Preview Swift graph | PASS, 897 tests / 45 suites | Includes isolated official-engine synthetic wire; same expected watchdog issue |
 | Node metadata, packaging and helper regressions | PASS, 288 tests | No live account acquisition |
 | Official 2.1.289 plugin validator / runtime | PASS / 29 tests | HTTP fixtures in `plugin test` |
 | Signed resource rejection harness | PASS, 11 cases / zero skips | Disposable copies; no Code UI or authentication |
