@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -21,6 +22,15 @@ const candidateTestDependency = { byName: [candidate, null] };
 const featureSetting = { kind: { define: { _0: featureDefine } }, tool: "swift" };
 const previewSetting = { kind: { define: { _0: previewDefine } }, tool: "swift" };
 const normalExcludes = {
+  [app]: [
+    "CodeComparisonEncryption.swift", "CodeComparisonIPC.swift", "CodeComparisonPackageValidation.swift", "CodeComparisonPluginPackage.swift", "CodeUsageComparison.swift",
+    "CodeUsageComparisonConnection.swift", "CodeUsageComparisonControls.swift",
+  ],
+  [appTests]: [
+    "CodeComparisonAppWiringTests.swift", "CodeComparisonConnectionTests.swift",
+    "CodeComparisonDecoderTests.swift", "CodeComparisonEncryptionTests.swift",
+    "CodeComparisonIPCTests.swift", "CodeComparisonOfficialWireTests.swift", "CodeComparisonPackageValidationTests.swift", "CodeComparisonPluginPackageTests.swift", "CodeComparisonUITests.swift",
+  ],
   [candidate]: [
     "DesktopPreviewModel.swift", "DesktopPreviewMenu.swift",
     "DesktopPreviewInstanceLock.swift", "DesktopPreviewTermination.swift",
@@ -130,8 +140,53 @@ function validatePair(defaultManifest, previewManifest) {
   for (const name of featureTargets) target(expected, name).settings.push(previewSetting);
   for (const name of Object.keys(normalExcludes)) target(expected, name).exclude = [];
   assert.deepEqual(previewManifest, expected,
-    "Preview may change only App/AppTests preview defines and Candidate/CandidateTests helper excludes");
+    "Preview may change only App/AppTests preview defines and exact preview-only source/test excludes");
 }
+
+// Source-level checks supplement the synthetic graph without executing Swift.
+function validateAppGuards(source) {
+  const branches = [];
+  let references = 0;
+  for (const line of source.split("\n")) {
+    const directive = line.trim().match(/^#(if|elseif|else|endif)(?:\s+(.+))?$/);
+    if (directive) {
+      const [, kind, condition] = directive;
+      if (kind === "if") branches.push(condition === previewDefine);
+      else {
+        assert(branches.length > 0, "Unbalanced Swift conditional compilation");
+        if (kind === "endif") branches.pop();
+        else branches[branches.length - 1] = kind === "elseif" && condition === previewDefine;
+      }
+    } else if (/(?:Code(?:Usage)?Comparison|codeComparison|onTerminate|configureApplicationTermination)/.test(line)) {
+      assert(branches.includes(true), `Code comparison must be preview-only: ${line.trim()}`);
+      references += 1;
+    }
+  }
+  assert.equal(branches.length, 0, "Unclosed Swift conditional compilation");
+  assert(references > 0, "Preview Code comparison wiring must remain present");
+}
+
+const packageSource = readFileSync(new URL("../Package.swift", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../Sources/QuotaTempoApp/QuotaTempoApp.swift", import.meta.url), "utf8");
+for (const [name, directory] of [[app, "Sources/QuotaTempoApp"], [appTests, "Tests/QuotaTempoAppTests"]]) {
+  const files = readdirSync(new URL(`../${directory}/`, import.meta.url))
+    .filter((file) => /^Code.*\.swift$/.test(file)).sort();
+  assert.deepEqual([...normalExcludes[name]].sort(), files, `All Code sources/tests need exclusion: ${name}`);
+  const block = packageSource.match(new RegExp(`name: "${name}",[\\s\\S]*?exclude:\\s*desktopIntegrationPreview\\s*\\?\\s*\\[\\]\\s*:\\s*\\[([\\s\\S]*?)\\]`));
+  assert(block, `${name} must exclude Code files only outside the exact preview flag`);
+  assert.deepEqual([...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]), normalExcludes[name]);
+}
+validateAppGuards(appSource);
+for (const symbol of [
+  "CodeUsageComparisonController()", "self.codeComparison.applicationWillTerminate()",
+  "codeComparison.setEnabled(false)", "previewContent.codeComparison = self.codeComparison",
+  "self.onTerminate?()", "self.appDelegate.configureApplicationTermination",
+]) {
+  assert(appSource.includes(symbol), `Expected preview wiring missing: ${symbol}`);
+  assert.throws(() => validateAppGuards(`${symbol}\n${appSource}`), /Code comparison must be preview-only/);
+}
+assert.throws(() => validateAppGuards(appSource.replaceAll(previewDefine, featureDefine)),
+  /Code comparison must be preview-only/, "Normal Desktop inclusion must not enable Code comparison");
 
 function validateNonPreview(defaultManifest, manifest, value) {
   validate(manifest, false);
@@ -139,8 +194,8 @@ function validateNonPreview(defaultManifest, manifest, value) {
     `Only the exact preview value 1 may enable preview: ${JSON.stringify(value)}`);
 }
 
-// This mode exercises the validator, not Package.swift. Normal invocations still
-// require real dump-package output for every environment value and cannot skip it.
+// Synthetic mode checks source guards and graph fixtures, not Swift's evaluated
+// manifest. Normal invocations additionally require real dump-package output.
 function syntheticManifest() {
   function item(name, type, names, settings = []) {
     return { name, type, dependencies: names.map((name) => ({ byName: [name, null] })), settings: structuredClone(settings) };
@@ -211,7 +266,9 @@ for (const preview of [false, true]) {
     }
     const sharedFiles = name === candidate
       ? ["DesktopPreviewServing.swift", "DesktopPreviewPresentation.swift", "DesktopConnectionController.swift"]
-      : ["DesktopPreviewPresentationTests.swift", "DesktopConnectionControllerTests.swift"];
+      : name === testTarget ? ["DesktopPreviewPresentationTests.swift", "DesktopConnectionControllerTests.swift"]
+        : name === app ? ["QuotaTempoApp.swift", "DesktopIntegrationLifecycle.swift", "DesktopIntegrationControls.swift"]
+          : ["DesktopIntegrationAppTests.swift", "ApplicationContentObservationTests.swift"];
     for (const file of sharedFiles) {
       rejects(preview, (input) => target(input, name).exclude.push(file), `Shared code must remain included: ${file}`);
     }
@@ -290,7 +347,7 @@ for (const preview of [false, true]) {
 for (const [message, mutate] of [
   ["dependency", (input) => target(input, app).dependencies.push({ product: ["Unexpected", "Unexpected", null, null] })],
   ["unrelated define", (input) => target(input, app).settings.push({ kind: { define: { _0: "UNRELATED" } }, tool: "swift" })],
-  ["unrelated exclude", (input) => target(input, app).exclude = ["QuotaTempoApp.swift"]],
+  ["unrelated exclude", (input) => target(input, "QuotaTempoCore").exclude = ["Unrelated.swift"]],
   ["target", (input) => input.targets.push({ name: "PreviewOnlyHelper", type: "regular", settings: [], dependencies: [] })],
 ]) {
   const drifted = structuredClone(previewManifest);
@@ -310,5 +367,5 @@ for (const value of arbitraryValues) {
   regressionCount += 1;
 }
 console.log(`${syntheticOnly ? "desktop_candidate_graph_fixtures" : "desktop_candidate_product_isolation"}=PASS `
-  + `(${syntheticOnly ? "synthetic only; manifest not verified" : `normal + preview, ${arbitraryValues.length} non-opt-in values`}, `
+  + `(${syntheticOnly ? "source guards + synthetic graph; Swift manifest not evaluated" : `normal + preview, ${arbitraryValues.length} non-opt-in values`}, `
   + `${positiveCount} positive, ${regressionCount} negative regression fixtures)`);

@@ -40,6 +40,14 @@ const previewOnly = [
   "desktop-local-preview", "desktop-preview.lock", "QuotaTempo.preview-termination",
   "QuotaTempo Desktop Preview",
 ];
+const codeComparisonMarkers = [
+  "CodeComparison", "CodeUsageComparison", "CodeComparisonIPCBridge", "CodeComparisonIPCSession",
+  "CodeComparisonEncryption", "CodeUsageComparisonController", "CodeUsageComparisonControls",
+  "QuotaTempo.CodeComparison.IPC", "QuotaTempo.CodeComparison.response.v3",
+  "quotatempo-mods-comparison", "quotatempo-usage-probe", "quotatempo-code-comparison-plugin",
+  "quotatempo-code-plugin-management", "probe-grant.json", "bridge.sock",
+  "_$s13QuotaTempoApp23CodeComparisonIPCBridgeCMa",
+];
 const allowed = [
   "Claude Desktop", "claudeDesktopHistory", "Library/Application Support/Claude",
 ];
@@ -70,7 +78,8 @@ function fixture(t) {
   }
   artifact(main, [...required, ...allowed]);
   artifact(host, allowed);
-  writeFileSync(join(app, "Contents/Resources/PRIVACY.md"), [...candidateMarkers, ...previewOnly].join("\n"), { mode: 0o644 });
+  writeFileSync(join(app, "Contents/Resources/PRIVACY.md"),
+    [...candidateMarkers, ...previewOnly, ...codeComparisonMarkers].join("\n"), { mode: 0o644 });
   const run = (args = [app]) => {
     // No inherited HOME, credentials, shell hooks, or fallback PATH. In
     // particular, no Swift, UI, browser, signing or network tool is available.
@@ -146,6 +155,67 @@ for (const marker of previewOnly) {
     rejected(f.run(), /Desktop preview-only implementation found/);
   });
 }
+
+for (const [path, mode] of [
+  ["Contents/MacOS/QuotaTempo", 0o755],
+  ["Contents/MacOS/QuotaTempoBrowserHost", 0o755],
+  ["Contents/Helpers/unstripped helper", 0o755],
+  ["Contents/Resources/group executable", 0o410],
+  ["Contents/Resources/other executable", 0o401],
+  ["Contents/Frameworks/Hidden.framework/Versions/A/Hidden", 0o644],
+  ["Contents/Resources/hidden\ncode.o", 0o644],
+  ["Contents/Resources/hidden.a", 0o644],
+  ["Contents/Resources/hidden.so", 0o644],
+  ["Contents/Frameworks/hidden.dylib", 0o644],
+]) {
+  for (const marker of codeComparisonMarkers) {
+    test(`Code comparison leak ${marker} in ${JSON.stringify(path)}`, (t) => {
+      const f = fixture(t);
+      f.artifact(join(f.app, path), [...(path.endsWith("MacOS/QuotaTempo") ? required : []), marker], mode);
+      rejected(f.run(), /Code comparison implementation found/);
+    });
+  }
+}
+
+const pluginMaterialPaths = [
+  "Contents/Resources/CodeComparisonPlugin", "Contents/Resources/CodeComparisonPlugin/THIRD_PARTY_NOTICES.txt",
+  "Contents/Resources/.claude-plugin", "Contents/Resources/nested/.claude-plugin/plugin.json",
+  "Contents/Resources/plugin.json", "Contents/Resources/marketplace.json",
+  "Contents/Resources/quotatempo-package.json", "Contents/Resources/hooks/hooks.json",
+  "Contents/Resources/producer.mjs", "Contents/Resources/deep/module\nname.mjs",
+  "Contents/Helpers/module.mjs", "Contents/Resources/.quotatempo-code-plugin-management",
+  "Contents/Resources/probe-grant.json", "Contents/Resources/bridge.sock",
+  "Contents/Resources/CodeComparisonIPC.swift", "Contents/Resources/CodeUsageComparison.swift",
+];
+for (const path of pluginMaterialPaths) {
+  for (const kind of ["file", "directory", "symlink", "dangling-symlink"]) {
+    test(`plugin material ${kind} fails closed: ${JSON.stringify(path)}`, (t) => {
+      const f = fixture(t);
+      const destination = join(f.app, path);
+      mkdirSync(dirname(destination), { recursive: true });
+      if (kind === "file") writeFileSync(destination, "{}", { mode: 0o644 });
+      else if (kind === "directory") mkdirSync(destination);
+      else symlinkSync(kind === "symlink" ? f.host : join(f.app, "absent"), destination);
+      rejected(f.run(), /Code comparison plugin material found/);
+    });
+  }
+}
+
+test("normal browser JS, JSON manifests and documents do not trigger the plugin-material gate", (t) => {
+  const f = fixture(t);
+  for (const path of [
+    "Contents/Resources/BrowserExtension/manifest.json", "Contents/Resources/BrowserExtension/worker.js",
+    "Contents/Resources/BrowserExtension/protocol.js", "Contents/Resources/BrowserExtension/popup.js",
+    "Contents/Resources/BrowserExtension/content.js", "Contents/Resources/BrowserExtension/popup.html",
+    "Contents/Resources/BrowserBridge/native-messaging.json", "Contents/Resources/UPDATES.md",
+  ]) {
+    const destination = join(f.app, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, "QuotaTempoBrowserHost\nclaude.ai\n", { mode: 0o644 });
+  }
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+});
 
 test("candidate Swift mangled symbol is rejected without demangling", (t) => {
   const f = fixture(t);
@@ -238,6 +308,15 @@ exec /usr/bin/grep "$@"`);
   rejected(f.run(), /Unable to inspect compiled artifact/);
 });
 
+test("grep error during Code exclusion fails closed", (t) => {
+  const f = fixture(t);
+  f.stub("grep", `for arg in "$@"; do
+  if [[ "$arg" == CodeComparison ]]; then exit 2; fi
+done
+exec /usr/bin/grep "$@"`);
+  rejected(f.run(), /Unable to inspect Code comparison artifact/);
+});
+
 test("grep error during candidate exclusion fails closed", (t) => {
   const f = fixture(t);
   f.stub("grep", `for arg in "$@"; do
@@ -257,6 +336,12 @@ test("preview implementation beyond the first read buffer in main is rejected", 
   const f = fixture(t);
   f.artifact(f.main, [...required, "A".repeat(262_144), "DesktopAcceptanceCommand"]);
   rejected(f.run(), /Desktop preview-only implementation found/);
+});
+
+test("Code IPC beyond the first read buffer is still rejected", (t) => {
+  const f = fixture(t);
+  f.artifact(f.main, [...required, "A".repeat(262_144), "QuotaTempo.CodeComparison.IPC"]);
+  rejected(f.run(), /Code comparison implementation found/);
 });
 
 test("all grep checks require complete reads, not early match exits", (t) => {

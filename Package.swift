@@ -31,12 +31,14 @@ let package = Package(
     .target(
       name: "QuotaTempoDesktopCandidate",
       dependencies: ["QuotaTempoCore"],
-      exclude: desktopIntegrationPreview ? [] : [
-        "DesktopPreviewModel.swift",
-        "DesktopPreviewMenu.swift",
-        "DesktopPreviewInstanceLock.swift",
-        "DesktopPreviewTermination.swift",
-      ]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "DesktopPreviewModel.swift",
+          "DesktopPreviewMenu.swift",
+          "DesktopPreviewInstanceLock.swift",
+          "DesktopPreviewTermination.swift",
+        ]
     ),
     .executableTarget(
       name: "QuotaTempoApp",
@@ -45,6 +47,17 @@ let package = Package(
         .product(name: "Sparkle", package: "Sparkle"),
         .target(name: "QuotaTempoDesktopCandidate"),
       ],
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "CodeComparisonEncryption.swift",
+          "CodeComparisonIPC.swift",
+          "CodeComparisonPackageValidation.swift",
+          "CodeComparisonPluginPackage.swift",
+          "CodeUsageComparison.swift",
+          "CodeUsageComparisonConnection.swift",
+          "CodeUsageComparisonControls.swift",
+        ],
       swiftSettings: [.define("DESKTOP_CONNECTION")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
@@ -70,18 +83,33 @@ let package = Package(
       dependencies: [
         "QuotaTempoApp", "QuotaTempoCore", .target(name: "QuotaTempoDesktopCandidate"),
       ],
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "CodeComparisonAppWiringTests.swift",
+          "CodeComparisonConnectionTests.swift",
+          "CodeComparisonDecoderTests.swift",
+          "CodeComparisonEncryptionTests.swift",
+          "CodeComparisonIPCTests.swift",
+          "CodeComparisonOfficialWireTests.swift",
+          "CodeComparisonPackageValidationTests.swift",
+          "CodeComparisonPluginPackageTests.swift",
+          "CodeComparisonUITests.swift",
+        ],
       swiftSettings: [.define("DESKTOP_CONNECTION")]
         + (desktopIntegrationPreview ? [.define("DESKTOP_INTEGRATION_PREVIEW")] : [])
     ),
     .testTarget(
       name: "QuotaTempoDesktopCandidateTests",
       dependencies: ["QuotaTempoDesktopCandidate", "QuotaTempoCore"],
-      exclude: desktopIntegrationPreview ? [] : [
-        "DesktopPreviewModelTests.swift",
-        "DesktopPreviewMenuTests.swift",
-        "DesktopPreviewInstanceLockTests.swift",
-        "DesktopPreviewTerminationTests.swift",
-      ]
+      exclude: desktopIntegrationPreview
+        ? []
+        : [
+          "DesktopPreviewModelTests.swift",
+          "DesktopPreviewMenuTests.swift",
+          "DesktopPreviewInstanceLockTests.swift",
+          "DesktopPreviewTerminationTests.swift",
+        ]
     ),
   ]
 )

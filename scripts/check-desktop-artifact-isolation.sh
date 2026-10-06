@@ -92,17 +92,38 @@ preview_only=(
   -e 'QuotaTempo.preview-termination'
   -e 'QuotaTempo Desktop Preview'
 )
+code_comparison_markers=(
+  -e 'CodeComparison'
+  -e 'CodeUsageComparison'
+  -e 'QuotaTempo.CodeComparison'
+  -e 'quotatempo-mods-comparison'
+  -e 'quotatempo-usage-probe'
+  -e 'quotatempo-code-comparison-plugin'
+  -e 'quotatempo-code-plugin-management'
+  -e 'probe-grant.json'
+  -e 'bridge.sock'
+)
 
 files="$(mktemp "${TMPDIR:-/tmp}/quota-tempo-artifact-isolation.XXXXXX")"
 trap 'rm -f -- "$files"' EXIT
 # Top-level documentation (notably PRIVACY.md) legitimately names the candidate.
-# Inspect code directories, executable files, and libraries/objects even without
-# execute permission. Materialize find output so enumeration failures propagate.
-find "$app/Contents" -type f \( \
-  -path '*/Contents/MacOS/*' -o -path '*.framework/*' \
-  -o -perm -100 -o -perm -010 -o -perm -001 \
-  -o -name '*.dylib' -o -name '*.so' -o -name '*.a' -o -name '*.o' \
-  \) -print0 > "$files"
+# Include non-executable plugin resources, directories and symlinks, while keeping
+# ordinary browser JSON/JS and descriptive documents outside the code scan.
+# Materialize find output so enumeration failures propagate before inspection.
+find "$app/Contents" \( \
+  \( \( -type f -o -type l \) \( \
+    -path '*/Contents/MacOS/*' -o -path '*.framework/*' \
+    -o -perm -100 -o -perm -010 -o -perm -001 \
+    -o -name '*.dylib' -o -name '*.so' -o -name '*.a' -o -name '*.o' \
+  \) \) -o \( \
+    -name '.claude-plugin' -o -path '*/.claude-plugin/*' \
+    -o -name 'CodeComparisonPlugin' -o -path '*/CodeComparisonPlugin/*' \
+    -o -name 'plugin.json' -o -name 'marketplace.json' -o -name 'quotatempo-package.json' \
+    -o -path '*/hooks/hooks.json' -o -name '*.mjs' \
+    -o -name '.quotatempo-code-plugin-management' -o -path '*/.quotatempo-code-plugin-management/*' \
+    -o -name 'probe-grant.json' -o -name 'bridge.sock' \
+    -o -name 'CodeComparison*.swift' -o -name 'CodeUsageComparison*.swift' \
+  \) \) -print0 > "$files"
 if [[ ! -s "$files" ]]; then
   echo 'No compiled bundle artifacts found.' >&2
   exit 2
@@ -117,6 +138,30 @@ while true; do
       exit 2
     fi
     break
+  fi
+  case "$artifact" in
+    */.claude-plugin|*/.claude-plugin/*|*/CodeComparisonPlugin|*/CodeComparisonPlugin/*|*/plugin.json|*/marketplace.json \
+      |*/quotatempo-package.json|*/hooks/hooks.json|*.mjs \
+      |*/.quotatempo-code-plugin-management|*/.quotatempo-code-plugin-management/* \
+      |*/probe-grant.json|*/bridge.sock|*/CodeComparison*.swift|*/CodeUsageComparison*.swift)
+      echo "Code comparison plugin material found in bundle: $artifact" >&2
+      exit 2
+      ;;
+  esac
+  if [[ -d "$artifact" ]]; then continue; fi
+  if [[ ! -f "$artifact" ]]; then
+    echo "Unable to inspect compiled artifact: $artifact" >&2
+    exit 2
+  fi
+  if grep -aF "${code_comparison_markers[@]}" "$artifact" >/dev/null; then
+    echo "Code comparison implementation found in compiled artifact: $artifact" >&2
+    exit 2
+  else
+    status=$?
+    if [[ "$status" -ne 1 ]]; then
+      echo "Unable to inspect Code comparison artifact (grep status $status): $artifact" >&2
+      exit 2
+    fi
   fi
   forbidden=("${preview_only[@]}")
   if [[ "$artifact" == "$binary" ]]; then
