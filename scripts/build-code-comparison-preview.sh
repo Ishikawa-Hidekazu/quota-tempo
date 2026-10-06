@@ -113,6 +113,15 @@ JS
 [[ "$manifest_digest" == "$native_digest" ]] || { echo 'Compiled native package pin mismatch.' >&2; exit 2; }
 plist=/usr/libexec/PlistBuddy
 info="$preview/Contents/Info.plist"
+# The Desktop builder inherits public Code metadata. Replace it with this
+# preview's pinned values and types before sealing; never retain a prior team.
+"$plist" -c Print "$info" >/dev/null
+for key in QTCodeComparisonPluginBundled QTCodeComparisonManifestDigest \
+  QTCodeComparisonSigningMode QTCodeComparisonSigningTeam; do
+  if "$plist" -c "Print :$key" "$info" >/dev/null 2>&1; then
+    "$plist" -c "Delete :$key" "$info"
+  fi
+done
 for command in \
   'Set :CFBundleIdentifier co.ishikawa.QuotaTempo.CodeComparisonPreview' \
   'Set :CFBundleName QuotaTempoCodeComparisonPreview' \
@@ -130,10 +139,10 @@ else
 fi
 verify_preview() {
   "$plist" -c Print "$info" >/dev/null
-  [[ "$("$plist" -c 'Print :CFBundleIdentifier' "$info")" == co.ishikawa.QuotaTempo.CodeComparisonPreview ]]
-  [[ "$("$plist" -c 'Print :QTReleaseChannel' "$info")" == code-comparison-preview ]]
-  [[ "$("$plist" -c 'Print :QTCodeComparisonPluginBundled' "$info")" == true ]]
-  [[ "$("$plist" -c 'Print :QTCodeComparisonManifestDigest' "$info")" == "$manifest_digest" ]]
+  [[ "$("$plist" -c 'Print :CFBundleIdentifier' "$info")" == co.ishikawa.QuotaTempo.CodeComparisonPreview ]] || return 2
+  [[ "$("$plist" -c 'Print :QTReleaseChannel' "$info")" == code-comparison-preview ]] || return 2
+  [[ "$("$plist" -c 'Print :QTCodeComparisonPluginBundled' "$info")" == true ]] || return 2
+  [[ "$("$plist" -c 'Print :QTCodeComparisonManifestDigest' "$info")" == "$manifest_digest" ]] || return 2
   node --input-type=module - "$package/quotatempo-package.json" "$manifest_digest" <<'JS'
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -141,10 +150,10 @@ if (createHash('sha256').update(readFileSync(process.argv[2])).digest('hex') !==
   throw new Error('code_preview_manifest_pin_mismatch');
 JS
   if [[ -n "$identity" ]]; then
-    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningMode' "$info")" == developer-id ]]
-    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningTeam' "$info")" == "$team" ]]
+    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningMode' "$info")" == developer-id ]] || return 2
+    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningTeam' "$info")" == "$team" ]] || return 2
   else
-    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningMode' "$info")" == local-ad-hoc ]]
+    [[ "$("$plist" -c 'Print :QTCodeComparisonSigningMode' "$info")" == local-ad-hoc ]] || return 2
     if "$plist" -c 'Print :QTCodeComparisonSigningTeam' "$info" >/dev/null 2>&1; then return 2; fi
   fi
   for key in SUFeedURL SUPublicEDKey; do
