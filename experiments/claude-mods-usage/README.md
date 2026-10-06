@@ -83,10 +83,41 @@ Explicit consent verifies and stages its bundled plugin in private app-owned
 Application Support, then prepares a fresh 0700 `/private/tmp/qtc-<UUID>` directory,
 0600 metadata-only grant and Unix socket. It does not install a plugin, connect
 Code, activate an app or request a model turn. The app exposes copyable builtin
-marketplace/install commands and management panels; choose local-only in Code's
-installation panel and verify loading before explicitly connecting. Staging,
+marketplace/install commands and management panels, but the observed Desktop
+route below does not complete local installation. Use the explicit local-scope
+CLI management procedure instead, and verify loading before connecting. Staging,
 command copying and a connected handshake are not installation or measurement receipts.
 Preparation expires after 15 minutes without a stream.
+
+### Desktop onboarding route mismatch (2026-10-06)
+
+User-provided screenshots after the c564881 startup correction show that the
+window renders and plugin 0.0.4 stages successfully. The first copied
+`/plugin marketplace add <local directory>` command opens Desktop's plugin
+settings browser. Its Add marketplace dialog offers curated sources and
+GitHub/Git repositories, not a local-directory selector. No marketplace addition,
+installation, active-session loading or live measurement was confirmed.
+Do not keep navigating this dialog, upload the package, invent a Git URL for its
+local path, or treat the displayed command as an executed installation.
+
+This is an unresolved onboarding defect in the preview's instructions, not a
+provider authentication failure. Native onboarding acceptance remains HOLD.
+For this local trial, use `manage-code-comparison-plugin.mjs` below with a
+compatible explicitly selected CLI, an explicitly selected project, local scope,
+and that project's Code sessions closed. Do not upgrade the normal CLI or switch
+to user/project scope to work around the issue. The normal CLI observed on this
+Mac reports 2.1.267, below the management tool's 2.1.287 minimum; the separately
+verified trial CLI reports 2.1.289. Neither version check installs anything or
+establishes Desktop loading.
+
+After installation, start the selected Code session and verify command loading.
+Only then prepare a fresh connection in the app; previously displayed connection
+arguments can expire after 15 minutes and must not be reused after expiry.
+The app's copy-command UI still needs to distinguish Desktop navigation from
+actual CLI installation before release.
+
+Primary references: [install from your shell](https://code.claude.com/docs/en/discover-plugins#install-from-your-shell)
+and [Desktop shared configuration](https://code.claude.com/docs/en/desktop#shared-configuration).
 
 Version 0.0.4 performs an encrypted schema-3 Unix HTTP handshake first; the app distinguishes
 **Connected; waiting for measurement** from **Waiting for connection**. After one
