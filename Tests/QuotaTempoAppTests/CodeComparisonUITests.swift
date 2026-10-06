@@ -8,6 +8,15 @@ import Testing
 @Suite("Code comparison offscreen UI", .serialized)
 @MainActor
 struct CodeComparisonUITests {
+  @Test("Nonblank raster coverage is scale independent and rejects empty images")
+  func rasterCoverage() {
+    #expect(hasVisibleContent(ink: 287, samples: 10_000))
+    #expect(hasVisibleContent(ink: 1_148, samples: 40_000))
+    #expect(!hasVisibleContent(ink: 0, samples: 10_000))
+    #expect(!hasVisibleContent(ink: 1, samples: 10_000))
+    #expect(!hasVisibleContent(ink: 0, samples: 0))
+  }
+
   @Test(
     "Connection arguments are shown only while waiting for a fresh connection",
     arguments: [
@@ -80,8 +89,10 @@ struct CodeComparisonUITests {
     let png = try #require(bitmap.representation(using: .png, properties: [:]))
     #expect(png.count > 2_000)
     var ink = 0
+    var samples = 0
     for y in stride(from: 0, to: bitmap.pixelsHigh, by: 3) {
       for x in stride(from: 0, to: bitmap.pixelsWide, by: 3) {
+        samples += 1
         if let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
           pixel.alphaComponent > 0.5 && pixel.redComponent < 0.8
         {
@@ -89,7 +100,7 @@ struct CodeComparisonUITests {
         }
       }
     }
-    #expect(ink > 300)
+    #expect(hasVisibleContent(ink: ink, samples: samples))
     if let output = ProcessInfo.processInfo.environment["QUOTATEMPO_CODE_RENDER_DIR"] {
       let path = URL(fileURLWithPath: output, isDirectory: true)
       try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
@@ -99,6 +110,10 @@ struct CodeComparisonUITests {
         ))
     }
     await controller.disconnect()
+  }
+
+  private func hasVisibleContent(ink: Int, samples: Int) -> Bool {
+    samples > 0 && Double(ink) / Double(samples) > 0.01
   }
 }
 

@@ -127,7 +127,10 @@ after the handshake or expiry; a stale preparation must be replaced, not recopie
 
 The coordinating run has user-reported fixed `status` and successful connected
 responses for the unmodified 0.0.4 plugin. This advances command and handshake
-acceptance only; native measurement receipt remains unconfirmed. The active
+acceptance only. A subsequent user-provided native screenshot shows both weekly
+and five-hour remaining values, their resets and the Code observation time. This
+accepts unmodified-plugin measurement receipt/display for this local trial, not
+account identity, provider freshness or final distribution. The active
 session's genuine README review and subsequent normal work may produce
 `session.measure` events. Do not submit a dummy request just to provoke quota
 data, reread a provider cache, or promise that idle waiting will produce an event.
@@ -158,19 +161,21 @@ and socket paths behind, never resumed automatically. The plugin checks the
 unchanged grant before each request and stops on uncertain delivery without replay.
 
 This implements native ingestion and bundled onboarding, not merely a CLI trial,
-but it is not a released or live-account-accepted feature. No existing trial
+but it is not a released or account-identity-verified feature. No existing trial
 installation is upgraded automatically; earlier caches remain historical until
 explicitly updated and reloaded. Remaining gates include live Code acceptance
-with the revised plugin and final public distribution.
+with a final release candidate and final public distribution.
 Chat/Cowork-only support and provider account identity remain unproven; this path
 must not become Automatic or a planning source.
 
 Current 0.0.4 validation reported by the coordinating run: official 2.1.289 plugin
 validation and **29 runtime tests PASS**; **83 Node probe tests PASS**. These are
 isolated/synthetic compatibility results, not live-account acquisition evidence.
-The latest preview Swift run passed **902 tests / 46 suites**, including the
+The earlier preview Swift run passed **902 tests / 46 suites**, including the
 opt-in official-engine native wire test and the existing expected browser
-watchdog issue. The four earlier package failures came from Foundation rewriting
+watchdog issue. The latest full preview run passed **905 tests / 46 suites**;
+the official-engine opt-in fixture was not re-executed in that run. The four
+earlier package failures came from Foundation rewriting
 POSIX paths to symlink aliases; the corrected paths retain the strict no-symlink
 and ancestor-permission checks. Earlier full-suite counts below are historical.
 
@@ -183,6 +188,15 @@ assertions exercise the production bridge directly, with explicit bounded
 fixture deadlines. Product timers, guards and shutdown behavior are unchanged.
 The focused regression run passed **132 tests / 4 suites**. Remote CI acceptance
 of this correction remains separate from these local results.
+
+Both macOS CI jobs at `71f5224` failed the same offscreen English expired-state
+assertion: hiding obsolete connection arguments reduced the sampled dark-pixel
+count below an absolute 300-pixel threshold. The screenshot was nonblank. The
+revised raster check uses visible coverage greater than 1% of sampled image area,
+with explicit empty/sparse rejection and scale-independence regressions; it does
+not claim to detect missing content or overlapping text. The full 905-test local
+preview run passed with the existing known browser-watchdog issue. Corrected
+remote CI acceptance remains pending.
 
 ### Finder startup failure and regression gate
 
@@ -242,7 +256,7 @@ usage. A skipped required case is incomplete, never PASS.
 | Current verification | Result | Boundary |
 | --- | --- | --- |
 | Default Swift graph | PASS, 764 tests / 30 suites | Existing expected browser watchdog issue |
-| Preview Swift graph | PASS, 902 tests / 46 suites | Includes isolated official-engine synthetic wire; same expected watchdog issue |
+| Preview Swift graph | PASS, 905 tests / 46 suites | Same expected watchdog issue; prior 902-test run separately exercised opt-in official-engine wire |
 | Node metadata, packaging and helper regressions | PASS, 288 tests | No live account acquisition |
 | Official 2.1.289 plugin validator / runtime | PASS / 29 tests | HTTP fixtures in `plugin test` |
 | Signed resource rejection harness | PASS, 11 cases / zero skips | Disposable copies; no Code UI or authentication |
@@ -251,7 +265,8 @@ usage. A skipped required case is incomplete, never PASS.
 | Compiled-artifact isolation | PASS, 588 regressions and two actual normal bundles | Code comparison implementation excluded from normal artifacts |
 | Manifest isolation | PASS, 13 positive / 328 negative cases | Preview-only app and test graph |
 | Crypto bundle reproducibility, format and release policies | PASS | Published app version remains 0.1.11 |
-| Revised plugin's real session measurement and final distribution | NOT ACCEPTED | No public enablement or release claim |
+| Unmodified 0.0.4 native measurement/display | User screenshot confirmed | Local trial only; identity/provider freshness unverified |
+| Final public integration and distribution | NOT ACCEPTED | No public enablement or release claim |
 
 Historical file-transport checkpoint: 48 native tests across decoding, secure temporary-file
 transport, controller lifecycle, app wiring and offscreen UI passed. The complete
