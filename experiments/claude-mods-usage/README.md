@@ -1,5 +1,25 @@
 # Claude Mods comparison-only usage probe
 
+## Current Product Status
+
+[QuotaTempo 0.1.12](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/tag/v0.1.12),
+from source checkpoint `52f4dea`, includes native Claude Code usage comparison
+and the immutable bundled plugin 0.0.4 in normal product builds.
+For product setup, consent, project-local management and removal, use the
+[Claude Code usage guide](../../docs/claude-code-usage.md).
+
+Existing Codex and Claude acquisition remains enabled. Comparison remains
+separate from Automatic and Desktop acquisition and never changes W/P or
+planning. It does not establish account identity or provider observation time.
+
+## Historical Experiment And Preview Checkpoints
+
+The records below describe earlier experiment and preview checkpoints.
+Statements about Code being excluded from normal artifacts, the published app
+remaining 0.1.11, or public integration being unaccepted apply to those historical
+checkpoints, not the 0.1.12 release. Preview and headless commands below are
+developer references, not product setup instructions.
+
 Experimental and **not connected to the shipped app**. The pure producer has
 an original Mods adapter, a metadata-only receiver and a bounded comparison observer.
 The separate Code comparison preview includes native bundled-plugin staging and
@@ -76,7 +96,7 @@ or a fallback for failed native requests. The current native contract is below.
   Expiry clears the values even when the file stops changing. The live runner
   samples its clock after file I/O, so a delayed read cannot use a pre-reset time.
 
-## Native app integration checkpoint (2026-10-06)
+## Historical native app integration checkpoint (2026-10-06)
 
 The separate Code comparison preview uses `DESKTOP_INTEGRATION_PREVIEW` and now
 contains a **Claude Code usage** disclosure, separate from the main Claude row.
@@ -253,7 +273,9 @@ This harness runs only the reserved headless validation entry point. It does
 not open a window, install a plugin, read account authentication or acquire real
 usage. A skipped required case is incomplete, never PASS.
 
-| Current verification | Result | Boundary |
+This table records the pre-0.1.12 preview checkpoint.
+
+| Historical preview verification | Result | Boundary |
 | --- | --- | --- |
 | Default Swift graph | PASS, 764 tests / 30 suites | Existing expected browser watchdog issue |
 | Preview Swift graph | PASS, 905 tests / 46 suites | Same expected watchdog issue; prior 902-test run separately exercised opt-in official-engine wire |
