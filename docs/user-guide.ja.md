@@ -173,16 +173,21 @@ brew trust --cask ishikawa-hidekazu/quotatempo/quotatempo && brew tap ishikawa-h
 
 ## アンインストールと観測値の削除
 
-1. **ログイン時に起動**が有効ならOFFにします。
-2. **QuotaTempoを終了**を選びます。
-3. `QuotaTempo.app`をゴミ箱へ移します。
-4. QuotaTempoが保持する正規化済みの観測値も消す場合は、次を削除します。
+1. 任意のCodeプラグインを導入した場合は、先に[Codeの削除手順（英語）](claude-code-usage.md#before-removing-quotatempo)を行います。`removed`が返るまで、アプリ、展開済みパッケージ、管理用receiptを残してください。
+2. **ログイン時に起動**が有効ならOFFにします。
+3. **QuotaTempoを終了**を選びます。
+4. `QuotaTempo.app`をゴミ箱へ移します。
+5. 保存済みの観測値も消す場合は、次のファイルだけを削除します。
 
    ```text
-   ~/Library/Application Support/QuotaTempo/
+   ~/Library/Application Support/QuotaTempo/codex.json
+   ~/Library/Application Support/QuotaTempo/claude.json
    ```
 
-5. 表示形式、provider選択、初回ガイドの設定も消す場合は、[Privacy](../PRIVACY.md)に記載した`co.ishikawa.QuotaTempo` preference domainを削除します。
+6. 表示形式、provider選択、初回ガイドの設定も消す場合は、[Privacy](../PRIVACY.md)に記載した`co.ishikawa.QuotaTempo` preference domainを削除します。
+
+他のプロジェクトがCodeパッケージを使っている場合や、管理操作の結果が未確定の場合は、Application Supportフォルダ全体を削除しないでください。
+アプリを削除するだけではCodeプラグインは削除されません。共有パッケージと管理記録は保持します。
 
 QuotaTempoを削除しても、CodexやClaudeの認証は変更されません。アプリ内の**規約・情報**から、bundle内のライセンス、プライバシー、更新方針、第三者表記、サポートを開けます。技術上の境界は[Security](../SECURITY.md)を確認してください。
 

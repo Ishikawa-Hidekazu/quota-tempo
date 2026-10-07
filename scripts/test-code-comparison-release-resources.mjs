@@ -103,3 +103,26 @@ test("owned shell scripts parse without executing builds, signing or state acces
     assert.ifError(result.error); assert.equal(result.signal, null); assert.equal(result.status, 0, result.stderr);
   }
 });
+test("removal guides keep Code tools and packages until project uninstall completes", () => {
+  const guide = readFileSync(join(root, "docs/claude-code-usage.md"), "utf8");
+  const removal = guide.split("### Before Removing QuotaTempo\n")[1]?.split("\n## Privacy")[0];
+  assert(removal, "Code removal ordering section is required");
+  assert.match(removal, /before.*deleting QuotaTempo/s);
+  assert.match(removal, /bundled tools.*original staged/s);
+  assert.match(removal, /status: removed/);
+  assert.match(removal, /Do not recreate a receipt or delete a journal/);
+  for (const file of ["README.md", "PRIVACY.md", "docs/user-guide.md", "docs/user-guide.ja.md"]) {
+    const text = readFileSync(join(root, file), "utf8");
+    assert.match(text, /claude-code-usage\.md#before-removing-quotatempo/, file);
+    if (file !== "README.md") {
+      assert.match(text, /Application Support\/QuotaTempo\/codex\.json/, file);
+      assert.match(text, /Application Support\/QuotaTempo\/claude\.json/, file);
+    }
+    const removalText = file === "PRIVACY.md" ? text.split("## Removal\n")[1] : text;
+    assert.doesNotMatch(removalText, /```text\n\s*~\/Library\/Application Support\/QuotaTempo\/\s*\n\s*```/, file);
+    if (file.startsWith("docs/user-guide")) {
+      const title = file.endsWith(".ja.md") ? "## アンインストールと観測値の削除" : "## Uninstall and erase local observations";
+      assert.match(text.split(title)[1], /\n1\. [^\n]*Code/, file);
+    }
+  }
+});

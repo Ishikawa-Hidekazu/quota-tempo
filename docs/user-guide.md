@@ -184,16 +184,24 @@ Normalized observations remain in the QuotaTempo Application Support directory u
 
 ## Uninstall and erase local observations
 
-1. Turn off **Launch at login** if it is enabled.
-2. Choose **Quit QuotaTempo**.
-3. Move `QuotaTempo.app` to the Trash.
-4. To erase QuotaTempo's normalized observations as well, remove:
+1. If you installed the optional Code plugin, first follow the
+   [Code removal steps](claude-code-usage.md#before-removing-quotatempo). Keep the
+   app, staged package and management receipt until uninstall reports `removed`.
+2. Turn off **Launch at login** if it is enabled.
+3. Choose **Quit QuotaTempo**.
+4. Move `QuotaTempo.app` to the Trash.
+5. To erase saved observations as well, remove only these files:
 
    ```text
-   ~/Library/Application Support/QuotaTempo/
+   ~/Library/Application Support/QuotaTempo/codex.json
+   ~/Library/Application Support/QuotaTempo/claude.json
    ```
 
-5. To erase QuotaTempo's display mode, provider selection, and onboarding preferences, remove the `co.ishikawa.QuotaTempo` preference domain as described in [Privacy](../PRIVACY.md).
+6. To erase QuotaTempo's display mode, provider selection, and onboarding preferences, remove the `co.ishikawa.QuotaTempo` preference domain as described in [Privacy](../PRIVACY.md).
+
+Do not delete the whole Application Support directory while a project still
+uses its Code packages or a management operation is uncertain. App removal does
+not uninstall the Code plugin; shared packages and management records are retained.
 
 Removing QuotaTempo does not alter Codex or Claude authentication. Use the in-app **Legal** menu to open the bundled license, privacy policy, update policy, third-party notices, and support route. See [Security](../SECURITY.md) for the complete technical boundary.
 

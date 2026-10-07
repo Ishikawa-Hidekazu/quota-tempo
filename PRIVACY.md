@@ -251,7 +251,27 @@ Sparkle checks the official HTTPS appcast at `ishikawa.co` at most once per day 
 
 ## Removal
 
-Turn off **Launch at login** if enabled, quit QuotaTempo, remove `QuotaTempo.app`, and optionally remove the QuotaTempo Application Support directory and the `co.ishikawa.QuotaTempo` macOS preference to erase its normalized observations, display mode, provider choices, and guide completion. Removing QuotaTempo does not alter Codex or Claude authentication.
+If you installed the optional Code plugin, disconnect it and complete the
+[Code removal steps](docs/claude-code-usage.md#before-removing-quotatempo) first.
+Keep the app's bundled tools, staged package and management receipt available
+until the selected project's uninstall reports `removed`. Repeat for each
+managed project you intend to remove. Removing the app alone leaves its Code
+plugin installed. Do not delete shared packages or management records while
+another project uses them or any operation is uncertain.
+
+Then turn off **Launch at login** if enabled, quit QuotaTempo and remove
+`QuotaTempo.app`. To erase saved observations, remove only these files:
+
+```text
+~/Library/Application Support/QuotaTempo/codex.json
+~/Library/Application Support/QuotaTempo/claude.json
+```
+
+Do not remove the whole directory. It also contains Code packages and Desktop scheduling records;
+keep scheduling records when reinstalling so provider wait deadlines survive.
+Optionally remove the `co.ishikawa.QuotaTempo` macOS preference to erase display
+mode, provider choices and guide completion. Removing QuotaTempo does not alter
+Codex or Claude authentication.
 
 For the experimental browser bridge, **Disconnect browser** in QuotaTempo's Claude details revokes the local connection even if the extension was removed. After confirmation, it clears browser quota/ownership fields and rejects late messages under the same lock used by the native host. Local metadata can then be displayed as a separate source, without inheriting browser resets or triggering a live request. Claude sign-in is unchanged. If the extension is still running, it stops when the host next rejects that connection; an in-flight or next scheduled observation can still run because the app cannot push a notification to Chrome. Disable/disconnect the extension directly to stop it there immediately. Reconnect preserves its saved provider wait.
 
