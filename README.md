@@ -275,7 +275,19 @@ The app reads its own schema-versioned normalized Application Support records an
 
 The first launch focuses an independent application window so opening QuotaTempo has an immediate visible result even when its menu-bar item is hidden behind a notch. The guide explains provider selection, `W`, `P`, `P≈`, and the comparison arrows, previews Full, Compact, and Icon only, and lets the user choose among them without requiring provider credentials. Opening QuotaTempo again from Applications brings the window forward; opt-in login launch remains silent after onboarding. Reopen the guide with **How to read**. In Compact mode, an estimated plan is shown as `75↑25 P≈`, so the marker cannot be mistaken for an estimate of the measured weekly balance. **Copy diagnostics** places only the app version, operating-system version, enabled providers, source kinds, freshness, and acquisition states on the clipboard; quota percentages, reset times, paths, credentials, and session content are excluded. The **Legal** menu opens the bundled license, privacy policy, update policy, third-party notices, and support route.
 
-Use **Quit QuotaTempo** at the bottom of the popover to stop the app. To uninstall, first turn off **Launch at login** if enabled, quit the app, and remove `QuotaTempo.app`. Its normalized local snapshot directory is documented in [PRIVACY.md](PRIVACY.md) and may be removed separately if the user wants to erase the last displayed observations. The same policy documents the `co.ishikawa.QuotaTempo` preference domain for erasing display, provider-selection, and onboarding preferences.
+Use **Quit QuotaTempo** at the bottom of the popover to stop the app. If you
+installed the optional Code plugin, first disconnect it and follow the
+[Code removal steps](docs/claude-code-usage.md#before-removing-quotatempo) while the
+app, staged package and management receipt are still available. Removing the app
+alone leaves the Code plugin installed.
+
+Then turn off **Launch at login** if enabled, quit the app, and remove
+`QuotaTempo.app`. To erase the last saved observations, remove only `codex.json`
+and `claude.json` from the directory documented in [PRIVACY.md](PRIVACY.md).
+Do not delete the whole Application Support directory while any project uses
+its Code packages or a management operation is uncertain. The same policy
+documents the `co.ishikawa.QuotaTempo` preference domain for erasing display,
+provider-selection, and onboarding preferences.
 
 If you enabled the **Claude Desktop** connection, also follow the
 [permission-removal steps](PRIVACY.md#desktop-connection-removal). Removing the app

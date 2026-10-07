@@ -160,6 +160,31 @@ be used elsewhere. QuotaTempo does not remove shared material automatically.
 Keep those records if another project still uses the plugin or an operation is
 uncertain. Removing the app alone does not uninstall a Code plugin.
 
+### Before Removing QuotaTempo
+
+Uninstall the Code plugin **before** deleting QuotaTempo or its Application
+Support data. The manager needs both the bundled tools and the original staged
+package even for disable and uninstall.
+
+1. In QuotaTempo choose **Disconnect**. In each selected Code session run
+   `/quotatempo-probe disconnect`, then close that project's Code sessions.
+2. While QuotaTempo is still installed, use the same `PROJECT`, `CLI`, `PACKAGE`
+   and `RECEIPT` from its successful install. Review the **uninstall** dry run,
+   then apply with the two consent flags described above. Expect `status: removed`.
+3. Repeat for each managed project you intend to remove. If a receipt is missing,
+   the package is unavailable or the result is uncertain, stop and use the
+   [support route](../SUPPORT.md). Do not recreate a receipt or delete a journal
+   to bypass the refusal.
+4. Only after those uninstalls complete, follow the
+   [app removal guide](user-guide.md#uninstall-and-erase-local-observations).
+   Keep package directories and management records used by any other project.
+   The tool deliberately retains shared marketplaces, plugin data and records;
+   app removal is not permission to delete them broadly.
+
+The bundled privacy copy in version 0.1.12 predates this ordering correction.
+For Code removal, follow this current guide rather than deleting the whole
+Application Support directory as suggested in that older copy.
+
 ## Privacy
 
 Only allowlisted quota and timing metadata cross the local encrypted Unix socket.
