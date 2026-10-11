@@ -32,6 +32,11 @@ bash "$repo_root/scripts/check-desktop-artifact-isolation.sh" "$second"
 for app in "$first" "$second"; do
   cmp "$repo_root/PRIVACY.md" "$app/Contents/Resources/PRIVACY.md"
   grep -F '### Desktop connection removal' "$app/Contents/Resources/PRIVACY.md" >/dev/null
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:0' "$app/Contents/Info.plist")" = en
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleLocalizations:1' "$app/Contents/Info.plist")" = ja
+  for language in en ja; do
+    plutil -lint "$app/Contents/Resources/QuotaTempoCoreResources/$language.lproj/Localizable.strings" >/dev/null
+  done
 done
 
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$first/Contents/Info.plist")" = true

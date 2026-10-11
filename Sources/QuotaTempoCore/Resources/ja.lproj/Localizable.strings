@@ -101,6 +101,12 @@
 "download.latest" = "最新版を入手";
 "third.party.notices" = "第三者表記";
 "support" = "サポート";
+"feedback.send" = "感想を送る";
+"feedback.draft.explanation" = "メールアプリで下書きを開きます。内容を確認・編集し、送信はご自身で行ってください。";
+"feedback.open.failed" = "メールアプリを開けませんでした。必要な場合は製品ページの窓口をご利用ください。";
+"feedback.product.page" = "製品ページ";
+"feedback.unknown.version" = "不明";
+"feedback.draft" = "QuotaTempo 初回の感想（任意）\n\nアプリのバージョン：{public_app_version}\n初回の結果（1つ選び、不要な項目を削除してください）：\n表示できた／待機中／設定で停止／不明\n分かりにくかった点（任意）：\n\n送信する前に、ご自身で内容を確認・編集してください。送信は任意です。\n名前などの個人情報、残量、リセット日時、スクリーンショット、会話、認証情報、診断、履歴、ローカルパスは記入・添付しないでください。";
 "launch.at.login" = "ログイン時に起動";
 "launch.at.login.note" = "このMacへのログイン後にQuotaTempoを起動します。初期設定はOFFです。";
 "login.item.requires.approval" = "設定は要求済みですが、まだ有効ではありません。システム設定 › 一般 › ログイン項目でQuotaTempoを許可してください。";
