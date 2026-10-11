@@ -66,6 +66,7 @@ enum QuotaDateFormatting {
 public struct QuotaMenuView: View {
   private let plans: [PlannedProvider]
   private let copy: MenuCopy
+  private let languageCode: String
   private let locale: Locale
   private let timeZone: TimeZone
   private let availableHeight: CGFloat?
@@ -139,6 +140,7 @@ public struct QuotaMenuView: View {
   ) {
     self.plans = QuotaPlanner.evaluateUnique(scenario.snapshots, now: scenario.now)
     self.copy = MenuCopy(languageCode: languageCode)
+    self.languageCode = languageCode
     self.locale = locale ?? Locale(identifier: languageCode)
     self.timeZone = timeZone
     self.availableHeight = availableHeight
@@ -448,6 +450,10 @@ public struct QuotaMenuView: View {
           }
         }
       }
+
+      FeedbackControls(
+        languageCode: self.languageCode,
+        publicAppVersion: self.productVersion)
     }
   }
 
@@ -482,6 +488,10 @@ public struct QuotaMenuView: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+
+      FeedbackControls(
+        languageCode: self.languageCode,
+        publicAppVersion: self.productVersion)
 
       HStack {
         Button(self.copy.text("quit")) {

@@ -75,6 +75,17 @@ After applying a reset, confirm the updated window in Codex Settings › Usage, 
 
 QuotaTempo does not add itself to Login Items automatically. Move it to `/Applications` or your user `Applications` folder before enabling **Launch at login**. A downloaded, translocated, temporary, or verification copy cannot change the login-item setting. If macOS requires approval, the request is not active yet; follow the message to System Settings › General › Login Items. Turn the option off before moving, replacing, or uninstalling QuotaTempo.
 
+## Send feedback
+
+Choose **Send feedback** near **How to read**, or in the first-run guide, to
+open an editable draft addressed to `h@ishikawa.co`. It is available before
+setup is complete and while usage is waiting or unavailable. The draft includes
+only the public app version and optional questions; no usage values,
+diagnostics, history or attachments are added. Review and edit it in your email
+app, then send or cancel there. QuotaTempo does not send email or monitor that
+choice. If your email app cannot open, use the displayed address or product-page
+contact option.
+
 ## Choose providers
 
 Desktop connection is an exception to local observation retention: turning

@@ -101,6 +101,12 @@
 "download.latest" = "Download latest";
 "third.party.notices" = "Third-party notices";
 "support" = "Support";
+"feedback.send" = "Send feedback";
+"feedback.draft.explanation" = "Open a draft in your email app. Review and edit it; you choose whether to send.";
+"feedback.open.failed" = "Could not open your email app. If needed, use the contact option on the product page.";
+"feedback.product.page" = "Product page";
+"feedback.unknown.version" = "Unknown";
+"feedback.draft" = "QuotaTempo first-run feedback (optional)\n\nApp version: {public_app_version}\nFirst-run result (choose one and remove the others):\nDisplayed / Still waiting / Stopped during setup / Unknown\nWhat was unclear? (optional):\n\nReview and edit this draft before sending. Sending is optional.\nDo not include personal information such as your name, quota values, reset times, screenshots, conversations, credentials, diagnostics, history, or local paths.";
 "launch.at.login" = "Launch at login";
 "launch.at.login.note" = "Starts QuotaTempo after you sign in to this Mac. Off by default.";
 "login.item.requires.approval" = "Requested, but not active yet. Allow QuotaTempo in System Settings › General › Login Items.";

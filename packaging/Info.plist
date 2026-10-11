@@ -4,6 +4,11 @@
 <dict>
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ja</string>
+  </array>
   <key>CFBundleExecutable</key>
   <string>QuotaTempo</string>
   <key>CFBundleIdentifier</key>
@@ -19,9 +24,9 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.12</string>
+  <string>0.1.13</string>
   <key>CFBundleVersion</key>
-  <string>32</string>
+  <string>33</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSApplicationCategoryType</key>

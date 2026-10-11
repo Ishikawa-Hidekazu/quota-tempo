@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.13 - Feedback drafts and Japanese language selection
+
+- Add **Send feedback** beside the guide and in first-run setup, including
+  while waiting for usage or after acquisition fails.
+- Open an editable English or Japanese email draft containing only the public
+  app version and optional first-run questions. QuotaTempo never sends email,
+  attaches diagnostics, or monitors whether a draft is sent or cancelled.
+- Show a safe contact fallback when no email application can be opened.
+- Declare English and Japanese bundle support so macOS can select the existing
+  Japanese interface. Add generated-bundle language regression checks.
+- Preserve provider acquisition, account isolation and update behavior.
+
 ## 0.1.12 - Optional Claude Code usage comparison
 
 - Add a separate, explicitly connected Code-session comparison showing weekly
