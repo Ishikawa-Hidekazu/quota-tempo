@@ -52,6 +52,13 @@ This fixture screenshot shows the expected layout. Your values and provider avai
 
 ![Expected QuotaTempo weekly comparison layout with Codex and Claude rows](docs/assets/fixture-menu-en.png)
 
+Prefer not to use GitHub? Choose **Send feedback** beside **How to read**, or in
+the first-run guide, to open an editable email draft. This is available even
+before setup is complete or while usage is waiting or unavailable. Review and
+edit the draft, then send or cancel in your mail app; QuotaTempo does not send
+email for you. If your mail app cannot open, use the
+[product-page contact option](https://ishikawa.co/en/products/quotatempo/).
+
 For general questions and first impressions, join the [QuotaTempo discussion](https://github.com/Ishikawa-Hidekazu/quota-tempo/discussions/2). If the first run is unclear or stops before this point, use the privacy-safe [QuotaTempo feedback form](https://github.com/Ishikawa-Hidekazu/quota-tempo/issues/new?template=public_beta_feedback.yml). Do not include quota percentages, reset dates or times, credentials, prompts, transcripts, provider files, or private paths.
 
 ## Download and install
