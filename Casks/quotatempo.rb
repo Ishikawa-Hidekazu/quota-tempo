@@ -1,6 +1,6 @@
 cask "quotatempo" do
-  version "0.1.13"
-  sha256 "612b79fca1ebd97a8adfde43a25f07ebfa71c242f8f10368c8823e0929f08dad"
+  version "0.1.14"
+  sha256 "8c634151d32b50b5c00a62c811a779e9e75ebc7ee5ea8a9890804a3f5c08f987"
 
   url "https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/download/v#{version}/QuotaTempo-#{version}-macOS.zip"
   name "QuotaTempo"
