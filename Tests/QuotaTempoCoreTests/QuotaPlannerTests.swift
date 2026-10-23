@@ -695,10 +695,10 @@ struct QuotaPlannerTests {
     let scenario = try FixtureLoader.load("baseline")
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .full)
-        == "Cx W34/P48 ↓14 · Cl W60/P48 ↑12")
+        == "Codex W34/P48 ↓14 · Claude W60/P48 ↑12")
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .compact)
-        == "Cx 34↓14 · Cl 60↑12")
+        == "Codex 34↓14 · Claude 60↑12")
     #expect(MenuBarTitleFormatter.title(scenario: scenario, mode: .iconOnly) == nil)
     #expect(
       MenuBarTitleFormatter.parts(scenario: scenario, mode: .full)
@@ -734,7 +734,10 @@ struct QuotaPlannerTests {
     #expect(full.size.height == ProviderMenuBarImageRenderer.canvasHeight)
     #expect(compact.size.height == ProviderMenuBarImageRenderer.canvasHeight)
     #expect(full.size.width > compact.size.width)
-    #expect(compact.size.width > ProviderMenuBarImageRenderer.iconSize * 2)
+    let compactTitle = try #require(MenuBarTitleFormatter.title(scenario: scenario, mode: .compact))
+    let compactWidth = (compactTitle as NSString).size(
+      withAttributes: [.font: NSFont.menuBarFont(ofSize: 0)]).width
+    #expect(compact.size.width == ceil(compactWidth))
     #expect(ProviderMenuBarImageRenderer.image(scenario: scenario, mode: .iconOnly) == nil)
   }
 
@@ -747,8 +750,8 @@ struct QuotaPlannerTests {
       ProviderMenuBarImageRenderer.image(scenario: scenario, mode: .full)
     )
     let font = NSFont.menuBarFont(ofSize: 0)
-    let textWidth = ("W34/P48 ↓14" as NSString).size(withAttributes: [.font: font]).width
-    let expectedWidth = ceil(ProviderMenuBarImageRenderer.iconSize + 4 + ceil(textWidth))
+    let textWidth = ("Codex W34/P48 ↓14" as NSString).size(withAttributes: [.font: font]).width
+    let expectedWidth = ceil(textWidth)
 
     #expect(image.size.width == expectedWidth)
   }
@@ -766,12 +769,12 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: missingReset, mode: .full)
-        == "Cx W62/P— —")
+        == "Codex W62/P— —")
 
     let unavailable = try FixtureLoader.load("all-unavailable")
     #expect(
       MenuBarTitleFormatter.title(scenario: unavailable, mode: .compact)
-        == "Cx — · Cl —")
+        == "Codex — · Claude —")
 
     let stale = FixtureScenario(
       id: "stale-menu",
@@ -786,10 +789,10 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: stale, mode: .full)
-        == "Cx W62?/P50 —")
+        == "Codex W62?/P50 —")
     #expect(
       MenuBarTitleFormatter.title(scenario: stale, mode: .compact)
-        == "Cx 62? —")
+        == "Codex 62? —")
   }
 
   @Test("Stale estimated reset retains only an explicitly estimated planning target")
@@ -819,7 +822,7 @@ struct QuotaPlannerTests {
     #expect(plan.availableUntilCheckpoint == nil)
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .full)
-        == "Cl W75?/P≈50 —")
+        == "Claude W75?/P≈50 —")
   }
 
   @Test("Stale comparison help distinguishes confirmed and estimated reset bases")
@@ -868,10 +871,10 @@ struct QuotaPlannerTests {
     #expect(plan.weeklyResetIsEstimated)
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .full)
-        == "Cl W75/P≈50 ↑25")
+        == "Claude W75/P≈50 ↑25")
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .compact)
-        == "Cl 75↑25 P≈")
+        == "Claude 75↑25 P≈")
     #expect(
       MenuCopy(languageCode: "en").text("target.basis.estimated")
         == "Estimated from the last confirmed weekly reset")
@@ -919,11 +922,11 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: withoutReset, mode: .full)
-        == "Cl W85/P— —"
+        == "Claude W85/P— —"
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: withReset, mode: .full)
-        == "Cl W85/P50 ↑35"
+        == "Claude W85/P50 ↑35"
     )
   }
 
@@ -950,7 +953,7 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .full)
-        == "Cx W0/P50 ↓50 · Cl W100/P50 ↑50")
+        == "Codex W0/P50 ↓50 · Claude W100/P50 ↑50")
   }
 
   @Test("Menu bar formatter uses a neutral marker on target")
@@ -963,7 +966,7 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .compact)
-        == "Cx 50=0")
+        == "Codex 50=0")
   }
 
   @Test("Menu bar difference matches the displayed rounded values")
@@ -976,7 +979,7 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .full)
-        == "Cx W34/P48 ↓14")
+        == "Codex W34/P48 ↓14")
     let plan = QuotaPlanner.evaluate(scenario.snapshots[0], now: scenario.now)
     #expect(
       QuotaPlanner.displayedDifference(
@@ -998,7 +1001,7 @@ struct QuotaPlannerTests {
     )
     #expect(
       MenuBarTitleFormatter.title(scenario: scenario, mode: .compact)
-        == "Cx 40↓10")
+        == "Codex 40↓10")
     #expect(QuotaPlanner.evaluateUnique(scenario.snapshots, now: scenario.now).count == 1)
   }
 
@@ -1013,10 +1016,10 @@ struct QuotaPlannerTests {
     #expect(scenario.snapshots.count == 2)
     #expect(
       MenuBarTitleFormatter.title(scenario: codexOnly, mode: .full)
-        == "Cx W34/P48 ↓14")
+        == "Codex W34/P48 ↓14")
     #expect(
       MenuBarTitleFormatter.title(scenario: claudeOnly, mode: .full)
-        == "Cl W60/P48 ↑12")
+        == "Claude W60/P48 ↑12")
   }
 
   @Test("Provider selection always retains at least one provider")

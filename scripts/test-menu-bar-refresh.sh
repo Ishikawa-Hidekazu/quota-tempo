@@ -55,6 +55,7 @@ jq -n --arg now "$now_iso" \
 "$qa_app/Contents/MacOS/QuotaTempoQA" \
   --provider-disabled \
   -menuBarDisplayMode full \
+  -hasCompletedOnboarding YES \
   --storage-directory "$qa_store" \
   >/dev/null 2>&1 &
 qa_pid=$!
@@ -82,7 +83,7 @@ for _ in {1..80}; do
   sleep 0.25
 done
 printf 'initial=%s\n' "$initial"
-if [[ "$initial" != *'Cl W85/P— —'* ]]; then
+if [[ "$initial" != *'Claude W85/P— —'* ]]; then
   echo "The isolated menu-bar item did not reach the expected initial state." >&2
   exit 1
 fi
@@ -96,7 +97,7 @@ current="$initial"
 for elapsed in {1..40}; do
   sleep 2
   current="$(menu_title 2>/dev/null || true)"
-  if [[ "$current" == *'Cl W85/P50 ↑35'* ]]; then
+  if [[ "$current" == *'Claude W85/P50 ↑35'* ]]; then
     printf 'updated=%s\n' "$current"
     printf 'elapsed_seconds=%s\n' "$((elapsed * 2))"
     printf 'no_click_auto_refresh=PASS\n'

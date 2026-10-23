@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.14 - Clear provider names in the menu bar
+
+- Replace ambiguous provider symbols with the plain-text names **Codex** and
+  **Claude** in Full and Compact menu-bar labels and first-run previews.
+- Use the same complete text for the native template image and accessibility
+  label. Keep the neutral application symbol in Icon only mode.
+- Preserve W/P, differences, stale and estimated markers, provider selection,
+  acquisition, consent, saved settings and update behavior. No provider logos
+  are added.
+
 ## 0.1.13 - Feedback drafts and Japanese language selection
 
 - Add **Send feedback** beside the guide and in first-run setup, including

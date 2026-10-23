@@ -38,7 +38,7 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
 両方を有効にした場合、Full表示は次の形式で比較します。
 
 ```text
-[Codex glyph] W34/P48 ↓14 · [Claude glyph] W60/P48 ↑12
+Codex W34/P48 ↓14 · Claude W60/P48 ↑12
 ```
 
 - `W`はproviderが示した週間残量です。
@@ -55,11 +55,11 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
 
 混み合ったメニューバーやノッチのあるMacで隠れにくいよう、初期設定は**Icon only**です。初回案内ウインドウ、または後から**メニューバー表示**で三つの表示から選びます。
 
-- **Full**：中立的なprovider識別glyph、週間残量、現在の計画、差
-- **Compact**：中立的なprovider識別glyph、週間残量、差
+- **Full**：Codex／Claudeの名前、週間残量、現在の計画、差
+- **Compact**：Codex／Claudeの名前、週間残量、差
 - **Icon only**：中立的なmetronome glyphのみ。値は開いて確認
 
-1回分のリセット推定を使う場合、コンパクト表示でも推定記号を計画側へ付け、`[Claude glyph] 75↑25 P≈`と表示します。
+1回分のリセット推定を使う場合、コンパクト表示でも推定記号を計画側へ付け、`Claude 75↑25 P≈`と表示します。
 
 選択内容はQuotaTempo自身のmacOS設定へ保存します。CodexやClaudeの設定は変更しません。観測済みのリセット時刻がすでに過ぎている場合、古い週間残量は表示せず、現在の観測が届くまで**新しい利用枠を待機中**と表示します。
 

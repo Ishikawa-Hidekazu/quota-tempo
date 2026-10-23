@@ -119,14 +119,14 @@ Five-hour quota is secondary. It belongs in detail or in an immediate-risk warni
 The menu-bar label is weekly-first and can be changed inside the popover:
 
 ```text
-Full       Cx W34/P48 ↓14 · Cl W60/P48 ↑12
-Compact    Cx 34↓14 · Cl 60↑12
+Full       Codex W34/P48 ↓14 · Claude W60/P48 ↑12
+Compact    Codex 34↓14 · Claude 60↑12
 Icon only  [neutral metronome glyph]
 ```
 
 `W` means weekly capacity left, `P` means an even seven-day reset-relative plan at the current instant, and the arrow shows how far the balance is above or below that plan. `W?` marks the last observed balance while a current refresh is pending; QuotaTempo withholds its difference from `P`. Icon only is the first-run default so a crowded or notched menu bar is less likely to hide the item. The focused first-run guide previews and selects all three modes, and the choice remains available in the operational view. It is stored by QuotaTempo itself and does not change provider settings. QuotaTempo does not assume a weekday-only work schedule in V1.
 
-The menu bar uses neutral monochrome SF Symbols to distinguish the rows; it does not bundle provider logos. The text abbreviations remain in VoiceOver output. Trademark boundaries are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Full and Compact use the plain-text names Codex and Claude in both the menu bar and accessibility output. Icon only retains the neutral metronome symbol. No provider logos are bundled. Trademark boundaries are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## V1 boundary
 

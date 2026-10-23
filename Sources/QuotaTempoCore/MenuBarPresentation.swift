@@ -35,7 +35,7 @@ public enum MenuBarTitleFormatter {
     let parts = self.parts(scenario: scenario, mode: mode)
     guard !parts.isEmpty else { return nil }
     return parts.map { part in
-      "\(self.abbreviation(part.provider)) \(part.value)"
+      "\(part.provider.displayName) \(part.value)"
     }.joined(separator: " · ")
   }
 
@@ -95,10 +95,6 @@ public enum MenuBarTitleFormatter {
     case .iconOnly:
       return ""
     }
-  }
-
-  private static func abbreviation(_ provider: ProviderID) -> String {
-    provider == .codex ? "Cx" : "Cl"
   }
 
   private static func difference(_ value: Int) -> String {

@@ -65,82 +65,34 @@ public struct ProviderMenuBarLabel: View {
 }
 
 public enum ProviderMenuBarImageRenderer {
-  public static let iconSize: CGFloat = 15
   public static let canvasHeight: CGFloat = 18
 
   public static func image(
     scenario: FixtureScenario,
     mode: MenuBarDisplayMode
   ) -> NSImage? {
-    let parts = MenuBarTitleFormatter.parts(scenario: scenario, mode: mode)
-    guard !parts.isEmpty else { return nil }
+    guard let title = MenuBarTitleFormatter.title(scenario: scenario, mode: mode) else {
+      return nil
+    }
 
     let font = NSFont.menuBarFont(ofSize: 0)
     let attributes: [NSAttributedString.Key: Any] = [
       .font: font,
       .foregroundColor: NSColor.black,
     ]
-    let iconTextSpacing: CGFloat = 4
-    let separator = "  ·  " as NSString
-    let separatorSize = separator.size(withAttributes: attributes)
-    let textSizes = parts.map { ($0.value as NSString).size(withAttributes: attributes) }
-    let segmentWidths = textSizes.map { Self.iconSize + iconTextSpacing + ceil($0.width) }
-    let separatorCount = max(parts.count - 1, 0)
-    let width = ceil(
-      segmentWidths.reduce(0, +) + separatorSize.width * CGFloat(separatorCount)
-    )
-    let size = NSSize(width: width, height: Self.canvasHeight)
+    let text = title as NSString
+    let textSize = text.size(withAttributes: attributes)
+    let size = NSSize(width: ceil(textSize.width), height: Self.canvasHeight)
 
     let image = NSImage(size: size, flipped: false) { rect in
-      var x: CGFloat = 0
-      for (index, part) in parts.enumerated() {
-        if index > 0 {
-          let point = NSPoint(
-            x: x,
-            y: floor((rect.height - separatorSize.height) / 2)
-          )
-          separator.draw(at: point, withAttributes: attributes)
-          x += separatorSize.width
-        }
-
-        let icon =
-          ProviderIconAsset.image(for: part.provider, pointSize: Self.iconSize)
-          ?? Self.fallbackImage(for: part.provider)
-        icon.draw(
-          in: NSRect(
-            x: x,
-            y: floor((rect.height - Self.iconSize) / 2),
-            width: Self.iconSize,
-            height: Self.iconSize
-          ),
-          from: .zero,
-          operation: .sourceOver,
-          fraction: 1
-        )
-        x += Self.iconSize + iconTextSpacing
-
-        let text = part.value as NSString
-        let textSize = textSizes[index]
-        text.draw(
-          at: NSPoint(x: x, y: floor((rect.height - textSize.height) / 2)),
-          withAttributes: attributes
-        )
-        x += ceil(textSize.width)
-      }
+      text.draw(
+        at: NSPoint(x: 0, y: floor((rect.height - textSize.height) / 2)),
+        withAttributes: attributes
+      )
       return true
     }
     image.isTemplate = true
     return image
   }
 
-  private static func fallbackImage(for provider: ProviderID) -> NSImage {
-    let image =
-      NSImage(
-        systemSymbolName: provider == .codex ? "terminal" : "sparkles",
-        accessibilityDescription: nil
-      ) ?? NSImage(size: NSSize(width: Self.iconSize, height: Self.iconSize))
-    image.size = NSSize(width: Self.iconSize, height: Self.iconSize)
-    image.isTemplate = true
-    return image
-  }
 }
