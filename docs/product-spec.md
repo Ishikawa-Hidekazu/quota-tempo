@@ -170,12 +170,12 @@ Acquisition health and snapshot freshness are separate. A failed provider attemp
 The menu-bar label has three user-selectable modes. The selection is app-owned and persists across launches. A new installation defaults to Icon only so the item is less likely to be obscured on crowded or notched menu bars. An existing installation that completed onboarding under the earlier implicit Full default retains Full when it has no explicit saved mode:
 
 ```text
-Full       Cx W34/P48 ↓14 · Cl W60/P48 ↑12
-Compact    Cx 34↓14 · Cl 60↑12
+Full       Codex W34/P48 ↓14 · Claude W60/P48 ↑12
+Compact    Codex 34↓14 · Claude 60↑12
 Icon only  [neutral metronome glyph]
 ```
 
-- On screen, the Full and Compact modes replace `Cx` and `Cl` with neutral monochrome SF Symbols. Provider logos are not bundled. The text forms above remain the canonical plain-text and VoiceOver representation.
+- Full and Compact render the plain-text names Codex and Claude with the complete values, matching VoiceOver output. Icon only retains the neutral application symbol. Provider logos are not bundled.
 - `W` is weekly capacity left.
 - `P` is the continuous reset-relative plan at the current instant, assuming capacity is consumed evenly across the provider's seven-day window.
 - `P≈` means Claude's last confirmed exact weekly reset was advanced by exactly one seven-day duration using a newer observation with the same one-way account fingerprint. Unowned Desktop history cannot create or advance an estimate. An estimate is never used to generate another estimate; a new exact reset removes the marker automatically.
