@@ -551,17 +551,13 @@ public struct QuotaMenuView: View {
       HStack(spacing: 7) {
         switch mode {
         case .full:
-          ProviderIconView(provider: .codex, size: 14)
-          Text("W39/P58 ↓19")
+          Text("Codex W39/P58 ↓19")
           Text("·").foregroundStyle(.secondary)
-          ProviderIconView(provider: .claude, size: 14)
-          Text("W30/P55 ↓25")
+          Text("Claude W30/P55 ↓25")
         case .compact:
-          ProviderIconView(provider: .codex, size: 14)
-          Text("39↓19")
+          Text("Codex 39↓19")
           Text("·").foregroundStyle(.secondary)
-          ProviderIconView(provider: .claude, size: 14)
-          Text("30↓25")
+          Text("Claude 30↓25")
         case .iconOnly:
           Image(systemName: "metronome")
         }

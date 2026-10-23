@@ -30,7 +30,7 @@ The public build must be signed with an Apple Developer ID and notarized by Appl
 With both providers enabled, the Full label compares them in this form:
 
 ```text
-[Codex glyph] W34/P48 ↓14 · [Claude glyph] W60/P48 ↑12
+Codex W34/P48 ↓14 · Claude W60/P48 ↑12
 ```
 
 - `W` is the provider-reported weekly capacity left.
@@ -47,11 +47,11 @@ Open the menu to see the next reset-relative checkpoint, checkpoint target, capa
 
 QuotaTempo starts in **Icon only** so it consumes the least space on crowded or notched menu bars. Choose another mode in the first-run window or later under **Menu bar display**:
 
-- **Full**: neutral provider glyphs, weekly capacity, current plan, and difference
-- **Compact**: neutral provider glyphs, weekly capacity, and difference
+- **Full**: Codex/Claude names, weekly capacity, current plan, and difference
+- **Compact**: Codex/Claude names, weekly capacity, and difference
 - **Icon only**: a neutral metronome glyph only; open it for all values
 
-When a plan uses a one-window reset estimate, Compact mode keeps the marker on the plan basis: `[Claude glyph] 75↑25 P≈`.
+When a plan uses a one-window reset estimate, Compact mode keeps the marker on the plan basis: `Claude 75↑25 P≈`.
 
 QuotaTempo stores this display choice in its own macOS preferences. It does not change Codex or Claude settings. If an observed reset has already elapsed, the old weekly balance is hidden as **Waiting for new quota window** until a current observation arrives.
 
