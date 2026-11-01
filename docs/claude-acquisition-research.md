@@ -1987,6 +1987,92 @@ running it after the build completed passed. At that first checkpoint the
 coordinator was in-memory only; the later restart-persistence work documented
 above adds a durable nonsecret service-backoff deadline.
 
+## Desktop Status-Bar Issue Reassessment (2026-11-01)
+
+Read all 22 comments then present on
+[claude-code #41456](https://github.com/anthropics/claude-code/issues/41456).
+The issue remained open; user reports and maker workarounds are not a documented
+Desktop statusLine implementation or an account-binding guarantee.
+
+The current [official mods reference](https://code.claude.com/docs/en/plugins/mods/reference)
+and [public types](https://github.com/anthropics/claude-code/blob/main/mods/types/claude-code.d.ts)
+now document `session.measure`, `$.session.usage()` and rate-limit readings.
+The event carries the last response's rate-limit windows, not a verified new
+provider fetch. The documented kinds are `five_hour`, `seven_day` and a gateway's
+`spend_limit`; the type intentionally leaves `kind` as a string. No account ID,
+provider observation timestamp or documented per-model weekly window is supplied
+by that reading. This supports the existing comparison-only boundary, not
+promotion into Automatic, W/P or planning. A gateway spend limit is not a weekly
+subscription allowance and is outside the current strict decoder's allowlist.
+
+Static comparisons, without installing or running third-party mods:
+
+| Implementation / source checkpoint | Useful finding | Decision |
+| --- | --- | --- |
+| [usage-meter](https://github.com/jacobyoby/claude-usage-meter/tree/b6305d8f006a21f72ad5911e50858f4a158d21d3) | Above-prompt context, five-hour, weekly and API-rate cost display. Its initial `usage()` snapshot is not a provider freshness proof. The reviewed reset calculation rounds minutes and substitutes zero once the rounded value is nonpositive, including the last 29 seconds before reset. | Keep values and reset semantics separate; do not copy the zero substitution or equate API-rate cost with a subscription bill. The old repository is archived and points to `jacobrakaiFoundation/claude-mods`; this is not a full audit of that successor. |
+| [WeekToken](https://github.com/3dnow/claude-mods/tree/9f0bf8e119a1444fc267b9553da88c6b444f3683/weektoken) | Pace-versus-time display and a reset-pending state are relevant. Its event collector accepts the two all-model windows; model-specific values also involve cache/private endpoint paths, `session.authorize`, and a subprocess fallback. | Do not infer that per-model windows are available in the ordinary event. No new credential, cache, private-endpoint or model-request path. |
+| [statusline-anywhere](https://github.com/NathanAB/statusline-anywhere/tree/20874c7373ecb09f5b06b90597bd7c4dfb79f44a) | Draws existing statusLine output above the Desktop prompt. Executes a configured shell command with session metadata. | Not a new quota source; do not add a general-purpose shell bridge to QuotaTempo. |
+| [claude-pace](https://github.com/Astro-Han/claude-pace/tree/7fe9fa8570b0f11f6e254700083c2b152ce3cc34) | Distinguishes pace from quota and leaves missing data unknown. Its cache-removal decision explains why an unbound cache is not a safe fallback. | Preserve unknown values and the existing reset-relative planning model. |
+| [paceline](https://github.com/rogadev/paceline/tree/35c0086e6e85e03584eb47e3b7dd655865de62a9) | Optional bounded usage feed and daily-budget visualization. Missing limits can leave an earlier feed file intact. | Do not add another feed/MCP service or treat retained file contents as fresh/account-bound data. |
+| [Linux Desktop context patch](https://github.com/HazenBabcock/claude-desktop-mods/tree/b365d1d21490685b453f71fa95bfef90c9cd4e86/context-percent) | Documents why earlier internal-state traversal could select the wrong session. Its replacement patches Desktop/DOM behavior. | No Desktop archive patching or DOM scraping in this integration. |
+
+### Narrow Native Improvement
+
+The existing receiver already observes `session.measure`, clears expired values,
+rejects unknown/model-scoped kinds, fences connection generations and handles
+session end. Reimplementing those mechanisms would add no value.
+
+One actionable gap was the UI's single `stale` state for both a 15-minute unused
+preparation and a five-minute-old observed tuple. It suggested preparation again
+even when the next distinct measurement could restore the same connection.
+The local change separates `preparationExpired` from measurement `stale`, hides
+the old connection arguments, and offers **Prepare again** for expired
+preparations or multiple-session conflicts, not simply aged values. Japanese
+and English copy explain the next action and that **Refresh** does not contact
+the provider. No protocol, plugin package, acquisition or planning change is
+required.
+
+Regression coverage includes the 900-second preparation boundary, a connected
+session still awaiting its first measurement after that boundary, stale tuple
+recovery without a new connection, unchanged tuples remaining stale, both
+localizations' offscreen layout, and the final 29 seconds before a reset. The
+reset itself still clears values rather than inferring a renewed allowance.
+These synthetic checks are not installed-app acceptance, provider permission or
+evidence that a user-specific acquisition issue has been fixed.
+
+### Local Verification Of This Change
+
+Initial implementation-checkpoint verification on 2026-11-01, before independent
+review, used Command Line Tools through
+`DEVELOPER_DIR=/Library/Developer/CommandLineTools`; no global toolchain change.
+
+| Check | Final result |
+| --- | --- |
+| `bash scripts/test-swift.sh --filter CodeComparison` | PASS, 89 tests / 8 suites |
+| `bash scripts/test-swift.sh` | PASS, 862 tests / 41 suites |
+| `QUOTATEMPO_DESKTOP_INTEGRATION_PREVIEW=1 bash scripts/test-swift.sh` | PASS, 918 tests / 49 suites |
+| `node --test experiments/claude-mods-usage/{producer,probe,observe}.test.mjs` | PASS, 121 tests |
+| `node scripts/test-swift-runner.mjs` | PASS, 17 tests |
+| `xcrun swift-format lint --strict` on the eight changed Swift files | PASS |
+| `git diff --check` | PASS |
+| English/Japanese expired-preparation and stale-value offscreen images | Inspected; text fits and only expired preparation offers Prepare again |
+
+Both full Swift runs report one expected `withKnownIssue` from the existing
+synthetic browser read-barrier watchdog test. This deliberately verifies that
+an unreleased fixture reports a timeout; it is not a newly ignored product
+failure. An initial new reset-test assertion used percentages from a different
+fixture; its expected constants were corrected before the final passing runs.
+No third-party mod installation, live provider request, installed-app change,
+independent review, CI run, push or release was performed at that checkpoint.
+
+Independent review then identified that the recovery wording was too definite
+for multiple stale windows: updating only one cannot restore the whole panel.
+The revised copy makes recovery conditional on all received windows passing the
+display checks. A two-window regression verifies that one updated window keeps
+the panel stale and updating the other restores both. The conservative decoder
+itself is unchanged. The checkpoint counts above do not claim final-release
+verification of the subsequent wording/test revision.
+
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift
 [codenotch-caller]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeOAuthProvider.swift

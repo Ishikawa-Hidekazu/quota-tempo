@@ -371,6 +371,61 @@ struct CodeComparisonDecoderTests {
     expectClear(decoder.consume(data, now: Fixture.now.addingTimeInterval(301)), status: .stale)
   }
 
+  @Test("A changed measurement restores stale values without preparing another connection")
+  func recoverFromStale() throws {
+    var decoder = Fixture.decoder()
+    let original = try Fixture.data(kinds: ["seven_day"])
+    #expect(decoder.consume(original, now: Fixture.now).status == .comparisonOnly)
+    let later = Fixture.now.addingTimeInterval(301)
+    expectClear(decoder.current(now: later), status: .stale)
+    let reset = Fixture.timestamp(Fixture.now.addingTimeInterval(86_400))
+    let unchanged = try Fixture.data(
+      sequence: 2, read: later, kinds: ["seven_day"], rowOverrides: ["resetsAt": reset])
+    expectClear(decoder.consume(unchanged, now: later), status: .stale)
+    let changed = try Fixture.data(
+      sequence: 3, read: later, kinds: ["seven_day"],
+      rowOverrides: ["percentUsed": 43, "resetsAt": reset])
+    let restored = decoder.consume(changed, now: later)
+    #expect(restored.status == .comparisonOnly)
+    #expect(restored.weekly?.remainingPercent == 57)
+    #expect(restored.receivedAt == later)
+  }
+
+  @Test("Every retained window must recover before stale comparison values reappear")
+  func recoverBothStaleWindows() throws {
+    var decoder = Fixture.decoder()
+    #expect(decoder.consume(try Fixture.data(), now: Fixture.now).status == .comparisonOnly)
+    let later = Fixture.now.addingTimeInterval(301)
+    expectClear(decoder.current(now: later), status: .stale)
+
+    func measurement(sequence: Int, fiveHourUsed: Double) throws -> Data {
+      let time = Fixture.timestamp(later)
+      let rows: [[String: Any]] = [
+        [
+          "kind": "seven_day", "percentUsed": 43,
+          "resetsAt": Fixture.timestamp(Fixture.now.addingTimeInterval(86_400)),
+          "firstSeenAt": time, "lastReadAt": time,
+        ],
+        [
+          "kind": "five_hour", "percentUsed": fiveHourUsed,
+          "resetsAt": Fixture.timestamp(Fixture.now.addingTimeInterval(3_600)),
+          "firstSeenAt": time, "lastReadAt": time,
+        ],
+      ]
+      return try Fixture.data(
+        sequence: sequence, read: later, resultOverrides: ["rateLimits": rows])
+    }
+
+    expectClear(
+      decoder.consume(try measurement(sequence: 2, fiveHourUsed: 73.25), now: later), status: .stale
+    )
+    let restored = decoder.consume(try measurement(sequence: 3, fiveHourUsed: 74), now: later)
+    #expect(restored.status == .comparisonOnly)
+    #expect(restored.weekly?.remainingPercent == 57)
+    #expect(restored.fiveHour?.remainingPercent == 26)
+    #expect(restored.receivedAt == later)
+  }
+
   @Test("Explicit unavailability retains replay watermark and old bytes cannot restore values")
   func explicitUnavailable() throws {
     var decoder = Fixture.decoder()
@@ -487,16 +542,20 @@ struct CodeComparisonDecoderTests {
     var result = try #require(object["result"] as? [String: Any])
     var rows = try #require(result["rateLimits"] as? [[String: Any]])
     let index = try #require(rows.firstIndex { $0["kind"] as? String == kind })
-    rows[index]["resetsAt"] = Fixture.timestamp(Fixture.now.addingTimeInterval(10))
+    rows[index]["resetsAt"] = Fixture.timestamp(Fixture.now.addingTimeInterval(60))
     result["rateLimits"] = rows
     object["result"] = result
     let data = try Fixture.encode(object)
+    let beforeReset = decoder.consume(data, now: Fixture.now.addingTimeInterval(31))
+    #expect(beforeReset.status == .comparisonOnly)
+    #expect(beforeReset.weekly?.remainingPercent == 74.5)
+    #expect(beforeReset.fiveHour?.remainingPercent == 26.75)
     #expect(
-      decoder.consume(data, now: Fixture.now.addingTimeInterval(9.999)).status == .comparisonOnly)
+      decoder.consume(data, now: Fixture.now.addingTimeInterval(59.999)).status == .comparisonOnly)
     expectClear(
-      decoder.consume(data, now: Fixture.now.addingTimeInterval(10)), status: .resetPassed)
+      decoder.consume(data, now: Fixture.now.addingTimeInterval(60)), status: .resetPassed)
     expectClear(
-      decoder.consume(data, now: Fixture.now.addingTimeInterval(11)), status: .resetPassed)
+      decoder.consume(data, now: Fixture.now.addingTimeInterval(61)), status: .resetPassed)
   }
 
   @Test("Exactly 16 KiB is accepted and the next byte clears a prior valid view")

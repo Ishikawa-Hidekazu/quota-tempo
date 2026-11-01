@@ -3,7 +3,8 @@ import Foundation
 
 enum CodeUsageComparisonStatus: String, Sendable {
   case disconnected, preparing, waitingForConnection, waitingForMeasurement
-  case comparisonOnly, stale, resetPassed, multipleSessions, unavailable, invalidClock
+  case comparisonOnly, preparationExpired, stale, resetPassed, multipleSessions, unavailable,
+    invalidClock
   case storageUnavailable
 }
 

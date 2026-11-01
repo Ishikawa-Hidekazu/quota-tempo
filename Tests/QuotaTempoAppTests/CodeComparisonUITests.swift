@@ -21,20 +21,24 @@ struct CodeComparisonUITests {
     "Connection arguments are shown only while waiting for a fresh connection",
     arguments: [
       CodeUsageComparisonStatus.disconnected, .preparing, .waitingForConnection,
-      .waitingForMeasurement, .comparisonOnly, .stale, .resetPassed, .multipleSessions,
+      .waitingForMeasurement, .comparisonOnly, .preparationExpired, .stale, .resetPassed,
+      .multipleSessions,
       .unavailable, .invalidClock, .storageUnavailable,
     ])
   func connectionArguments(_ status: CodeUsageComparisonStatus) {
     #expect(
       CodeUsageComparisonControls.showsConnectionArguments(status)
         == (status == .waitingForConnection))
+    #expect(
+      CodeUsageComparisonControls.showsPrepareAgain(status)
+        == (status == .preparationExpired || status == .multipleSessions))
   }
 
   @Test(
     "Expanded controls fit the menu width without opening a window", arguments: ["en", "ja"],
     [
       CodeUsageComparisonStatus.comparisonOnly, .waitingForConnection, .waitingForMeasurement,
-      .stale,
+      .preparationExpired, .stale,
     ])
   func render(_ language: String, _ status: CodeUsageComparisonStatus) async throws {
     try await validate(language, status, package: nil)

@@ -152,8 +152,11 @@ struct CodeComparisonConnectionTests {
     let session = CodeComparisonSession(directory: root)
     let first = try await session.prepare(now: now)
     #expect(
+      await session.poll(connectionID: first.connectionID, clock: { now.addingTimeInterval(900) })
+        .status == .waitingForConnection)
+    #expect(
       await session.poll(connectionID: first.connectionID, clock: { now.addingTimeInterval(901) })
-        .status == .stale)
+        .status == .preparationExpired)
     let restarted = CodeComparisonSession(directory: root)
     #expect(
       await restarted.poll(connectionID: first.connectionID, clock: { now }).status == .disconnected
