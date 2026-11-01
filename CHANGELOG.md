@@ -5,9 +5,10 @@
 - Distinguish an expired connection preparation from older comparison values.
   Offer **Prepare again** only when preparation expired or multiple Code
   sessions conflicted, not simply because a value aged out.
-- Explain in English and Japanese that new usage or reset values during normal
-  Code work can restore the display, while **Refresh** does not fetch from the
-  provider. Preserve the existing five-minute comparison expiry.
+- Explain in English and Japanese that measurements during normal Code work
+  can restore the display once all received windows pass its checks, while
+  **Refresh** does not fetch from the provider. Preserve the existing
+  five-minute comparison expiry.
 - Keep quota values until the exact reset boundary, then hide them rather than
   infer a renewed allowance. Add boundary and recovery regression coverage.
 - Preserve the bundled plugin, consent, acquisition, account isolation, W/P,

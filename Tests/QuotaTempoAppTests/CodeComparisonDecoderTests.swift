@@ -391,6 +391,41 @@ struct CodeComparisonDecoderTests {
     #expect(restored.receivedAt == later)
   }
 
+  @Test("Every retained window must recover before stale comparison values reappear")
+  func recoverBothStaleWindows() throws {
+    var decoder = Fixture.decoder()
+    #expect(decoder.consume(try Fixture.data(), now: Fixture.now).status == .comparisonOnly)
+    let later = Fixture.now.addingTimeInterval(301)
+    expectClear(decoder.current(now: later), status: .stale)
+
+    func measurement(sequence: Int, fiveHourUsed: Double) throws -> Data {
+      let time = Fixture.timestamp(later)
+      let rows: [[String: Any]] = [
+        [
+          "kind": "seven_day", "percentUsed": 43,
+          "resetsAt": Fixture.timestamp(Fixture.now.addingTimeInterval(86_400)),
+          "firstSeenAt": time, "lastReadAt": time,
+        ],
+        [
+          "kind": "five_hour", "percentUsed": fiveHourUsed,
+          "resetsAt": Fixture.timestamp(Fixture.now.addingTimeInterval(3_600)),
+          "firstSeenAt": time, "lastReadAt": time,
+        ],
+      ]
+      return try Fixture.data(
+        sequence: sequence, read: later, resultOverrides: ["rateLimits": rows])
+    }
+
+    expectClear(
+      decoder.consume(try measurement(sequence: 2, fiveHourUsed: 73.25), now: later), status: .stale
+    )
+    let restored = decoder.consume(try measurement(sequence: 3, fiveHourUsed: 74), now: later)
+    #expect(restored.status == .comparisonOnly)
+    #expect(restored.weekly?.remainingPercent == 57)
+    #expect(restored.fiveHour?.remainingPercent == 26)
+    #expect(restored.receivedAt == later)
+  }
+
   @Test("Explicit unavailability retains replay watermark and old bytes cannot restore values")
   func explicitUnavailable() throws {
     var decoder = Fixture.decoder()

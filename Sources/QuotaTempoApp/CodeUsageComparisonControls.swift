@@ -175,8 +175,8 @@ struct CodeUsageComparisonControls: View {
       )
     case .stale:
       return text(
-        "古くなった値を非表示にしています。Codeの通常作業中に新しい使用量またはリセット時刻を受信すると再表示します。「更新」は提供元への再取得を行いません。",
-        "Older values are hidden. New usage or reset values received during normal work in Code restore the display. Refresh does not fetch from the provider."
+        "古くなった値を非表示にしています。Codeの通常作業中に届く各枠の値がすべて表示条件を満たすと、再表示します。「更新」は提供元への再取得を行いません。",
+        "Older values are hidden. Values can reappear when all received windows meet the display checks during normal work in Code. Refresh does not fetch from the provider."
       )
     case .resetPassed:
       return text(
