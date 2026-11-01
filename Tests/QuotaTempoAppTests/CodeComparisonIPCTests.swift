@@ -229,6 +229,34 @@ struct CodeComparisonIPCTests {
     #expect(await session.revoke(connectionID: setup.connectionID))
   }
 
+  @Test("Only an unconnected preparation expires after fifteen minutes")
+  func preparationExpiry() async throws {
+    let session = CodeComparisonIPCSession(clock: { now })
+    let setup = try await session.prepare(now: now)
+    defer { session.terminate() }
+    #expect(
+      await session.poll(connectionID: setup.connectionID, clock: { now.addingTimeInterval(900) })
+        .status == .waitingForConnection)
+    let expired = await session.poll(
+      connectionID: setup.connectionID, clock: { now.addingTimeInterval(900.001) })
+    #expect(expired.status == .preparationExpired)
+    #expect(expired.weekly == nil && expired.fiveHour == nil && expired.receivedAt == nil)
+    #expect(await session.revoke(connectionID: setup.connectionID))
+  }
+
+  @Test("A connected session waiting for its first measurement does not require preparation again")
+  func connectedWaitingDoesNotExpire() async throws {
+    let session = CodeComparisonIPCSession(clock: { now })
+    let setup = try await session.prepare(now: now)
+    defer { session.terminate() }
+    #expect(try await request(setup, "/connect", body: control(setup)).contains("connected"))
+    let waiting = await session.poll(
+      connectionID: setup.connectionID, clock: { now.addingTimeInterval(901) })
+    #expect(waiting.status == .waitingForMeasurement)
+    #expect(waiting.weekly == nil && waiting.fiveHour == nil)
+    #expect(await session.revoke(connectionID: setup.connectionID))
+  }
+
   @Test("Synchronous revoke and quit reject delayed messages and preparation")
   func quit() async throws {
     let session = CodeComparisonIPCSession(clock: { now })

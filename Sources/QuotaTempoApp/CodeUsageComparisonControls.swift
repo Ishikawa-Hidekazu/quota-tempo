@@ -144,6 +144,10 @@ struct CodeUsageComparisonControls: View {
     status == .waitingForConnection
   }
 
+  static func showsPrepareAgain(_ status: CodeUsageComparisonStatus) -> Bool {
+    status == .preparationExpired || status == .multipleSessions
+  }
+
   private var statusText: String {
     switch connection.view.status {
     case .disconnected:
@@ -164,10 +168,15 @@ struct CodeUsageComparisonControls: View {
       return text(
         "比較用の使用量を受信しました。提供元の更新時刻は未確認です。",
         "Received comparison usage. The provider's observation time is unverified.")
+    case .preparationExpired:
+      return text(
+        "接続されないまま15分を過ぎたため、接続準備の有効期限が切れました。「接続を再準備」から準備し、新しいコマンドでCode側から接続してください。",
+        "Connection preparation expired after 15 minutes without connecting. Choose Prepare again, then connect from Code with the new command."
+      )
     case .stale:
       return text(
-        "値または接続準備の有効期限が切れました。再準備する場合は、Code側の接続もやり直してください。",
-        "Values or connection preparation have expired. Preparing again also requires reconnecting in Code."
+        "古くなった値を非表示にしています。Codeの通常作業中に新しい使用量またはリセット時刻を受信すると再表示します。「更新」は提供元への再取得を行いません。",
+        "Older values are hidden. New usage or reset values received during normal work in Code restore the display. Refresh does not fetch from the provider."
       )
     case .resetPassed:
       return text(
@@ -298,7 +307,7 @@ struct CodeUsageComparisonControls: View {
           Label(text("接続解除", "Disconnect"), systemImage: "xmark.circle")
         }
         .disabled(!enabled)
-        if connection.view.status == .stale || connection.view.status == .multipleSessions {
+        if Self.showsPrepareAgain(connection.view.status) {
           Button {
             guard enabled, !busy else { return }
             showingConsent = true

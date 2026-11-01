@@ -223,7 +223,7 @@ final class CodeComparisonIPCBridge: @unchecked Sendable {
         ((try? JSONSerialization.jsonObject(with: setup.grant)) as? [String: Any])?["createdAt"])
         ?? .distantPast) > 900
     {
-      view = CodeUsageComparisonView(status: .stale)
+      view = CodeUsageComparisonView(status: .preparationExpired)
     }
     return view
   }

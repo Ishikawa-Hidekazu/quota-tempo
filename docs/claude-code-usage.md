@@ -136,6 +136,13 @@ Two sessions connected to one receiver stop comparison instead of merging data.
 **Refresh** checks the in-memory connection only; it does not force Code or the
 provider to measure usage. Idle waiting does not guarantee a measurement.
 
+**Older values are hidden** means a measurement has expired, not that the
+connection preparation has expired. Leave the comparison connected: a new
+distinct usage or reset value during ordinary work can restore the display.
+Repeated unchanged readings cannot renew its age. Reconnecting is not required
+solely because a displayed value aged out, and no extra model request is needed
+just to refresh this panel.
+
 For an expired preparation, use **Prepare again** and explicitly connect with
 the new arguments. Old arguments disappear after handshake or expiry. Restarting
 QuotaTempo never restores comparison consent or values; reconnect explicitly.

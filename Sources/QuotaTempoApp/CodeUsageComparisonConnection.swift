@@ -291,7 +291,8 @@ actor CodeComparisonSession: CodeComparisonServing {
           CodeComparisonProtocol.date(created?["createdAt"]).map {
             completed.timeIntervalSince($0) > 900
           } ?? true
-        return CodeUsageComparisonView(status: expired ? .stale : .waitingForConnection)
+        return CodeUsageComparisonView(
+          status: expired ? .preparationExpired : .waitingForConnection)
       }
       guard boundStream == nil || boundStream == stream else {
         multipleStreams = true
