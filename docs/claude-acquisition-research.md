@@ -2042,7 +2042,8 @@ evidence that a user-specific acquisition issue has been fixed.
 
 ### Local Verification Of This Change
 
-Final source-diff verification on 2026-11-01 used Command Line Tools through
+Initial implementation-checkpoint verification on 2026-11-01, before independent
+review, used Command Line Tools through
 `DEVELOPER_DIR=/Library/Developer/CommandLineTools`; no global toolchain change.
 
 | Check | Final result |
@@ -2062,7 +2063,15 @@ an unreleased fixture reports a timeout; it is not a newly ignored product
 failure. An initial new reset-test assertion used percentages from a different
 fixture; its expected constants were corrected before the final passing runs.
 No third-party mod installation, live provider request, installed-app change,
-independent review, CI run, push or release was performed for this local change.
+independent review, CI run, push or release was performed at that checkpoint.
+
+Independent review then identified that the recovery wording was too definite
+for multiple stale windows: updating only one cannot restore the whole panel.
+The revised copy makes recovery conditional on all received windows passing the
+display checks. A two-window regression verifies that one updated window keeps
+the panel stale and updating the other restores both. The conservative decoder
+itself is unchanged. The checkpoint counts above do not claim final-release
+verification of the subsequent wording/test revision.
 
 [codenotch-release]: https://github.com/vinzdg/codenotch/releases/tag/v1.19.0
 [codenotch-source]: https://github.com/vinzdg/codenotch/blob/00833690311067354c77951fcaaf6ffca774916e/Sources/Providers/ClaudeDesktopUsageCache.swift
