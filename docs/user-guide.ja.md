@@ -18,6 +18,9 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
 手順は下の「Claude Desktop接続」を確認してください。
 従来の自動取得を使う場合は、同じアカウントでログイン済みの公式Claude Code CLIからもリセット日時を取得できます。
 
+インストール前に[表示の読み方を試す](https://ishikawa.co/products/quotatempo/#quota-reading)の「表示を試す」を開き、架空の4状態を比較できます。
+デモは実際の利用アカウントへ接続しません。実際に使う場合は同じページの「QuotaTempoをダウンロード」から公開版を取得し、次の手順で導入してください。
+
 ## 確認してインストールする
 
 1. QuotaTempoのZIPと公開SHA-256を、同じ公式releaseページからダウンロードします。
@@ -32,6 +35,12 @@ CodexBarは必要ありません。QuotaTempo自身がproviderへログインす
 5. ApplicationsからQuotaTempoを開きます。初回案内ウインドウが前面に表示され、起動したこととメニューバー表示の選び方を確認できます。QuotaTempoはDockには表示されません。
 
 公開版はApple Developer IDで署名し、Appleのnotarizationを通した状態で提供します。macOSに「開発元を確認できない」「アプリが壊れている」などと表示された場合は、そこで停止してください。Gatekeeperを迂回せず、公式配布元とSHA-256を再確認し、QuotaTempoのversionとmacOSの正確な表示内容を公開support窓口へ伝えてください。
+
+## 最初の表示で確かめること
+
+初期設定は**Icon only（アイコンのみ）**です。メニューバー項目を開くと値を確認でき、**Full／Compact**にするとCodex・Claudeの名前と数値をメニューバーに表示できます。
+最初は**週間残量・現在目標・取得状態**を確認してください。`P`は均等ペースの目安であり、利用可能量を保証しません。`—`や待機表示を残量0％と解釈しないでください。
+任意のClaude Desktop接続では、下の同意・macOS許可の手順と画面の次回取得予定に従って待ちます。更新を押しても提供元の待機時間は短縮しません。通常のCodex・Claude行を使うために、別枠のClaude Code比較プラグインを設定する必要はありません。
 
 ## メニューバー表示の読み方
 
