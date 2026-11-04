@@ -17,6 +17,11 @@ V1 presents accurate numbers and a neutral side-by-side comparison. It does not 
 
 [Watch the 12-second demo](https://ishikawa.co/en/products/quotatempo/#quota-demo) of the menu-bar label, weekly comparison, and display modes. It uses a v0.1.3 fixture, not live quota readings; your values will differ.
 
+[Try the interactive reading example](https://ishikawa.co/en/products/quotatempo/#quota-reading).
+Open **Try reading the display** to compare four fictional states without
+connecting a provider account. Then use **Download QuotaTempo** on that page and
+follow the [installation guide](docs/user-guide.md).
+
 ## Status
 
 QuotaTempo remains under active development. Public builds are signed with a Developer ID, notarized by Apple, and distributed through [GitHub Releases](https://github.com/Ishikawa-Hidekazu/quota-tempo/releases/latest). The current release has no time limit. The delivery model and pricing of future releases or additional features have not been decided.
@@ -41,12 +46,21 @@ never change W/P or planning. The [setup guide](docs/claude-code-usage.md) expla
 the bundled, project-local plugin tools, prerequisites, connection and removal.
 No extra setup is required to continue using the ordinary Codex or Claude rows.
 
-## Your first 60 seconds after launch
+## First launch: find your weekly status
 
 1. Confirm that the QuotaTempo guide opens in its own window.
-2. Choose Codex, Claude, or both. QuotaTempo uses providers that are already signed in on your Mac; it does not ask for provider credentials.
+2. Choose Codex, Claude, or both. Start with a supported provider already signed in on your Mac; no manual credential entry into QuotaTempo is needed.
 3. Choose **Full**, **Compact**, or **Icon only** for the menu-bar label.
 4. Open the menu-bar item and confirm that each enabled provider shows a weekly status or a support-safe availability message.
+
+The default is **Icon only**: open that menu-bar item to see the values, or choose
+**Full** / **Compact** to show the provider names and values in the menu bar.
+For a first reading, look for **Weekly left**, **Target now**, and **Source state**.
+`P` is an even-pace reference, not guaranteed usable capacity. A dash or waiting
+message is not 0% remaining. For the optional Claude Desktop connection, follow
+the [consent and macOS access steps](docs/user-guide.md#claude-desktop-connection)
+and the displayed next allowed update time; Refresh does not bypass provider waits.
+The separate Claude Code comparison plugin is not required for these provider rows.
 
 This fixture screenshot shows the expected layout. Your values and provider availability will differ.
 
